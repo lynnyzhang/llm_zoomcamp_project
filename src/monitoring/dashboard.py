@@ -43,17 +43,17 @@ st.set_page_config(
 # Database helpers
 # ---------------------------------------------------------------------------
 
-@st.cache_resource
-def get_connection() -> sqlite3.Connection:
-    """Return a cached SQLite connection to the traces database."""
-    db_path = get_traces_db_path()
-    return sqlite3.connect(str(db_path))
-
-
 def load_dataframe(query: str) -> pd.DataFrame:
-    """Load a SQL query into a pandas DataFrame."""
-    conn = get_connection()
-    return pd.read_sql_query(query, conn)
+    """Load a SQL query into a pandas DataFrame.
+
+    Opens a fresh connection per call: SQLite connections are thread-bound,
+    so a cached one would break reruns from a different thread.
+    """
+    conn = sqlite3.connect(str(get_traces_db_path()))
+    try:
+        return pd.read_sql_query(query, conn)
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +81,9 @@ col1, col2, col3, col4 = st.columns(4)
 
 df_all = load_dataframe("SELECT * FROM spans")
 total_traces = len(df_all)
-total_llm_calls = len(df_all[df_all["name"] == "llm"]) if "name" in df_all.columns else 0
+total_agent_runs = (
+    len(df_all[df_all["name"] == "agent.run"]) if "name" in df_all.columns else 0
+)
 total_cost = df_all["cost"].sum() if "cost" in df_all.columns else 0
 avg_latency = 0.0
 if "start_time" in df_all.columns and "end_time" in df_all.columns:
@@ -91,7 +93,7 @@ if "start_time" in df_all.columns and "end_time" in df_all.columns:
         avg_latency = durations.mean()
 
 col1.metric("Total Traces", total_traces)
-col2.metric("LLM Calls", total_llm_calls)
+col2.metric("Agent Runs", total_agent_runs)
 col3.metric("Total Cost", f"${total_cost:.4f}")
 col4.metric("Avg Latency", f"{avg_latency:.2f}s")
 
@@ -319,5 +321,8 @@ st.subheader("📋 Raw Trace Data")
 with st.expander("Show all traces"):
     st.dataframe(df_all, use_container_width=True, height=300)
 
-# Auto-refresh every 30 seconds
-st.auto_refresh(interval=30_000)
+# Manual refresh from the sidebar (st.auto_refresh is not a Streamlit API)
+with st.sidebar:
+    st.caption("Data is loaded at script run time.")
+    if st.button("🔄 Refresh Data"):
+        st.rerun()

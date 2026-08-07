@@ -10,6 +10,8 @@ Schema: name, start_time, end_time, input_tokens, output_tokens, cost,
 from __future__ import annotations
 
 import json
+import logging
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -34,6 +36,24 @@ _DB_PATH = _DB_DIR / "traces.db"
 def get_traces_db_path() -> Path:
     """Return the path to the traces SQLite database."""
     return _DB_PATH
+
+
+def _postgres_config() -> dict[str, Any] | None:
+    """Return Postgres connection params when POSTGRES_HOST is set.
+
+    Returns None (local-dev path) when POSTGRES_HOST is unset, so local runs
+    and tests never require Postgres. Defaults mirror docker-compose.yml.
+    """
+    host = os.environ.get("POSTGRES_HOST")
+    if not host:
+        return None
+    return {
+        "host": host,
+        "port": int(os.environ.get("POSTGRES_PORT", "5432")),
+        "dbname": os.environ.get("POSTGRES_DB", "capstone"),
+        "user": os.environ.get("POSTGRES_USER", "capstone"),
+        "password": os.environ.get("POSTGRES_PASSWORD", "capstone_secret"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +125,100 @@ class SQLiteSpanExporter(SpanExporter):
 
 
 # ---------------------------------------------------------------------------
+# Postgres span exporter (docker path, opt-in via POSTGRES_HOST)
+# ---------------------------------------------------------------------------
+
+class PostgresSpanExporter(SpanExporter):
+    """Export finished spans to a Postgres `spans` table.
+
+    Mirrors SQLiteSpanExporter: same columns, BIGINT nanosecond timestamps
+    (start_time/end_time), created via psycopg if it doesn't exist. Used only
+    when POSTGRES_HOST is set (docker path); SQLite remains the always-on
+    store. Every failure is contained — the exporter logs and returns
+    FAILURE instead of raising, so the app never crashes when Postgres is
+    down or unreachable.
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None):
+        import psycopg
+
+        self._logger = logging.getLogger(__name__)
+        cfg = config or _postgres_config()
+        if cfg is None:
+            raise RuntimeError(
+                "PostgresSpanExporter requires POSTGRES_HOST to be set"
+            )
+        self.conn = psycopg.connect(**cfg)
+        self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        """Create the spans table if it doesn't exist (BIGINT ns timestamps)."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS spans (
+                    name TEXT,
+                    start_time BIGINT,
+                    end_time BIGINT,
+                    input_tokens INTEGER,
+                    output_tokens INTEGER,
+                    cost DOUBLE PRECISION,
+                    feedback TEXT DEFAULT NULL,
+                    agent_iterations INTEGER DEFAULT NULL,
+                    query TEXT DEFAULT NULL,
+                    search_queries TEXT DEFAULT NULL
+                )
+            """)
+        self.conn.commit()
+
+    def export(self, spans) -> SpanExportResult:
+        """Export a batch of finished spans to Postgres."""
+        try:
+            with self.conn.cursor() as cur:
+                for span in spans:
+                    attrs = dict(span.attributes or {})
+                    cur.execute(
+                        """INSERT INTO spans
+                           (name, start_time, end_time, input_tokens,
+                            output_tokens, cost, feedback, agent_iterations,
+                            query, search_queries)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        (
+                            span.name,
+                            span.start_time,
+                            span.end_time,
+                            attrs.get("input_tokens"),
+                            attrs.get("output_tokens"),
+                            attrs.get("cost"),
+                            attrs.get("feedback"),
+                            attrs.get("agent_iterations"),
+                            attrs.get("query"),
+                            attrs.get("search_queries"),
+                        ),
+                    )
+            self.conn.commit()
+        except Exception:
+            self._logger.warning(
+                "Failed to export spans to Postgres", exc_info=True
+            )
+            self.conn.rollback()
+            return SpanExportResult.FAILURE
+        return SpanExportResult.SUCCESS
+
+    def shutdown(self) -> None:
+        self.conn.close()
+
+    def force_flush(self) -> bool:
+        try:
+            self.conn.commit()
+        except Exception:
+            self._logger.warning(
+                "Postgres force_flush failed", exc_info=True
+            )
+            return False
+        return True
+
+
+# ---------------------------------------------------------------------------
 # Tracer setup helper
 # ---------------------------------------------------------------------------
 
@@ -121,16 +235,32 @@ class TracerSetup:
     def __init__(self, service_name: str = "llm-zoomcapstone"):
         self.provider = TracerProvider()
         self.exporter = SQLiteSpanExporter()
+        self.postgres_exporter: PostgresSpanExporter | None = None
         self.provider.add_span_processor(
             SimpleSpanProcessor(self.exporter)
         )
+        if _postgres_config() is not None:
+            try:
+                self.postgres_exporter = PostgresSpanExporter()
+                self.provider.add_span_processor(
+                    SimpleSpanProcessor(self.postgres_exporter)
+                )
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "Postgres span export disabled: %s",
+                    "could not connect",
+                    exc_info=True,
+                )
         trace.set_tracer_provider(self.provider)
         self.tracer = trace.get_tracer(service_name)
 
     def shutdown(self) -> None:
-        """Flush and close the exporter."""
+        """Flush and close the exporters."""
         self.exporter.force_flush()
         self.exporter.shutdown()
+        if self.postgres_exporter is not None:
+            self.postgres_exporter.force_flush()
+            self.postgres_exporter.shutdown()
 
 
 # ---------------------------------------------------------------------------

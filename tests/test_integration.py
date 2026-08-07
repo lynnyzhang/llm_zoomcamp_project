@@ -35,6 +35,46 @@ CHUNKS_DIR = DATA_DIR / "chunks"
 RESULTS_DIR = PROJECT_ROOT / "results"
 
 
+class StubSearchIndex:
+    """Search-index stand-in for the guardrail tests (todo 4).
+
+    Exposes the same ``.search(query, num_results) -> list[dict]`` contract as
+    HybridSearch without loading the ONNX embedder or any data file, so the
+    guardrail tests run independently of the data/model artifacts (todo 1).
+    """
+
+    def __init__(self, documents: list[dict] | None = None):
+        self._documents = documents or [
+            {
+                "id": "25",
+                "title": "Pikachu (#25)",
+                "content": (
+                    "Pikachu is an Electric-type Pokémon. Stats: HP 35, "
+                    "Attack 55, Defense 40, Special Attack 50, Special "
+                    "Defense 50, Speed 90."
+                ),
+                "section": "Electric",
+                "url": "",
+                "score": 1.0,
+            },
+            {
+                "id": "6",
+                "title": "Charizard (#6)",
+                "content": (
+                    "Charizard is a Fire/Flying-type Pokémon. It takes 2x "
+                    "damage from Water and Electric, 4x from Rock, and is "
+                    "immune to Ground."
+                ),
+                "section": "Fire/Flying",
+                "url": "",
+                "score": 1.0,
+            },
+        ]
+
+    def search(self, query: str, num_results: int = 5) -> list[dict]:
+        return [dict(doc) for doc in self._documents[:num_results]]
+
+
 # ===========================================================================
 # PHASE 1: Data Ingestion & Chunking
 # ===========================================================================
@@ -1196,8 +1236,37 @@ class TestFullPipeline:
             exporter.force_flush()
             exporter.shutdown()
 
-            stats = get_trace_stats(db_path=db_path)
-            assert stats["total_traces"] >= 1
+        stats = get_trace_stats(db_path=db_path)
+        assert stats["total_traces"] >= 1
+
+    def test_postgres_export_opt_in_via_env(self, monkeypatch, tmp_path):
+        """Without POSTGRES_HOST, tracer setup must not require Postgres."""
+        from src.monitoring.tracer import TracerSetup, _postgres_config
+
+        monkeypatch.delenv("POSTGRES_HOST", raising=False)
+        for var in ("POSTGRES_PORT", "POSTGRES_DB", "POSTGRES_USER",
+                    "POSTGRES_PASSWORD"):
+            monkeypatch.delenv(var, raising=False)
+
+        assert _postgres_config() is None
+        setup = TracerSetup()
+        assert setup.postgres_exporter is None
+        setup.shutdown()
+
+    def test_postgres_down_does_not_break_tracer(self, monkeypatch):
+        """Postgres unreachable -> SQLite tracing still works, no crash."""
+        from src.monitoring.tracer import TracerSetup, _postgres_config
+
+        monkeypatch.setenv("POSTGRES_HOST", "127.0.0.1")
+        monkeypatch.setenv("POSTGRES_PORT", "59999")
+        monkeypatch.setenv("POSTGRES_DB", "nonexistent")
+        monkeypatch.setenv("POSTGRES_USER", "nonexistent")
+        monkeypatch.setenv("POSTGRES_PASSWORD", "nonexistent")
+
+        assert _postgres_config() is not None
+        setup = TracerSetup()  # must not raise even though Postgres is down
+        assert setup.postgres_exporter is None
+        setup.shutdown()
 
     def test_qa_pairs_match_search(self, full_pipeline):
         """A sample of Q&A questions should return results with valid document IDs."""

@@ -113,8 +113,8 @@ cursor = conn.cursor()
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS spans (
         name TEXT,
-        start_time REAL,
-        end_time REAL,
+        start_time INTEGER,
+        end_time INTEGER,
         input_tokens INTEGER,
         output_tokens INTEGER,
         cost REAL,
