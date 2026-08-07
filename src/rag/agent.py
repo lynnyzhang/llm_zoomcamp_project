@@ -11,9 +11,8 @@ Implements the agent loop pattern from Module 1 (1-Agentic RAG):
 from __future__ import annotations
 
 import json
-import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from openai import OpenAI
@@ -21,7 +20,6 @@ from openai import OpenAI
 from src.llm import get_model
 from src.rag.pipeline import RAGBase
 from src.search.hybrid import HybridSearch
-
 
 # ---------------------------------------------------------------------------
 # Agent instructions
@@ -53,9 +51,15 @@ If the question is about Pokémon, set off_topic to false.
 """
 
 ANSWER_INSTRUCTIONS = """\
-You are a helpful assistant that answers questions based on provided context.
+You are a Pokémon knowledge assistant.
 
 Use ONLY the information in the context to answer. Be concise and accurate.
+- For weakness or resistance questions, cite the damage_taken multipliers from
+  the retrieved documents (e.g. "Charizard is 4x weak to Rock, 2x weak to
+  Water/Electric, and immune to Ground").
+- For team-building questions, suggest Pokémon or types that cover the team's
+  weaknesses based on the retrieved type data. Never simulate battles, predict
+  winners, or claim that a team "will beat" another.
 If the answer is not found in the context, say "I don't know."
 If multiple searches were performed, synthesize information from all results.
 """
@@ -72,6 +76,12 @@ REJECTION_MESSAGE = (
     "stats, types, weaknesses, abilities, evolutions, and team building. I can't "
     "simulate battles, predict winners, access save files, or help with cheating. "
     "Try asking about a specific Pokémon!"
+)
+
+# In-domain low-confidence note (rejected: false — never a rejection dict).
+UNCERTAINTY_NOTE = (
+    "I couldn't find a confident answer to that in the Pokédex. "
+    "Could you rephrase, or ask about a specific Pokémon?"
 )
 
 # Rule pre-gate: regex patterns matched against the lowercased query.
@@ -239,8 +249,7 @@ class RAGAgent:
         # Extract JSON from response (handle markdown code blocks)
         if "```" in text:
             text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
+            text = text.removeprefix("json")
             text = text.strip()
 
         try:
@@ -294,9 +303,9 @@ class RAGAgent:
     # Tool: generate_answer
     # ------------------------------------------------------------------
 
-    def generate_answer(self, query: str, all_results: list[dict]) -> str:
-        """Generate the final answer using all gathered search results."""
-        # Deduplicate results by id
+    @staticmethod
+    def _dedupe_results(all_results: list[dict]) -> list[dict]:
+        """Deduplicate results by id, preserving first-seen order."""
         seen_ids: set[str] = set()
         unique_results: list[dict] = []
         for doc in all_results:
@@ -304,6 +313,11 @@ class RAGAgent:
             if doc_id not in seen_ids:
                 seen_ids.add(doc_id)
                 unique_results.append(doc)
+        return unique_results
+
+    def generate_answer(self, query: str, all_results: list[dict]) -> str:
+        """Generate the final answer using all gathered search results."""
+        unique_results = self._dedupe_results(all_results)
 
         prompt = self.rag.build_prompt(query, unique_results)
         messages = [
@@ -336,7 +350,9 @@ class RAGAgent:
             Dict with 'answer' (str), 'searches' (list of SearchRecord),
             and 'iterations' (int). Out-of-scope queries return a structured
             rejection dict with 'rejected' (True), empty searches, and 0
-            iterations.
+            iterations. In-domain low-confidence queries (empty results,
+            exhausted iterations with all analyses insufficient, or an empty
+            final context) return the uncertainty note with 'rejected' (False).
         """
         # Guardrail (layer 1): rule pre-gate rejects out-of-scope queries
         # before any search is performed.
@@ -379,13 +395,33 @@ class RAGAgent:
             # Step 4: Reformulate query for next iteration
             current_query = self.reformulate_query(query, analysis)
 
-        # Step 5: Generate final answer
+        # Step 5: Low-confidence path — in-domain queries the loop could not
+        # answer confidently get the uncertainty note with rejected: false
+        # (never a rejection dict). Triggers: zero results across all
+        # searches (no LLM answer call at all), max_iterations reached with
+        # every analysis insufficient, or an empty final context.
+        unique_results = self._dedupe_results(all_results)
+        final_context = self.rag.build_context(unique_results)
+        exhausted = (
+            len(searches) >= self.max_iterations
+            and all(not s.analysis.get("sufficient", True) for s in searches)
+        )
+        if not all_results or not final_context.strip() or exhausted:
+            return {
+                "answer": UNCERTAINTY_NOTE,
+                "searches": searches,
+                "iterations": len(searches),
+                "rejected": False,
+            }
+
+        # Step 6: Generate final answer
         answer = self.generate_answer(query, all_results)
 
         return {
             "answer": answer,
             "searches": searches,
             "iterations": len(searches),
+            "rejected": False,
         }
 
 

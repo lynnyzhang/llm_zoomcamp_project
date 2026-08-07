@@ -44,7 +44,7 @@ class StubSearchIndex:
     """
 
     def __init__(self, documents: list[dict] | None = None):
-        self._documents = documents or [
+        self._documents = documents if documents is not None else [
             {
                 "id": "25",
                 "title": "Pikachu (#25)",
@@ -606,7 +606,9 @@ class TestAgentLoop:
         assert result["searches"][1].analysis["sufficient"] is True
 
     def test_agent_max_iterations(self, search_index):
-        """Agent should not exceed max_iterations."""
+        """Agent should not exceed max_iterations; exhausted in-domain runs
+        return the uncertainty note (rejected: false), never a rejection dict
+        or an LLM-generated fallback."""
         from src.rag.agent import RAGAgent
 
         # Always insufficient analysis
@@ -616,14 +618,149 @@ class TestAgentLoop:
             "sufficient": False, "reason": "bad", "reformulated_query": "retry",
             "off_topic": False, "off_topic_reason": "",
         })
-        answer = MagicMock()
-        answer.output_text = "fallback answer"
-        mock_client.responses.create.side_effect = [insufficient, insufficient, insufficient, answer]
+        mock_client.responses.create.side_effect = [insufficient, insufficient]
 
         agent = RAGAgent(search_index=search_index, llm_client=mock_client, max_iterations=2)
         result = agent.run("test")
 
         assert result["iterations"] <= 2
+        # Low-confidence contract (review B1): exhausted iterations with all
+        # analyses insufficient → uncertainty note, rejected: false, and no
+        # generate_answer LLM call (only the 2 analysis calls happen).
+        assert result["rejected"] is False
+        assert "couldn't find a confident answer" in result["answer"]
+        assert mock_client.responses.create.call_count == 2
+
+    def test_agent_weakness_answer_grounded_in_multipliers(self):
+        """Weakness question with damage_taken in context → grounded answer
+        citing 'weak' + a multiplier, driven by the Pokémon persona
+        instructions (damage_taken citation contract)."""
+        from src.rag.agent import RAGAgent
+
+        documents = [
+            {
+                "id": "6",
+                "title": "Charizard (#6)",
+                "content": (
+                    "damage_taken: normal 1x, fire 0.5x, water 2x, electric 2x, "
+                    "grass 0.25x, ice 1x, fighting 1x, poison 1x, ground 0x, "
+                    "flying 1x, psychic 1x, bug 0.5x, rock 4x, ghost 1x, "
+                    "dragon 1x, steel 1x, dark 1x, fairy 0.5x."
+                ),
+                "section": "Fire/Flying",
+                "url": "",
+                "score": 1.0,
+            }
+        ]
+        mock_client = MagicMock()
+        analysis_response = MagicMock()
+        analysis_response.output_text = json.dumps({
+            "sufficient": True,
+            "reason": "damage_taken table present",
+            "reformulated_query": "",
+            "off_topic": False,
+            "off_topic_reason": "",
+        })
+        answer_response = MagicMock()
+        answer_response.output_text = (
+            "Charizard is 4x weak to Rock, 2x weak to Water and Electric, "
+            "and immune to Ground."
+        )
+        mock_client.responses.create.side_effect = [analysis_response, answer_response]
+
+        agent = RAGAgent(search_index=StubSearchIndex(documents=documents), llm_client=mock_client)
+        result = agent.run("What is Charizard weak to?")
+
+        assert result.get("rejected", False) is False
+        assert "weak" in result["answer"]
+        assert any(mult in result["answer"] for mult in ("2x", "4x"))
+        # The answer call must carry the Pokémon persona instructions that
+        # require citing damage_taken multipliers.
+        answer_call = mock_client.responses.create.call_args_list[-1]
+        developer_content = answer_call.kwargs["input"][0]["content"]
+        assert "damage_taken" in developer_content
+        assert "battles" in developer_content
+
+    def test_agent_team_build_answer_suggests_type_coverage(self):
+        """Team-build question → persona instructions ask for type-coverage
+        suggestions and the answer provides them, without battle claims."""
+        from src.rag.agent import RAGAgent
+
+        mock_client = MagicMock()
+        analysis_response = MagicMock()
+        analysis_response.output_text = json.dumps({
+            "sufficient": True,
+            "reason": "type data present",
+            "reformulated_query": "",
+            "off_topic": False,
+            "off_topic_reason": "",
+        })
+        answer_response = MagicMock()
+        answer_response.output_text = (
+            "Water types are weak to Electric and Grass, so add a Jolteon or "
+            "Venusaur to cover that weakness."
+        )
+        mock_client.responses.create.side_effect = [analysis_response, answer_response]
+
+        agent = RAGAgent(search_index=StubSearchIndex(), llm_client=mock_client)
+        result = agent.run("Help me build a team that covers a water weakness")
+
+        assert result.get("rejected", False) is False
+        assert "weak" in result["answer"]
+        assert "cover" in result["answer"]
+        answer_call = mock_client.responses.create.call_args_list[-1]
+        developer_content = answer_call.kwargs["input"][0]["content"]
+        assert "team-building" in developer_content
+        assert "will beat" in developer_content
+
+    def test_agent_low_confidence_exhausted_iterations(self):
+        """In-domain query exhausting max iterations with all analyses
+        insufficient → uncertainty note, rejected: false (never a rejection
+        dict), and no generate_answer LLM call."""
+        from src.rag.agent import RAGAgent, UNCERTAINTY_NOTE
+
+        mock_client = MagicMock()
+        insufficient = MagicMock()
+        insufficient.output_text = json.dumps({
+            "sufficient": False, "reason": "bad", "reformulated_query": "retry",
+            "off_topic": False, "off_topic_reason": "",
+        })
+        mock_client.responses.create.side_effect = [insufficient, insufficient, insufficient]
+
+        agent = RAGAgent(search_index=StubSearchIndex(), llm_client=mock_client, max_iterations=3)
+        result = agent.run("What are Gengar's stats?")
+
+        assert result["answer"] == UNCERTAINTY_NOTE
+        assert "couldn't find a confident answer" in result["answer"]
+        assert result["rejected"] is False
+        assert result["iterations"] == 3
+        # Only the 3 analysis calls; the answer mock was never invoked.
+        assert mock_client.responses.create.call_count == 3
+
+    def test_agent_empty_results_skips_answer_call(self):
+        """Empty search results → uncertainty note, rejected: false, and the
+        LLM answer call is never made (analysis calls only)."""
+        from src.rag.agent import RAGAgent, UNCERTAINTY_NOTE
+
+        mock_client = MagicMock()
+        insufficient = MagicMock()
+        insufficient.output_text = json.dumps({
+            "sufficient": False, "reason": "no results", "reformulated_query": "retry",
+            "off_topic": False, "off_topic_reason": "",
+        })
+        mock_client.responses.create.side_effect = [insufficient, insufficient, insufficient]
+
+        agent = RAGAgent(
+            search_index=StubSearchIndex(documents=[]), llm_client=mock_client,
+            max_iterations=3,
+        )
+        result = agent.run("What is the habitat of a rare Pokémon?")
+
+        assert result["answer"] == UNCERTAINTY_NOTE
+        assert "couldn't find a confident answer" in result["answer"]
+        assert result["rejected"] is False
+        # 3 analysis calls, zero answer calls.
+        assert mock_client.responses.create.call_count == 3
 
 
 # ===========================================================================
