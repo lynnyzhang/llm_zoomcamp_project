@@ -75,7 +75,8 @@ set -a; source .env; set +a; uv run pytest -q   # 85 tests
 
 - **`.env` is required for any LLM call** — `get_model()` raises without
   `MODEL_ID`; there is no default model. LLM calls fail lazily at first use.
-- **`.env`, `uv.lock`, `.python-version` are gitignored** — don't commit them.
-- `data/`, `models/`, `results/` hold downloaded/generated artifacts — not committed.
+- **`.env` must never be committed** — it holds the LLM API key (ignored via a global gitignore rule; no repo `.gitignore` exists — add one).
+- `uv.lock` and `.python-version` are committed in this repo; `results/` eval outputs are committed too.
+- `data/` and `models/` hold downloaded/generated artifacts — currently empty here; fetch them with `uv run python -m src.data.download_model`.
 - Keep the project self-contained: no imports from external reference
   material (docstring attributions are comments only, never dependencies).
