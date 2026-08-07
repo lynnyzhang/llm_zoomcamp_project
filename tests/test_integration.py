@@ -14,12 +14,10 @@ validates all existing data files and results.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
-import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -467,7 +465,7 @@ class TestAgentLoop:
 
     def test_agent_dataclasses(self):
         """SearchRecord and AgentResult dataclasses should work correctly."""
-        from src.rag.agent import SearchRecord, AgentResult
+        from src.rag.agent import AgentResult, SearchRecord
 
         record = SearchRecord(query="test", results=[{"id": "1"}], analysis={"sufficient": True})
         assert record.query == "test"
@@ -717,7 +715,7 @@ class TestAgentLoop:
         """In-domain query exhausting max iterations with all analyses
         insufficient → uncertainty note, rejected: false (never a rejection
         dict), and no generate_answer LLM call."""
-        from src.rag.agent import RAGAgent, UNCERTAINTY_NOTE
+        from src.rag.agent import UNCERTAINTY_NOTE, RAGAgent
 
         mock_client = MagicMock()
         insufficient = MagicMock()
@@ -740,7 +738,7 @@ class TestAgentLoop:
     def test_agent_empty_results_skips_answer_call(self):
         """Empty search results → uncertainty note, rejected: false, and the
         LLM answer call is never made (analysis calls only)."""
-        from src.rag.agent import RAGAgent, UNCERTAINTY_NOTE
+        from src.rag.agent import UNCERTAINTY_NOTE, RAGAgent
 
         mock_client = MagicMock()
         insufficient = MagicMock()
@@ -1041,9 +1039,10 @@ class TestMonitoring:
 
     def test_tracer_records_spans(self, tmp_path):
         """SQLiteSpanExporter should record spans to SQLite."""
-        from src.monitoring.tracer import SQLiteSpanExporter
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        from src.monitoring.tracer import SQLiteSpanExporter
 
         db_path = tmp_path / "test_traces.db"
         exporter = SQLiteSpanExporter(db_path=db_path)
@@ -1069,10 +1068,11 @@ class TestMonitoring:
         assert row[0] == "test.span"
 
     def test_record_feedback(self, tmp_path):
-        """record_feedback should update the feedback column."""
-        from src.monitoring.tracer import SQLiteSpanExporter, record_feedback
+        """record_feedback should update the feedback column of the exact span."""
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        from src.monitoring.tracer import SQLiteSpanExporter, record_feedback
 
         db_path = tmp_path / "test_traces.db"
         exporter = SQLiteSpanExporter(db_path=db_path)
@@ -1082,18 +1082,112 @@ class TestMonitoring:
 
         with tracer.start_as_current_span("agent.run") as span:
             span.set_attribute("query", "test")
+            span_id = format(span.get_span_context().span_id, "016x")
 
         exporter.force_flush()
         exporter.shutdown()
 
-        result = record_feedback("0000000000000001", "positive", db_path=db_path)
-        assert isinstance(result, bool)
+        result = record_feedback(span_id, "positive", db_path=db_path)
+        assert result is True
+
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute(
+            "SELECT span_id, query, feedback FROM spans"
+        ).fetchone()
+        conn.close()
+        assert row == (span_id, "test", "positive")
+
+    def test_record_feedback_exact_span_attachment(self, tmp_path):
+        """Feedback must attach to the exact span in multi-message sessions.
+
+        Two runs via run_with_feedback, then feedback on the FIRST span id
+        only — the second span's feedback must remain NULL (review M3).
+        """
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        from src.monitoring.tracer import (
+            SQLiteSpanExporter,
+            TracedRAGAgent,
+            record_feedback,
+        )
+
+        db_path = tmp_path / "test_exact_span.db"
+        exporter = SQLiteSpanExporter(db_path=db_path)
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("test_exact_span")
+
+        mock_agent = MagicMock()
+        mock_agent.run.side_effect = [
+            {"answer": "a1", "searches": [], "iterations": 1},
+            {"answer": "a2", "searches": [], "iterations": 1},
+        ]
+        traced = TracedRAGAgent(agent=mock_agent, tracer=tracer)
+        _, first_span_id = traced.run_with_feedback("first query")
+        _, second_span_id = traced.run_with_feedback("second query")
+        assert first_span_id != second_span_id
+
+        exporter.force_flush()
+        exporter.shutdown()
+
+        assert record_feedback(first_span_id, "positive", db_path=db_path) is True
+
+        conn = sqlite3.connect(str(db_path))
+        rows = conn.execute(
+            "SELECT query, feedback FROM spans ORDER BY rowid"
+        ).fetchall()
+        conn.close()
+        assert rows == [("first query", "positive"), ("second query", None)]
+
+    def test_record_feedback_none_falls_back_to_newest_unset(self, tmp_path):
+        """record_feedback(None, ...) keeps the legacy behavior: the first
+        (lowest rowid) feedback-less agent.run row gets the feedback."""
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        from src.monitoring.tracer import SQLiteSpanExporter, record_feedback
+
+        db_path = tmp_path / "test_feedback_none.db"
+        exporter = SQLiteSpanExporter(db_path=db_path)
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("test_feedback_none")
+
+        for query in ("first", "second"):
+            with tracer.start_as_current_span("agent.run") as span:
+                span.set_attribute("query", query)
+
+        exporter.force_flush()
+        exporter.shutdown()
+
+        assert record_feedback(None, "negative", db_path=db_path) is True
+
+        conn = sqlite3.connect(str(db_path))
+        rows = conn.execute(
+            "SELECT query, feedback FROM spans ORDER BY rowid"
+        ).fetchall()
+        conn.close()
+        assert rows == [("first", "negative"), ("second", None)]
+
+    def test_tracing_enabled_gate(self, monkeypatch):
+        """tracing_enabled() defaults on; explicit env values disable it."""
+        from src.monitoring.tracer import tracing_enabled
+
+        monkeypatch.delenv("TRACING_ENABLED", raising=False)
+        assert tracing_enabled() is True
+        for disable in ("0", "false", "no", "off", ""):
+            monkeypatch.setenv("TRACING_ENABLED", disable)
+            assert tracing_enabled() is False
+        monkeypatch.setenv("TRACING_ENABLED", "1")
+        assert tracing_enabled() is True
 
     def test_get_trace_stats(self, tmp_path):
         """get_trace_stats should return summary statistics."""
-        from src.monitoring.tracer import SQLiteSpanExporter, get_trace_stats
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        from src.monitoring.tracer import SQLiteSpanExporter, get_trace_stats
 
         db_path = tmp_path / "test_traces.db"
         exporter = SQLiteSpanExporter(db_path=db_path)
@@ -1118,9 +1212,14 @@ class TestMonitoring:
 
     def test_traced_ragent_run(self, tmp_path):
         """TracedRAGAgent should wrap agent.run with tracing."""
-        from src.monitoring.tracer import SQLiteSpanExporter, TracedRAGAgent, get_trace_stats
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        from src.monitoring.tracer import (
+            SQLiteSpanExporter,
+            TracedRAGAgent,
+            get_trace_stats,
+        )
 
         db_path = tmp_path / "test_traced_agent.db"
         exporter = SQLiteSpanExporter(db_path=db_path)
@@ -1144,6 +1243,41 @@ class TestMonitoring:
 
         stats = get_trace_stats(db_path=db_path)
         assert stats["total_traces"] >= 1
+
+    def test_traced_ragent_run_with_feedback_returns_span_id(self, tmp_path):
+        """run_with_feedback returns (result, span_id) for exact feedback."""
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        from src.monitoring.tracer import SQLiteSpanExporter, TracedRAGAgent
+
+        db_path = tmp_path / "test_traced_agent_feedback.db"
+        exporter = SQLiteSpanExporter(db_path=db_path)
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("test_traced_agent_feedback")
+
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = {
+            "answer": "test answer",
+            "searches": [],
+            "iterations": 1,
+        }
+
+        traced = TracedRAGAgent(agent=mock_agent, tracer=tracer)
+        result, span_id = traced.run_with_feedback("test query")
+
+        assert result["answer"] == "test answer"
+        assert len(span_id) == 16
+        assert all(c in "0123456789abcdef" for c in span_id)
+
+        exporter.force_flush()
+        exporter.shutdown()
+
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute("SELECT query, span_id FROM spans").fetchone()
+        conn.close()
+        assert row == ("test query", span_id)
 
 
 # ===========================================================================
@@ -1318,13 +1452,6 @@ class TestEvaluationScripts:
     def test_retrieval_eval_importable(self):
         """retrieval_eval module should be importable."""
         sys.path.insert(0, str(PROJECT_ROOT))
-        from src.evaluation.retrieval_eval import (
-            load_ground_truth,
-            precision_at_k,
-            recall_at_k,
-            mrr,
-            evaluate_search,
-        )
 
     def test_precision_at_k(self):
         """precision_at_k should compute correctly."""
@@ -1352,12 +1479,6 @@ class TestEvaluationScripts:
 
     def test_llm_eval_importable(self):
         """llm_eval module should be importable."""
-        from src.evaluation.llm_eval import (
-            load_qa_pairs,
-            evaluate_single,
-            JUDGE_PROMPTS,
-            JudgeScores,
-        )
 
     def test_judge_prompts_have_required_fields(self):
         """All judge prompts should have instructions and template."""
@@ -1381,11 +1502,6 @@ class TestEvaluationScripts:
 
     def test_agent_eval_importable(self):
         """agent_eval module should be importable."""
-        from src.evaluation.agent_eval import (
-            load_qa_pairs,
-            retrieval_accuracy,
-            create_comparison_chart,
-        )
 
     def test_retrieval_accuracy_function(self):
         """retrieval_accuracy should compute hit rate correctly."""
@@ -1522,8 +1638,6 @@ class TestFullPipeline:
     def full_pipeline(self):
         """Set up the full pipeline (search index + RAG + agent)."""
         from src.search.hybrid import HybridSearch
-        from src.rag.pipeline import RAGBase
-        from src.rag.agent import RAGAgent
 
         search_index = HybridSearch(documents_path=CHUNKS_DIR / "documents.jsonl")
         return search_index
@@ -1608,11 +1722,16 @@ class TestFullPipeline:
 
     def test_full_agent_with_feedback(self, full_pipeline):
         """Full pipeline with monitoring: agent run → trace → feedback."""
-        from src.monitoring.tracer import SQLiteSpanExporter, TracedRAGAgent, get_trace_stats
+        import tempfile
+
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        import tempfile
+        from src.monitoring.tracer import (
+            SQLiteSpanExporter,
+            TracedRAGAgent,
+            get_trace_stats,
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test_traces.db"

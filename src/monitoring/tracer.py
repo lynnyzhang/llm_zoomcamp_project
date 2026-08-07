@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import sqlite3
-import time
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +55,21 @@ def _postgres_config() -> dict[str, Any] | None:
     }
 
 
+def _span_id(span) -> str:
+    """Stable hex span id shared by exporters and run_with_feedback."""
+    return format(span.get_span_context().span_id, "016x")
+
+
+def tracing_enabled() -> bool:
+    """Whether application tracing is enabled (env TRACING_ENABLED).
+
+    Defaults to enabled; set TRACING_ENABLED=0|false|no|off to disable, e.g.
+    for environments without a writable data/ directory.
+    """
+    raw = os.environ.get("TRACING_ENABLED", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off", ""}
+
+
 # ---------------------------------------------------------------------------
 # SQLite span exporter (from 5-Monitoring/assignment.ipynb pattern)
 # ---------------------------------------------------------------------------
@@ -74,7 +88,7 @@ class SQLiteSpanExporter(SpanExporter):
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
-        """Create the spans table if it doesn't exist."""
+        """Create the spans table if it doesn't exist (plus span_id)."""
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS spans (
                 name TEXT,
@@ -86,47 +100,108 @@ class SQLiteSpanExporter(SpanExporter):
                 feedback TEXT DEFAULT NULL,
                 agent_iterations INTEGER DEFAULT NULL,
                 query TEXT DEFAULT NULL,
-                search_queries TEXT DEFAULT NULL
+                search_queries TEXT DEFAULT NULL,
+                span_id TEXT DEFAULT NULL
             )
         """)
+        # Migrate databases created before the span_id column existed (e.g.
+        # docker/entrypoint.sh): SQLite has no ADD COLUMN IF NOT EXISTS.
+        columns = {
+            row[1] for row in self.conn.execute("PRAGMA table_info(spans)")
+        }
+        if "span_id" not in columns:
+            self.conn.execute(
+                "ALTER TABLE spans ADD COLUMN span_id TEXT DEFAULT NULL"
+            )
         self.conn.commit()
 
     def export(self, spans) -> SpanExportResult:
-        """Export a batch of finished spans to SQLite."""
-        for span in spans:
-            attrs = dict(span.attributes or {})
-            self.conn.execute(
-                """INSERT INTO spans
-                   (name, start_time, end_time, input_tokens, output_tokens,
-                    cost, feedback, agent_iterations, query, search_queries)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    span.name,
-                    span.start_time,
-                    span.end_time,
-                    attrs.get("input_tokens"),
-                    attrs.get("output_tokens"),
-                    attrs.get("cost"),
-                    attrs.get("feedback"),
-                    attrs.get("agent_iterations"),
-                    attrs.get("query"),
-                    attrs.get("search_queries"),
-                ),
+        """Export a batch of finished spans to SQLite.
+
+        Every write failure is contained (warning + FAILURE) — an unwritable
+        database must never crash the app.
+        """
+        try:
+            for span in spans:
+                attrs = dict(span.attributes or {})
+                self.conn.execute(
+                    """INSERT INTO spans
+                       (name, start_time, end_time, input_tokens,
+                        output_tokens, cost, feedback, agent_iterations,
+                        query, search_queries, span_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        span.name,
+                        span.start_time,
+                        span.end_time,
+                        attrs.get("input_tokens"),
+                        attrs.get("output_tokens"),
+                        attrs.get("cost"),
+                        attrs.get("feedback"),
+                        attrs.get("agent_iterations"),
+                        attrs.get("query"),
+                        attrs.get("search_queries"),
+                        _span_id(span),
+                    ),
+                )
+            self.conn.commit()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Failed to export spans to SQLite", exc_info=True
             )
-        self.conn.commit()
+            self.conn.rollback()
+            return SpanExportResult.FAILURE
         return SpanExportResult.SUCCESS
 
     def shutdown(self) -> None:
-        self.conn.close()
+        try:
+            self.conn.close()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "SQLite shutdown failed", exc_info=True
+            )
 
     def force_flush(self) -> bool:
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "SQLite force_flush failed", exc_info=True
+            )
+            return False
         return True
 
 
 # ---------------------------------------------------------------------------
 # Postgres span exporter (docker path, opt-in via POSTGRES_HOST)
 # ---------------------------------------------------------------------------
+
+_PG_SPANS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS spans (
+    name TEXT,
+    start_time BIGINT,
+    end_time BIGINT,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    cost DOUBLE PRECISION,
+    feedback TEXT DEFAULT NULL,
+    agent_iterations INTEGER DEFAULT NULL,
+    query TEXT DEFAULT NULL,
+    search_queries TEXT DEFAULT NULL,
+    span_id TEXT DEFAULT NULL
+)
+"""
+
+
+def _ensure_postgres_schema(conn) -> None:
+    """Create the Postgres spans table (+ span_id on pre-existing tables)."""
+    with conn.cursor() as cur:
+        cur.execute(_PG_SPANS_SCHEMA)
+        cur.execute(
+            "ALTER TABLE spans ADD COLUMN IF NOT EXISTS span_id TEXT"
+        )
+    conn.commit()
+
 
 class PostgresSpanExporter(SpanExporter):
     """Export finished spans to a Postgres `spans` table.
@@ -149,26 +224,7 @@ class PostgresSpanExporter(SpanExporter):
                 "PostgresSpanExporter requires POSTGRES_HOST to be set"
             )
         self.conn = psycopg.connect(**cfg)
-        self._ensure_schema()
-
-    def _ensure_schema(self) -> None:
-        """Create the spans table if it doesn't exist (BIGINT ns timestamps)."""
-        with self.conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS spans (
-                    name TEXT,
-                    start_time BIGINT,
-                    end_time BIGINT,
-                    input_tokens INTEGER,
-                    output_tokens INTEGER,
-                    cost DOUBLE PRECISION,
-                    feedback TEXT DEFAULT NULL,
-                    agent_iterations INTEGER DEFAULT NULL,
-                    query TEXT DEFAULT NULL,
-                    search_queries TEXT DEFAULT NULL
-                )
-            """)
-        self.conn.commit()
+        _ensure_postgres_schema(self.conn)
 
     def export(self, spans) -> SpanExportResult:
         """Export a batch of finished spans to Postgres."""
@@ -180,8 +236,8 @@ class PostgresSpanExporter(SpanExporter):
                         """INSERT INTO spans
                            (name, start_time, end_time, input_tokens,
                             output_tokens, cost, feedback, agent_iterations,
-                            query, search_queries)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                            query, search_queries, span_id)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                         (
                             span.name,
                             span.start_time,
@@ -193,6 +249,7 @@ class PostgresSpanExporter(SpanExporter):
                             attrs.get("agent_iterations"),
                             attrs.get("query"),
                             attrs.get("search_queries"),
+                            _span_id(span),
                         ),
                     )
             self.conn.commit()
@@ -205,7 +262,10 @@ class PostgresSpanExporter(SpanExporter):
         return SpanExportResult.SUCCESS
 
     def shutdown(self) -> None:
-        self.conn.close()
+        try:
+            self.conn.close()
+        except Exception:
+            self._logger.warning("Postgres shutdown failed", exc_info=True)
 
     def force_flush(self) -> bool:
         try:
@@ -234,30 +294,40 @@ class TracerSetup:
 
     def __init__(self, service_name: str = "llm-zoomcapstone"):
         self.provider = TracerProvider()
-        self.exporter = SQLiteSpanExporter()
+        self.exporter: SQLiteSpanExporter | None = None
         self.postgres_exporter: PostgresSpanExporter | None = None
-        self.provider.add_span_processor(
-            SimpleSpanProcessor(self.exporter)
-        )
-        if _postgres_config() is not None:
+        if tracing_enabled():
             try:
-                self.postgres_exporter = PostgresSpanExporter()
+                self.exporter = SQLiteSpanExporter()
                 self.provider.add_span_processor(
-                    SimpleSpanProcessor(self.postgres_exporter)
+                    SimpleSpanProcessor(self.exporter)
                 )
             except Exception:
                 logging.getLogger(__name__).warning(
-                    "Postgres span export disabled: %s",
-                    "could not connect",
+                    "SQLite span export disabled: %s",
+                    "could not open database",
                     exc_info=True,
                 )
+            if _postgres_config() is not None:
+                try:
+                    self.postgres_exporter = PostgresSpanExporter()
+                    self.provider.add_span_processor(
+                        SimpleSpanProcessor(self.postgres_exporter)
+                    )
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "Postgres span export disabled: %s",
+                        "could not connect",
+                        exc_info=True,
+                    )
         trace.set_tracer_provider(self.provider)
         self.tracer = trace.get_tracer(service_name)
 
     def shutdown(self) -> None:
         """Flush and close the exporters."""
-        self.exporter.force_flush()
-        self.exporter.shutdown()
+        if self.exporter is not None:
+            self.exporter.force_flush()
+            self.exporter.shutdown()
         if self.postgres_exporter is not None:
             self.postgres_exporter.force_flush()
             self.postgres_exporter.shutdown()
@@ -302,9 +372,7 @@ class TracedRAGAgent:
         with self.tracer.start_as_current_span("agent.run") as span:
             span.set_attribute("query", query)
 
-            start = time.time()
             result = self.agent.run(query)
-            elapsed = time.time() - start
 
             span.set_attribute("agent_iterations", result.get("iterations", 0))
             span.set_attribute("search_count", len(result.get("searches", [])))
@@ -326,9 +394,7 @@ class TracedRAGAgent:
         with self.tracer.start_as_current_span("agent.run") as span:
             span.set_attribute("query", query)
 
-            start = time.time()
             result = self.agent.run(query)
-            elapsed = time.time() - start
 
             span.set_attribute("agent_iterations", result.get("iterations", 0))
             span.set_attribute("search_count", len(result.get("searches", [])))
@@ -347,38 +413,89 @@ class TracedRAGAgent:
 # Feedback storage
 # ---------------------------------------------------------------------------
 
+def _record_feedback_postgres(span_id: str | None, feedback: str) -> None:
+    """Dual-write feedback into the Postgres spans table (docker path).
+
+    Runs only when POSTGRES_HOST is set. Updates the exact span by span_id,
+    inserting a placeholder row when the span export never reached Postgres.
+    Failures are logged and swallowed — feedback in SQLite must never be
+    lost because Postgres is down.
+    """
+    cfg = _postgres_config()
+    if cfg is None or not span_id:
+        return
+    try:
+        import psycopg
+
+        with psycopg.connect(**cfg) as conn:
+            _ensure_postgres_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE spans SET feedback = %s WHERE span_id = %s",
+                    (feedback, span_id),
+                )
+                if cur.rowcount == 0:
+                    cur.execute(
+                        "INSERT INTO spans (span_id, feedback) "
+                        "VALUES (%s, %s)",
+                        (span_id, feedback),
+                    )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "Failed to record feedback in Postgres", exc_info=True
+        )
+
+
 def record_feedback(
-    span_id: str,
+    span_id: str | None,
     feedback: str,
     db_path: str | Path | None = None,
 ) -> bool:
     """Record user feedback for a trace.
 
     Args:
-        span_id: The span ID to associate feedback with.
+        span_id: The span ID to associate feedback with (exact match against
+            the span_id column). When None, falls back to the legacy
+            behavior: update the first (oldest) feedback-less agent.run row.
         feedback: "positive" or "negative".
         db_path: Optional path to the traces database.
 
     Returns:
-        True if feedback was recorded, False otherwise.
+        True if feedback was recorded, False otherwise. Never raises — an
+        unwritable database logs a warning and returns False.
     """
     path = Path(db_path) if db_path else _DB_PATH
     if not path.exists():
         return False
 
-    conn = sqlite3.connect(str(path))
     try:
-        cursor = conn.execute(
-            "UPDATE spans SET feedback = ? WHERE rowid = ("
-            "SELECT rowid FROM spans WHERE name = 'agent.run' "
-            "AND feedback IS NULL LIMIT 1"
-            ")",
-            (feedback,),
+        conn = sqlite3.connect(str(path))
+        try:
+            if span_id:
+                cursor = conn.execute(
+                    "UPDATE spans SET feedback = ? WHERE span_id = ?",
+                    (feedback, span_id),
+                )
+            else:
+                cursor = conn.execute(
+                    "UPDATE spans SET feedback = ? WHERE rowid = ("
+                    "SELECT rowid FROM spans WHERE name = 'agent.run' "
+                    "AND feedback IS NULL LIMIT 1"
+                    ")",
+                    (feedback,),
+                )
+            conn.commit()
+            recorded = cursor.rowcount > 0
+        finally:
+            conn.close()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "Failed to record feedback in SQLite", exc_info=True
         )
-        conn.commit()
-        return cursor.rowcount > 0
-    finally:
-        conn.close()
+        return False
+
+    _record_feedback_postgres(span_id, feedback)
+    return recorded
 
 
 def get_trace_stats(db_path: str | Path | None = None) -> dict[str, Any]:

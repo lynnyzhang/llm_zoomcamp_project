@@ -12,6 +12,7 @@ Features:
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 import sys
 from pathlib import Path
@@ -97,21 +98,45 @@ if "feedback" not in st.session_state:
 # Initialize agent (lazy loading)
 # ---------------------------------------------------------------------------
 
-def get_agent() -> RAGAgent:
-    """Get or create the RAG agent."""
+def _make_agent() -> RAGAgent:
+    """Build a fresh RAGAgent with the current sidebar settings."""
+    search_index = HybridSearch()
+    return RAGAgent(
+        search_index=search_index,
+        llm_client=create_client(),
+        max_iterations=max_iterations,
+        search_type=search_type,
+    )
+
+
+def _maybe_trace(agent: RAGAgent):
+    """Wrap the agent with TracedRAGAgent when tracing is enabled.
+
+    Falls back to the plain agent when tracing is disabled or the tracer
+    cannot be initialized (an unwritable data/ must never break the app).
+    """
+    try:
+        from src.monitoring.tracer import TracedRAGAgent, tracing_enabled
+
+        if tracing_enabled():
+            return TracedRAGAgent(agent)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "Tracing disabled — falling back to plain agent", exc_info=True
+        )
+    return agent
+
+
+def get_agent():
+    """Get or create the RAG agent (traced when monitoring is enabled)."""
     if st.session_state.agent is None:
         with st.spinner("Loading search index and LLM..."):
-            search_index = HybridSearch()
-            st.session_state.agent = RAGAgent(
-                search_index=search_index,
-                llm_client=create_client(),
-                max_iterations=max_iterations,
-                search_type=search_type,
-            )
+            st.session_state.agent = _maybe_trace(_make_agent())
     else:
         # Re-wire the sidebar selection onto the cached agent (dispatch is read
         # at call time) so switching search_type skips rebuilding the ONNX index.
-        st.session_state.agent.rag.search_type = search_type
+        inner = getattr(st.session_state.agent, "agent", st.session_state.agent)
+        inner.rag.search_type = search_type
     return st.session_state.agent
 
 
@@ -274,6 +299,24 @@ def _pokemon_card_grid(docs: list[dict]) -> None:
                     st.caption(excerpt)
 
 
+def _record_feedback(span_id: str | None, feedback: str) -> None:
+    """Persist feedback for a message's span; never crash the UI.
+
+    Messages without a span (untraced agent or pre-tracing history) are
+    skipped; write failures (unwritable database) are logged and swallowed.
+    """
+    if not span_id:
+        return
+    try:
+        from src.monitoring.tracer import record_feedback
+
+        record_feedback(span_id, feedback)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "Failed to record feedback", exc_info=True
+        )
+
+
 def render_message(msg: dict) -> None:
     """Render one chat message — the single path for history and live replies.
 
@@ -323,10 +366,12 @@ def render_message(msg: dict) -> None:
         with col1:
             if st.button("👍", key=f"up_{msg_id}"):
                 st.session_state.feedback[msg_id] = "positive"
+                _record_feedback(msg.get("span_id"), "positive")
                 st.toast("Thanks for the feedback!")
         with col2:
             if st.button("👎", key=f"down_{msg_id}"):
                 st.session_state.feedback[msg_id] = "negative"
+                _record_feedback(msg.get("span_id"), "negative")
                 st.toast("Thanks for the feedback!")
 
         # Show feedback status
@@ -365,7 +410,11 @@ if prompt := st.chat_input("Ask a question about the course..."):
     with st.chat_message("assistant"), st.spinner("Thinking..."):
         try:
             agent = get_agent()
-            result = agent.run(prompt)
+            if hasattr(agent, "run_with_feedback"):
+                result, span_id = agent.run_with_feedback(prompt)
+            else:
+                result = agent.run(prompt)
+                span_id = None
 
             answer = result.get("answer", "No answer generated.")
 
@@ -375,6 +424,7 @@ if prompt := st.chat_input("Ask a question about the course..."):
                 "content": answer,
                 "msg_id": msg_id,
                 "agent_result": result,
+                "span_id": span_id,
             }
             render_message(message)
             st.session_state.messages.append(message)
