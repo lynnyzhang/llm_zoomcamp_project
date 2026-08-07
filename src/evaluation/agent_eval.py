@@ -13,11 +13,9 @@ Measures:
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,7 +28,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.llm import get_model
-
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -143,8 +140,7 @@ Ground Truth Answer: {ground_truth}
         # Extract JSON from response
         if "```" in text:
             text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
+            text = text.removeprefix("json")
             text = text.strip()
 
         result = json.loads(text)
@@ -152,7 +148,7 @@ Ground Truth Answer: {ground_truth}
             "score": result.get("score", 0),
             "explanation": result.get("explanation", ""),
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — judge failure returns None for the caller to count
         print(f"  Judge error: {e}")
         return None
 
@@ -187,7 +183,7 @@ def evaluate_answer_quality(
 
         try:
             generated = rag_fn(question)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-question errors never abort the batch
             print(f"  [{i+1}/{len(pairs)}] RAG error: {e}")
             errors += 1
             continue
@@ -222,7 +218,7 @@ def evaluate_answer_quality(
 
 def create_comparison_chart(results: dict, output_path: str) -> None:
     """Create a bar chart comparing simple RAG vs agentic RAG."""
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5))
+    _, axes = plt.subplots(1, 3, figsize=(14, 5))
 
     simple = results["simple_rag"]
     agent = results["agentic_rag"]
@@ -275,6 +271,7 @@ def main():
     """Run agent loop vs simple RAG evaluation."""
     from dotenv import load_dotenv
     from openai import OpenAI
+
     from src.llm import get_api_key, get_base_url
 
     load_dotenv(PROJECT_ROOT / ".env")
@@ -305,7 +302,7 @@ def main():
         )
         llm_available = True
         print(f"LLM API available at {base_url}")
-    except Exception:
+    except Exception:  # noqa: BLE001 — any endpoint failure degrades to retrieval-only mode
         print(f"LLM API not available at {base_url} — running retrieval-only evaluation")
 
     # Initialize search
@@ -317,8 +314,8 @@ def main():
     print(f"Search index ready in {time.time() - t0:.1f}s")
 
     # Initialize pipelines
-    from src.rag.pipeline import RAGBase
     from src.rag.agent import RAGAgent
+    from src.rag.pipeline import RAGBase
 
     rag_base = RAGBase(search_index=search_index, llm_client=client)
     agent = RAGAgent(search_index=search_index, llm_client=client)
@@ -366,7 +363,6 @@ def main():
 
     # Run agent on sample to measure searches and latency
     print("Running agent loop on sample...")
-    t0 = time.time()
     agent_search_counts = []
     agent_latencies = []
     agent_retrieval_hits = 0
@@ -406,7 +402,6 @@ def main():
         if (i + 1) % 10 == 0:
             print(f"  [{i+1}/{len(agent_sample)}] processed, avg searches: {np.mean(agent_search_counts):.2f}")
 
-    agent_total_time = time.time() - t0
     avg_searches = np.mean(agent_search_counts)
     avg_latency = np.mean(agent_latencies)
     agent_retrieval_rate = agent_retrieval_hits / len(agent_sample)
@@ -418,7 +413,6 @@ def main():
 
     if llm_available:
         print("\nEvaluating agent answer quality (LLM judge)...")
-        t0 = time.time()
         agent_quality_scores = []
         agent_errors = 0
 
@@ -429,7 +423,7 @@ def main():
             try:
                 result = agent.run(question)
                 generated = result["answer"]
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — per-question errors never abort the batch
                 print(f"  [{i+1}/{len(agent_sample)}] Error: {e}")
                 agent_errors += 1
                 continue
@@ -444,16 +438,13 @@ def main():
             if (i + 1) % 10 == 0:
                 print(f"  [{i+1}/{len(agent_sample)}] evaluated")
 
-        agent_quality_time = time.time() - t0
         agent_mean_score = round(np.mean(agent_quality_scores), 2) if agent_quality_scores else 0
-        agent_latency_per_query = agent_quality_time / max(len(agent_quality_scores), 1)
 
         print(f"  Mean score: {agent_mean_score}/5")
         print(f"  Evaluated: {len(agent_quality_scores)}, Errors: {agent_errors}")
     else:
         agent_quality_scores = []
         agent_mean_score = 0
-        agent_latency_per_query = 0.0
         agent_errors = judge_sample
 
     # -------------------------------------------------------------------------
@@ -568,7 +559,7 @@ def main():
     # Create visualization
     try:
         create_comparison_chart(results, str(chart_path))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — chart failure is non-fatal to eval results
         print(f"Chart creation failed (non-fatal): {e}")
 
     return results

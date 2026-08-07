@@ -1,23 +1,23 @@
 {
   "keyword": {
-    "precision@5": 0.0004,
-    "recall@5": 0.0022,
-    "mrr": 0.0014,
-    "num_questions": 918,
-    "time_seconds": 1.03
+    "precision@5": 0.1952,
+    "recall@5": 0.976,
+    "mrr": 0.9548,
+    "num_questions": 250,
+    "time_seconds": 0.13
   },
   "vector": {
-    "precision@5": 0.0011,
-    "recall@5": 0.0054,
-    "mrr": 0.0022,
-    "num_questions": 918,
-    "time_seconds": 6.7
+    "precision@5": 0.1968,
+    "recall@5": 0.984,
+    "mrr": 0.891,
+    "num_questions": 250,
+    "time_seconds": 0.43
   },
   "hybrid": {
-    "precision@5": 0.0009,
-    "recall@5": 0.0044,
-    "mrr": 0.0021,
-    "num_questions": 918,
-    "time_seconds": 7.48
+    "precision@5": 0.1968,
+    "recall@5": 0.984,
+    "mrr": 0.952,
+    "num_questions": 250,
+    "time_seconds": 0.6
   }
 }

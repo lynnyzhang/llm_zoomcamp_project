@@ -1,41 +1,41 @@
 {
   "simple_rag": {
-    "accuracy": 0.0044,
+    "accuracy": 0.984,
     "retrieval": {
-      "hit_rate": 0.0044,
-      "hits": 4,
-      "total": 918
+      "hit_rate": 0.984,
+      "hits": 246,
+      "total": 250
     },
     "answer_quality": {
-      "mean_score": 0,
-      "num_evaluated": 0
+      "mean_score": 3.9,
+      "num_evaluated": 20
     },
-    "latency_per_query": 0.0,
-    "retrieval_time_seconds": 8.41
+    "latency_per_query": 19.26,
+    "retrieval_time_seconds": 0.72
   },
   "agentic_rag": {
-    "accuracy": 0.04,
+    "accuracy": 0.98,
     "retrieval": {
-      "hit_rate": 0.04,
-      "hits": 2,
+      "hit_rate": 0.98,
+      "hits": 49,
       "total": 50
     },
     "answer_quality": {
-      "mean_score": 0,
-      "num_evaluated": 0
+      "mean_score": 3.65,
+      "num_evaluated": 20
     },
-    "avg_searches_per_query": 1.0,
-    "latency_per_query": 0.01,
-    "total_time_seconds": 0.46
+    "avg_searches_per_query": 1.22,
+    "latency_per_query": 39.99,
+    "total_time_seconds": 1616.12
   },
   "comparison": {
-    "retrieval_improvement": 0.0356,
-    "answer_quality_improvement": 0,
-    "latency_overhead": 0.01,
-    "search_overhead": 0.0
+    "retrieval_improvement": -0.004,
+    "answer_quality_improvement": -0.25,
+    "latency_overhead": 20.73,
+    "search_overhead": 0.22
   },
   "config": {
-    "total_questions": 918,
+    "total_questions": 250,
     "judge_sample_size": 20,
     "model": "qwen/qwen3.5-9b"
   }
