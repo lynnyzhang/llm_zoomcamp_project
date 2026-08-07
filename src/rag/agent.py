@@ -201,6 +201,7 @@ class RAGAgent:
         llm_client: OpenAI | None = None,
         model: str | None = None,
         max_iterations: int = MAX_ITERATIONS,
+        search_type: str = "hybrid",
     ):
         if search_index is None:
             search_index = HybridSearch()
@@ -209,10 +210,12 @@ class RAGAgent:
             search_index=search_index,
             llm_client=llm_client,
             model=model,
+            search_type=search_type,
         )
         self.llm_client = self.rag.llm_client
         self.model = model
         self.max_iterations = max_iterations
+        self.search_type = search_type
 
     # ------------------------------------------------------------------
     # Tool: perform_search

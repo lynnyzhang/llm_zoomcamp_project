@@ -918,6 +918,91 @@ class TestAgentGuardrails:
 
 
 # ===========================================================================
+# PHASE 5c: Search-type dispatch (todo 6)
+# ===========================================================================
+
+
+class RecordingSearchIndex(StubSearchIndex):
+    """Stub that records which search backend method was invoked.
+
+    ``keyword_search`` / ``vector_search`` / ``search`` all satisfy the
+    ``(query, num_results) -> list[dict]`` contract; the recorded call tuple
+    proves the agent/pipeline dispatched to the right one.
+    """
+
+    def __init__(self, documents: list[dict] | None = None):
+        super().__init__(documents=documents)
+        self.calls: list[tuple[str, str, int]] = []
+
+    def search(self, query: str, num_results: int = 5) -> list[dict]:
+        self.calls.append(("search", query, num_results))
+        return super().search(query, num_results=num_results)
+
+    def keyword_search(self, query: str, num_results: int = 5) -> list[dict]:
+        self.calls.append(("keyword_search", query, num_results))
+        return [dict(doc) for doc in self._documents[:num_results]]
+
+    def vector_search(self, query: str, num_results: int = 5) -> list[dict]:
+        self.calls.append(("vector_search", query, num_results))
+        return [dict(doc) for doc in self._documents[:num_results]]
+
+
+class TestSearchTypeDispatch:
+    """search_type wiring (todo 6): RAGBase/RAGAgent dispatch to the selected
+    search backend — stub index only, never a real HybridSearch."""
+
+    @staticmethod
+    def _rag(search_type: str | None = None):
+        from src.rag.pipeline import RAGBase
+
+        index = RecordingSearchIndex()
+        kwargs = {"llm_client": MagicMock()}
+        if search_type is not None:
+            kwargs["search_type"] = search_type
+        return RAGBase(search_index=index, **kwargs), index
+
+    @staticmethod
+    def _agent(search_type: str):
+        from src.rag.agent import RAGAgent
+
+        index = RecordingSearchIndex()
+        agent = RAGAgent(
+            search_index=index, llm_client=MagicMock(), search_type=search_type
+        )
+        return agent, index
+
+    def test_ragbase_keyword_dispatches_to_keyword_search(self):
+        rag, index = self._rag("keyword")
+        rag.search("pikachu", num_results=3)
+        assert index.calls == [("keyword_search", "pikachu", 3)]
+
+    def test_ragbase_vector_dispatches_to_vector_search(self):
+        rag, index = self._rag("vector")
+        rag.search("pikachu", num_results=3)
+        assert index.calls == [("vector_search", "pikachu", 3)]
+
+    def test_ragbase_default_hybrid_dispatches_to_search(self):
+        rag, index = self._rag()
+        rag.search("pikachu", num_results=3)
+        assert index.calls == [("search", "pikachu", 3)]
+
+    def test_agent_keyword_dispatches_to_keyword_search(self):
+        agent, index = self._agent("keyword")
+        agent.perform_search("pikachu")
+        assert index.calls[0][0] == "keyword_search"
+
+    def test_agent_vector_dispatches_to_vector_search(self):
+        agent, index = self._agent("vector")
+        agent.perform_search("pikachu")
+        assert index.calls[0][0] == "vector_search"
+
+    def test_agent_hybrid_dispatches_to_search(self):
+        agent, index = self._agent("hybrid")
+        agent.perform_search("pikachu")
+        assert index.calls[0][0] == "search"
+
+
+# ===========================================================================
 # PHASE 6: Monitoring & Tracing
 # ===========================================================================
 

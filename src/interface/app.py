@@ -11,6 +11,8 @@ Features:
 
 from __future__ import annotations
 
+import contextlib
+import re
 import sys
 from pathlib import Path
 
@@ -26,10 +28,10 @@ from dotenv import load_dotenv
 load_dotenv(project_root / ".env")
 
 import streamlit as st
+
 from src.llm import create_client, get_model
 from src.rag.agent import RAGAgent
 from src.search.hybrid import HybridSearch
-
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -74,7 +76,7 @@ with st.sidebar:
 
     st.divider()
     st.markdown(f"**Model:** `{get_model()}`")
-    st.markdown("**Search:** Hybrid (keyword + vector)")
+    st.markdown(f"**Search:** `{search_type}`")
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +106,12 @@ def get_agent() -> RAGAgent:
                 search_index=search_index,
                 llm_client=create_client(),
                 max_iterations=max_iterations,
+                search_type=search_type,
             )
+    else:
+        # Re-wire the sidebar selection onto the cached agent (dispatch is read
+        # at call time) so switching search_type skips rebuilding the ONNX index.
+        st.session_state.agent.rag.search_type = search_type
     return st.session_state.agent
 
 
@@ -177,11 +184,10 @@ def display_search_iteration(idx: int, search) -> None:
                     st.caption(f"Section: {section}")
 
 
-def display_source_documents(searches: list) -> None:
-    """Display all source documents from search iterations."""
-    # Collect unique documents
-    seen_ids = set()
-    unique_docs = []
+def _unique_docs(searches: list) -> list[dict]:
+    """Collect unique documents across search iterations (dedup by id)."""
+    seen_ids: set[str] = set()
+    unique_docs: list[dict] = []
 
     for search in searches:
         for doc in search.results:
@@ -189,6 +195,13 @@ def display_source_documents(searches: list) -> None:
             if doc_id and doc_id not in seen_ids:
                 seen_ids.add(doc_id)
                 unique_docs.append(doc)
+
+    return unique_docs
+
+
+def display_source_documents(searches: list) -> None:
+    """Display all source documents from search iterations."""
+    unique_docs = _unique_docs(searches)
 
     if not unique_docs:
         st.info("No source documents found.")
@@ -214,24 +227,82 @@ def display_source_documents(searches: list) -> None:
                 )
 
 
-# ---------------------------------------------------------------------------
-# Main UI
-# ---------------------------------------------------------------------------
+def _doc_artwork_url(doc: dict) -> str:
+    """Official PokeAPI artwork URL for a doc's Pokémon id (pure digits)."""
+    doc_id = str(doc.get("id", ""))
+    pokemon_id = re.sub(r"\D", "", doc_id)
+    if not pokemon_id:
+        return ""
+    return (
+        "https://raw.githubusercontent.com/PokeAPI/sprites/master/"
+        f"sprites/pokemon/other/official-artwork/{pokemon_id}.png"
+    )
 
-st.title("🤖 LLM Zoomcamp Assistant")
-st.caption("Agentic RAG with full transparency into search and reasoning")
 
-# Chat history
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+def _stats_excerpt(content: str, limit: int = 200) -> str:
+    """Short stats excerpt from doc content: the 'Stats:' line when present."""
+    if not content:
+        return ""
+    stats_idx = content.lower().find("stats:")
+    if stats_idx != -1:
+        return content[stats_idx:stats_idx + limit].strip()
+    return content.strip()[:limit]
 
-        # Show agent process for assistant messages
-        if message["role"] == "assistant" and "agent_result" in message:
-            result = message["agent_result"]
+
+def _pokemon_card_grid(docs: list[dict]) -> None:
+    """Render retrieved Pokémon as artwork cards in a 4-per-row grid."""
+    st.subheader("Pokémon Cards")
+
+    for row_start in range(0, len(docs), 4):
+        row_docs = docs[row_start:row_start + 4]
+        columns = st.columns(4)
+        for col, doc in zip(columns, row_docs):
+            with col:
+                title = doc.get("title", "Untitled")
+                artwork_url = _doc_artwork_url(doc)
+                if artwork_url:
+                    # Broken/404 artwork must not break the card — the title
+                    # and stats below still render without the image.
+                    with contextlib.suppress(Exception):
+                        st.image(artwork_url, width="stretch")
+                st.markdown(f"**{title}**")
+                section = doc.get("section", "")
+                if section:
+                    st.caption(f"Section: {section}")
+                excerpt = _stats_excerpt(doc.get("content", ""))
+                if excerpt:
+                    st.caption(excerpt)
+
+
+def render_message(msg: dict) -> None:
+    """Render one chat message — the single path for history and live replies.
+
+    Assistant messages carrying an ``agent_result`` render the answer (or a
+    rejection banner), Pokémon cards, confidence, agent-process transparency,
+    source documents, and the feedback buttons; all other messages render
+    their content as plain markdown.
+    """
+    with st.chat_message(msg["role"]):
+        if msg["role"] != "assistant" or "agent_result" not in msg:
+            st.markdown(msg["content"])
+            return
+
+        result = msg["agent_result"]
+        answer = result.get("answer", msg.get("content", ""))
+        searches = result.get("searches", [])
+        msg_id = msg.get("msg_id", "")
+
+        if result.get("rejected", False):
+            st.warning(answer)
+        else:
+            st.markdown(answer)
+
+            unique_docs = _unique_docs(searches)
+            if unique_docs:
+                _pokemon_card_grid(unique_docs)
 
             # Confidence score
-            confidence = compute_confidence(result.get("searches", []))
+            confidence = compute_confidence(searches)
             st.progress(confidence, text=f"Confidence: {confidence:.0%}")
 
             # Agent process visualization
@@ -241,33 +312,42 @@ for message in st.session_state.messages:
             iterations = result.get("iterations", 0)
             st.markdown(f"**Total iterations:** {iterations}")
 
-            # Display each search iteration
-            for idx, search in enumerate(result.get("searches", [])):
+            for idx, search in enumerate(searches):
                 display_search_iteration(idx, search)
 
-            # Source documents
-            display_source_documents(result.get("searches", []))
+            display_source_documents(searches)
 
-            # Feedback buttons
-            st.divider()
-            msg_id = message.get("msg_id", "")
-            col1, col2, col3 = st.columns([1, 1, 8])
-            with col1:
-                if st.button("👍", key=f"up_{msg_id}"):
-                    st.session_state.feedback[msg_id] = "positive"
-                    st.toast("Thanks for the feedback!")
-            with col2:
-                if st.button("👎", key=f"down_{msg_id}"):
-                    st.session_state.feedback[msg_id] = "negative"
-                    st.toast("Thanks for the feedback!")
+        # Feedback buttons
+        st.divider()
+        col1, col2, _ = st.columns([1, 1, 8])
+        with col1:
+            if st.button("👍", key=f"up_{msg_id}"):
+                st.session_state.feedback[msg_id] = "positive"
+                st.toast("Thanks for the feedback!")
+        with col2:
+            if st.button("👎", key=f"down_{msg_id}"):
+                st.session_state.feedback[msg_id] = "negative"
+                st.toast("Thanks for the feedback!")
 
-            # Show feedback status
-            if msg_id in st.session_state.feedback:
-                feedback = st.session_state.feedback[msg_id]
-                if feedback == "positive":
-                    st.success("👍 Positive feedback recorded")
-                else:
-                    st.warning("👎 Negative feedback recorded")
+        # Show feedback status
+        if msg_id in st.session_state.feedback:
+            feedback = st.session_state.feedback[msg_id]
+            if feedback == "positive":
+                st.success("👍 Positive feedback recorded")
+            else:
+                st.warning("👎 Negative feedback recorded")
+
+
+# ---------------------------------------------------------------------------
+# Main UI
+# ---------------------------------------------------------------------------
+
+st.title("🤖 LLM Zoomcamp Assistant")
+st.caption("Agentic RAG with full transparency into search and reasoning")
+
+# Chat history
+for message in st.session_state.messages:
+    render_message(message)
 
 
 # ---------------------------------------------------------------------------
@@ -282,62 +362,27 @@ if prompt := st.chat_input("Ask a question about the course..."):
         st.markdown(prompt)
 
     # Get agent response
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            try:
-                agent = get_agent()
-                result = agent.run(prompt)
+    with st.chat_message("assistant"), st.spinner("Thinking..."):
+        try:
+            agent = get_agent()
+            result = agent.run(prompt)
 
-                answer = result.get("answer", "No answer generated.")
-                st.markdown(answer)
+            answer = result.get("answer", "No answer generated.")
 
-                # Compute and display confidence
-                confidence = compute_confidence(result.get("searches", []))
-                st.progress(confidence, text=f"Confidence: {confidence:.0%}")
+            msg_id = f"msg_{len(st.session_state.messages)}"
+            message = {
+                "role": "assistant",
+                "content": answer,
+                "msg_id": msg_id,
+                "agent_result": result,
+            }
+            render_message(message)
+            st.session_state.messages.append(message)
 
-                # Agent process visualization
-                st.divider()
-                st.subheader("🔄 Agent Process")
-
-                iterations = result.get("iterations", 0)
-                st.markdown(f"**Total iterations:** {iterations}")
-
-                # Display each search iteration
-                for idx, search in enumerate(result.get("searches", [])):
-                    display_search_iteration(idx, search)
-
-                # Source documents
-                display_source_documents(result.get("searches", []))
-
-                # Feedback buttons
-                st.divider()
-                msg_id = f"msg_{len(st.session_state.messages)}"
-                col1, col2, col3 = st.columns([1, 1, 8])
-                with col1:
-                    if st.button("👍", key=f"up_{msg_id}"):
-                        st.session_state.feedback[msg_id] = "positive"
-                        st.toast("Thanks for the feedback!")
-                with col2:
-                    if st.button("👎", key=f"down_{msg_id}"):
-                        st.session_state.feedback[msg_id] = "negative"
-                        st.toast("Thanks for the feedback!")
-
-                # Store message with agent result
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": answer,
-                    "msg_id": msg_id,
-                    "agent_result": {
-                        "answer": answer,
-                        "searches": result.get("searches", []),
-                        "iterations": iterations,
-                    },
-                })
-
-            except Exception as e:
-                error_msg = f"Error: {str(e)}"
-                st.error(error_msg)
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": error_msg,
-                })
+        except Exception as e:  # noqa: BLE001 — UI error boundary: any failure surfaces as a chat error
+            error_msg = f"Error: {e!s}"
+            st.error(error_msg)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": error_msg,
+            })

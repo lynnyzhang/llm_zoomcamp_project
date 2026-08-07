@@ -41,15 +41,25 @@ class RAGBase:
         instructions: str = INSTRUCTIONS,
         prompt_template: str = PROMPT_TEMPLATE,
         model: str | None = None,
+        search_type: str = "hybrid",
     ):
         self.search_index = search_index
         self.llm_client = llm_client or create_client()
         self.instructions = instructions
         self.prompt_template = prompt_template
         self.model = model or get_model()
+        self.search_type = search_type
 
     def search(self, query: str, num_results: int = 5) -> list[dict]:
-        """Run hybrid search and return top results."""
+        """Run the configured search backend and return top results.
+
+        Dispatches on ``search_type``: ``keyword`` → keyword_search,
+        ``vector`` → vector_search, anything else → hybrid search.
+        """
+        if self.search_type == "keyword":
+            return self.search_index.keyword_search(query, num_results=num_results)
+        if self.search_type == "vector":
+            return self.search_index.vector_search(query, num_results=num_results)
         return self.search_index.search(query, num_results=num_results)
 
     def build_context(self, search_results: list[dict]) -> str:
