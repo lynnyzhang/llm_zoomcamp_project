@@ -1,0 +1,15 @@
+# Grafana provisioning: file-based dashboard provider.
+# Loads every JSON dashboard from /etc/grafana/dashboards (host mount
+# ./dashboards per docker-compose.yml) into the "Pokemon RAG" folder.
+apiVersion: 1
+
+providers:
+  - name: default
+    orgId: 1
+    folder: Pokemon RAG
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 10
+    options:
+      path: /etc/grafana/dashboards

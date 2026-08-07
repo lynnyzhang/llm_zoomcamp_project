@@ -1,0 +1,20 @@
+# Grafana provisioning: Postgres datasource for the spans table.
+# Referenced by dashboards via the fixed uid (capstone-postgres) — no
+# UI/API setup required; Grafana applies this file on boot.
+apiVersion: 1
+
+datasources:
+  - name: Postgres
+    uid: capstone-postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    database: capstone
+    user: capstone
+    secureJsonData:
+      password: capstone_secret
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+    isDefault: true
+    editable: false
