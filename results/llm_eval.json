@@ -1,0 +1,170 @@
+{
+  "simple": {
+    "faithfulness": 4.9,
+    "relevance": 5.0,
+    "coherence": 5.0,
+    "num_evaluated": 10,
+    "errors": 0,
+    "time_seconds": 173.62,
+    "prompt_name": "simple",
+    "sample_examples": [
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The answer is rated a perfect score because it directly addresses the question using only the provided context (specifically Passage 278). It confirms the fact with high confidence ('Yes'), cites the specific source text, and adds relevant supporting details from that same passage regarding his term dates. The response is clear, concise, and logically structured.",
+        "question_id": 0,
+        "question": "Was Abraham Lincoln the sixteenth President of the United States?",
+        "generated_answer": "Yes, according to the provided context, Abraham Lincoln was the sixteenth President of the United States. He served from March 4, 1861, until his assassination on April 15, 1865."
+      },
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The answer is fully faithful to the provided context, as it directly cites Passage 360 which explicitly mentions that Lincoln signed the National Banking Acts of 1863, 1864, and 1865. It perfectly addresses the user's question with a clear 'Yes' supported by evidence from the text. The response is coherent, well-structured, and clearly explains the reasoning based on the source material.",
+        "question_id": 2,
+        "question": "Did Lincoln sign the National Banking Act of 1863?",
+        "generated_answer": "Yes, based on the provided context, Abraham Lincoln signed the National Banking Acts of 1863, 1864, and 1865. The text states that these acts \"created the system of national banks\" which allowed for t"
+      },
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The answer is excellent. It directly addresses the question by stating 'No' and immediately provides the correct cause of death (Typhoid fever) based strictly on the provided text. The reasoning is clear, concise, and accurately cites the specific sentence from Passage 2894 that supports the conclusion.",
+        "question_id": 4,
+        "question": "Did his mother die of pneumonia?",
+        "generated_answer": "No, based on the provided context, Theodore Roosevelt's mother (Mittie) did not die of pneumonia; she died of **Typhoid fever**.\n\nThe text states: \"Theodore Roosevelt's mother Mittie died of Typhoid f"
+      },
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The answer is fully faithful as it extracts the exact figure ('about 18 months') directly from Passage 287. It is highly relevant because it answers the specific question asked using only the provided context. The response is coherent and clear, presenting the information concisely.",
+        "question_id": 6,
+        "question": "How many long was Lincoln's formal education?",
+        "generated_answer": "Based on the provided context, Lincoln's formal education consisted of about **18 months** of schooling."
+      },
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The answer is factually accurate according to the provided context (Passage 289), directly addresses the specific question asked, and presents the information clearly and concisely.",
+        "question_id": 8,
+        "question": "When did Lincoln begin his political career?",
+        "generated_answer": "Based on the provided context, Abraham Lincoln began his political career in **1832**. At age 23, he ran an unsuccessful campaign for the Illinois General Assembly as a member of the Whig Party."
+      }
+    ]
+  },
+  "detailed": {
+    "faithfulness": 4.9,
+    "relevance": 5.0,
+    "coherence": 5.0,
+    "num_evaluated": 10,
+    "errors": 0,
+    "time_seconds": 181.87,
+    "prompt_name": "detailed",
+    "sample_examples": [
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The generated answer is fully grounded in the provided context, specifically citing Passage 278 which explicitly states Lincoln was the sixteenth President. It directly addresses the user's question with a clear 'Yes' and supports it with relevant details from the text (dates of service). The structure is logical, concise, and easy to read.",
+        "question_id": 0,
+        "question": "Was Abraham Lincoln the sixteenth President of the United States?",
+        "generated_answer": "Yes, according to the provided context, **Abraham Lincoln was the sixteenth President of the United States**.\n\nThe text states that he served from March 4, 1861, until his assassination on April 15, 1"
+      },
+      {
+        "faithfulness": 4,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The answer is highly relevant and coherent, directly addressing the question with a clear 'yes' and providing a well-structured explanation. Regarding faithfulness, the model correctly identifies that Lincoln signed the act based on the text's description of his general policy ('he signed them') and lists the specific acts he signed (Homestead Act) as evidence. However, strictly speaking, the provided context does not explicitly state 'Lincoln signed the National Banking Act'; it only states that the system was created by these Acts and implies Lincoln signed them based on his philosophy. While the inference is logical and supported by the text's tone, a strict faithfulness score of 5 might require an explicit sentence like 'Lincoln signed the National Banking Act.' Therefore, a 4 reflects strong support with a minor gap in explicit textual confirmation.",
+        "question_id": 2,
+        "question": "Did Lincoln sign the National Banking Act of 1863?",
+        "generated_answer": "Based on the provided context, **yes**, Lincoln signed the National Banking Act of 1863.\n\nThe text states that \"Other important legislation involved economic matters... Also included was the creation "
+      },
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The generated answer is fully grounded in the provided context (Passage 2894), which explicitly states that Mittie died of Typhoid fever. It directly addresses the question by correcting the premise about pneumonia and provides the correct cause of death. The response is well-structured, clear, and logically sound.",
+        "question_id": 4,
+        "question": "Did his mother die of pneumonia?",
+        "generated_answer": "No, based on the provided context, his mother (Mittie) died of **Typhoid fever**, not pneumonia."
+      },
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The generated answer is fully supported by the provided context (Passage 287 explicitly states 'Lincoln's formal education consisted of about 18 months'). It directly addresses the user's question and matches the ground truth exactly. The sentence structure is clear, concise, and well-formed.",
+        "question_id": 6,
+        "question": "How many long was Lincoln's formal education?",
+        "generated_answer": "Based on the provided context, Lincoln's formal education consisted of about **18 months** of schooling."
+      },
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The generated answer is fully grounded in the provided context (specifically Passage 289), which explicitly states that Lincoln began his political career in 1832. It directly addresses the user's question and presents the information clearly and concisely.",
+        "question_id": 8,
+        "question": "When did Lincoln begin his political career?",
+        "generated_answer": "Based on the provided context, Abraham Lincoln began his political career in **1832** at age 23 with an unsuccessful campaign for the Illinois General Assembly as a member of the Whig Party."
+      }
+    ]
+  },
+  "with_examples": {
+    "faithfulness": 5.0,
+    "relevance": 5.0,
+    "coherence": 5.0,
+    "num_evaluated": 10,
+    "errors": 0,
+    "time_seconds": 230.12,
+    "prompt_name": "with_examples",
+    "sample_examples": [
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The answer is fully faithful as it directly cites the provided context to confirm the fact and includes specific details (dates) found in the text. It is highly relevant because it answers the user's question precisely. The response is coherent, presenting a clear and logical sentence structure.",
+        "question_id": 0,
+        "question": "Was Abraham Lincoln the sixteenth President of the United States?",
+        "generated_answer": "Yes, according to the provided context, Abraham Lincoln was the sixteenth President of the United States. He served from March 4, 1861, until his assassination on April 15, 1865."
+      },
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The answer is fully faithful as it directly derives the conclusion from the provided context, which explicitly links Lincoln's signing actions to the National Banking Acts. It is highly relevant because it addresses the specific question asked without deviation. The response is coherent, presenting a logical flow that connects general principles of Lincoln's presidency with specific examples and finally answers the query.",
+        "question_id": 2,
+        "question": "Did Lincoln sign the National Banking Act of 1863?",
+        "generated_answer": "Yes, based on the provided context, Abraham Lincoln signed the National Banking Acts. The text states that he \"signed\" legislation including the Homestead Act and the Morrill Land-Grant Colleges Act i"
+      },
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The answer is fully faithful as it correctly identifies 'no' based on the specific evidence in Passage 2894 that Mittie died of Typhoid fever. It is highly relevant because it directly addresses the pneumonia question using the retrieved context. The response is coherent, providing a clear conclusion followed by supporting details from the text.",
+        "question_id": 4,
+        "question": "Did his mother die of pneumonia?",
+        "generated_answer": "Based on the provided context, **no**, his mother did not die of pneumonia.\n\nAccording to the text under \"Passage 2894,\" Theodore Roosevelt's mother, Mittie, died of **Typhoid fever** on February 14, "
+      },
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The generated answer accurately extracts the specific fact ('about 18 months') directly from the provided context (Passage 287) to answer the question. It is faithful because it relies solely on the text without hallucination, highly relevant as it addresses the core query, and coherent in its presentation.",
+        "question_id": 6,
+        "question": "How many long was Lincoln's formal education?",
+        "generated_answer": "Based on the provided context, Lincoln's formal education consisted of about **18 months** of schooling."
+      },
+      {
+        "faithfulness": 5,
+        "relevance": 5,
+        "coherence": 5,
+        "explanation": "The generated answer is highly faithful as it directly extracts the correct year (1832) from Passage 289 without adding external information. It is perfectly relevant to the user's question and coherent in its structure, providing a clear and complete sentence that confirms the ground truth.",
+        "question_id": 8,
+        "question": "When did Lincoln begin his political career?",
+        "generated_answer": "Based on the provided context, Abraham Lincoln began his political career in **1832**. At age 23, he ran an unsuccessful campaign for the Illinois General Assembly as a member of the Whig Party."
+      }
+    ]
+  }
+}

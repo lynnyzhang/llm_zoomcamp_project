@@ -1,0 +1,83 @@
+volumes:
+  postgres_data:
+    driver: local
+  app_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: capstone-postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-capstone}
+      POSTGRES_USER: ${POSTGRES_USER:-capstone}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-capstone_secret}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: capstone-app
+    ports:
+      - "${APP_PORT:-8501}:8501"
+    volumes:
+      - app_data:/app/data
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-http://host.docker.internal:9101/v1}
+      MODEL_ID: ${MODEL_ID}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-capstone}
+      POSTGRES_USER: ${POSTGRES_USER:-capstone}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-capstone_secret}
+      DATASET_PATH: /app/data
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: capstone-grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./dashboards:/etc/grafana/dashboards
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-admin}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
