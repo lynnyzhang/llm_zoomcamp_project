@@ -246,11 +246,14 @@ class TestHybridSearch:
 
     def test_index_loads_documents(self, search_index):
         """Search index should load documents from JSONL."""
-        assert len(search_index.documents) >= 3000
+        # Floor relaxed from >= 3000 (rag-mini-wikipedia) to >= 50: the default
+        # dev subset is 50 Pokémon, one document per Pokémon (user directive
+        # 2026-08-07) — 3000 can never hold on the dev subset.
+        assert len(search_index.documents) >= 50
 
     def test_keyword_search_returns_results(self, search_index):
         """Keyword search should return results for a valid query."""
-        results = search_index.keyword_search("machine learning", num_results=5)
+        results = search_index.keyword_search("pikachu", num_results=5)
         assert len(results) > 0
         assert len(results) <= 5
         for doc in results:
@@ -259,7 +262,7 @@ class TestHybridSearch:
 
     def test_vector_search_returns_results(self, search_index):
         """Vector search should return results for a valid query."""
-        results = search_index.vector_search("deep learning neural networks", num_results=5)
+        results = search_index.vector_search("electric pokemon stats", num_results=5)
         assert len(results) > 0
         assert len(results) <= 5
         for doc in results:
@@ -267,7 +270,7 @@ class TestHybridSearch:
 
     def test_hybrid_search_returns_results(self, search_index):
         """Hybrid search should return fused results with scores."""
-        results = search_index.search("What is Python?", num_results=5)
+        results = search_index.search("What are Pikachu's stats?", num_results=5)
         assert len(results) > 0
         assert len(results) <= 5
         for doc in results:
@@ -277,7 +280,7 @@ class TestHybridSearch:
 
     def test_hybrid_search_scores_are_ranked(self, search_index):
         """Results should be ranked by score (descending)."""
-        results = search_index.search("machine learning", num_results=5)
+        results = search_index.search("fire type pokemon", num_results=5)
         scores = [doc["score"] for doc in results]
         assert scores == sorted(scores, reverse=True), "Scores should be in descending order"
 
@@ -336,7 +339,7 @@ class TestRAGPipeline:
         """Create a mock OpenAI client for LLM calls."""
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.output_text = "This is a mock answer about machine learning."
+        mock_response.output_text = "This is a mock answer about Pikachu."
         mock_client.responses.create.return_value = mock_response
         return mock_client
 
@@ -345,7 +348,7 @@ class TestRAGPipeline:
         from src.rag.pipeline import RAGBase
 
         rag = RAGBase(search_index=search_index)
-        results = rag.search("What is deep learning?")
+        results = rag.search("Which Pokémon are weak to fire?")
         assert len(results) > 0
         assert "content" in results[0]
 
@@ -354,7 +357,7 @@ class TestRAGPipeline:
         from src.rag.pipeline import RAGBase
 
         rag = RAGBase(search_index=search_index)
-        results = rag.search("Python programming", num_results=3)
+        results = rag.search("grass type pokemon", num_results=3)
         context = rag.build_context(results)
         assert isinstance(context, str)
         assert len(context) > 0
@@ -367,9 +370,9 @@ class TestRAGPipeline:
         from src.rag.pipeline import RAGBase
 
         rag = RAGBase(search_index=search_index)
-        results = rag.search("machine learning", num_results=3)
-        prompt = rag.build_prompt("What is machine learning?", results)
-        assert "What is machine learning?" in prompt
+        results = rag.search("electric pokemon", num_results=3)
+        prompt = rag.build_prompt("Which Pokémon are weak to fire?", results)
+        assert "Which Pokémon are weak to fire?" in prompt
         assert "CONTEXT" in prompt
 
     def test_rag_llm_call(self, search_index, mock_llm_client):
@@ -378,7 +381,7 @@ class TestRAGPipeline:
 
         rag = RAGBase(search_index=search_index, llm_client=mock_llm_client)
         answer = rag.llm("Test prompt")
-        assert answer == "This is a mock answer about machine learning."
+        assert answer == "This is a mock answer about Pikachu."
         mock_llm_client.responses.create.assert_called_once()
 
     def test_rag_full_pipeline(self, search_index, mock_llm_client):
@@ -386,7 +389,7 @@ class TestRAGPipeline:
         from src.rag.pipeline import RAGBase
 
         rag = RAGBase(search_index=search_index, llm_client=mock_llm_client)
-        answer = rag.rag("What is Python?")
+        answer = rag.rag("What are Pikachu's stats?")
         assert isinstance(answer, str)
         assert len(answer) > 0
         # Should have called search + LLM
@@ -439,7 +442,7 @@ class TestAgentLoop:
         insufficient_response.output_text = json.dumps({
             "sufficient": False,
             "reason": "Results not specific enough",
-            "reformulated_query": "Python programming language features",
+            "reformulated_query": "fire type pokemon weaknesses",
             "off_topic": False,
             "off_topic_reason": "",
         })
@@ -481,7 +484,7 @@ class TestAgentLoop:
         from src.rag.agent import RAGAgent
 
         agent = RAGAgent(search_index=search_index, llm_client=MagicMock())
-        results = agent.perform_search("What is Python?")
+        results = agent.perform_search("What are Pikachu's stats?")
         assert len(results) > 0
         assert "id" in results[0]
 
@@ -490,8 +493,8 @@ class TestAgentLoop:
         from src.rag.agent import RAGAgent
 
         agent = RAGAgent(search_index=search_index, llm_client=mock_llm_client)
-        results = agent.perform_search("What is Python?")
-        analysis = agent.analyze_results("What is Python?", results)
+        results = agent.perform_search("Which Pokémon are weak to fire?")
+        analysis = agent.analyze_results("Which Pokémon are weak to fire?", results)
 
         assert isinstance(analysis, dict)
         assert "sufficient" in analysis
@@ -539,9 +542,9 @@ class TestAgentLoop:
 
         mock_client = MagicMock()
         agent = RAGAgent(search_index=search_index, llm_client=mock_client)
-        analysis = {"reformulated_query": "better query about Python"}
+        analysis = {"reformulated_query": "better query about Pikachu"}
         reformulated = agent.reformulate_query("original query", analysis)
-        assert reformulated == "better query about Python"
+        assert reformulated == "better query about Pikachu"
         # Should not call LLM since reformulated_query was provided
         mock_client.responses.create.assert_not_called()
 
@@ -581,7 +584,7 @@ class TestAgentLoop:
         from src.rag.agent import RAGAgent
 
         agent = RAGAgent(search_index=search_index, llm_client=mock_llm_client)
-        result = agent.run("What is Python?")
+        result = agent.run("What are Pikachu's stats?")
 
         assert "answer" in result
         assert "searches" in result
@@ -1650,17 +1653,20 @@ class TestFullPipeline:
         assert (CHUNKS_DIR / "documents.jsonl").exists()
 
         # Verify search index loaded data
-        assert len(full_pipeline.documents) >= 3000
+        # Floor relaxed from >= 3000 (rag-mini-wikipedia) to >= 50: the default
+        # dev subset is 50 Pokémon (user directive 2026-08-07) — 3000 can never
+        # hold on the dev subset.
+        assert len(full_pipeline.documents) >= 50
 
         # Verify search returns results
-        results = full_pipeline.search("machine learning", num_results=3)
+        results = full_pipeline.search("water type pokemon", num_results=3)
         assert len(results) > 0
 
     def test_search_to_rag_pipeline(self, full_pipeline):
         """Verify search results flow into RAG context and prompt."""
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.output_text = "Machine learning is a subset of AI."
+        mock_response.output_text = "Pikachu is an electric type Pokémon."
         mock_client.responses.create.return_value = mock_response
 
         from src.rag.pipeline import RAGBase
@@ -1668,7 +1674,7 @@ class TestFullPipeline:
         rag = RAGBase(search_index=full_pipeline, llm_client=mock_client)
 
         # Search
-        results = rag.search("What is machine learning?")
+        results = rag.search("Which Pokémon are weak to fire?")
         assert len(results) > 0
 
         # Build context
@@ -1676,11 +1682,11 @@ class TestFullPipeline:
         assert len(context) > 0
 
         # Build prompt
-        prompt = rag.build_prompt("What is machine learning?", results)
-        assert "machine learning" in prompt.lower()
+        prompt = rag.build_prompt("water type pokemon", results)
+        assert "water type pokemon" in prompt.lower()
 
         # Generate answer
-        answer = rag.rag("What is machine learning?")
+        answer = rag.rag("water type pokemon")
         assert isinstance(answer, str)
         assert len(answer) > 0
 
@@ -1692,7 +1698,7 @@ class TestFullPipeline:
         analysis_response = MagicMock()
         analysis_response.output_text = json.dumps({
             "sufficient": True,
-            "reason": "Results contain information about machine learning",
+            "reason": "Results contain information about water type pokemon",
             "reformulated_query": "",
             "off_topic": False,
             "off_topic_reason": "",
@@ -1701,8 +1707,7 @@ class TestFullPipeline:
         # Answer response
         answer_response = MagicMock()
         answer_response.output_text = (
-            "Machine learning is a branch of artificial intelligence that enables "
-            "systems to learn from data."
+            "Pikachu is an electric type Pokémon known for high speed."
         )
 
         mock_client.responses.create.side_effect = [analysis_response, answer_response]
@@ -1710,7 +1715,7 @@ class TestFullPipeline:
         from src.rag.agent import RAGAgent
 
         agent = RAGAgent(search_index=full_pipeline, llm_client=mock_client)
-        result = agent.run("What is machine learning?")
+        result = agent.run("What are Pikachu's stats?")
 
         # Verify complete pipeline output
         assert "answer" in result
@@ -1756,8 +1761,10 @@ class TestFullPipeline:
             exporter.force_flush()
             exporter.shutdown()
 
-        stats = get_trace_stats(db_path=db_path)
-        assert stats["total_traces"] >= 1
+            # Read stats before the tempdir (and its SQLite DB) is removed
+            # when the with block exits — the file is gone after it.
+            stats = get_trace_stats(db_path=db_path)
+            assert stats["total_traces"] >= 1
 
     def test_postgres_export_opt_in_via_env(self, monkeypatch, tmp_path):
         """Without POSTGRES_HOST, tracer setup must not require Postgres."""
