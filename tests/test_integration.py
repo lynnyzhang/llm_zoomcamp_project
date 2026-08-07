@@ -149,7 +149,11 @@ class TestDataIngestion:
                 assert isinstance(doc["content"], str), f"Doc {i} content not a string"
                 assert len(doc["content"]) > 0, f"Doc {i} has empty content"
                 count += 1
-        assert count >= 3000, f"Expected >= 3000 chunked docs, got {count}"
+        # Floor relaxed from >= 3000 (rag-mini-wikipedia) to >= 50: the default
+        # dev subset is 50 Pokémon, one document per Pokémon (user directive
+        # 2026-08-07; review M4 keeps exactly one doc per Pokémon so every id
+        # stays a pure integer).
+        assert count >= 50, f"Expected >= 50 chunked docs, got {count}"
 
 
 # ===========================================================================
@@ -195,13 +199,16 @@ class TestChunkingPipeline:
             assert tokens <= 1200, f"Chunk too large: {tokens} tokens"
 
     def test_generate_metadata(self):
-        """Metadata generation should produce required keys."""
+        """Metadata should derive Pokémon fields from the raw pokedex cache."""
         from src.data.chunker import generate_metadata
 
-        meta = generate_metadata(42, 0, 3)
-        assert meta["title"] == "Passage 42"
-        assert meta["section"] == "llm-zoomcamp"
-        assert "url" in meta
+        meta = generate_metadata(1, 0, 1)
+        assert meta["title"] == "Bulbasaur (#1)"
+        assert meta["section"] == "grass+poison"
+        assert meta["url"] == (
+            "https://raw.githubusercontent.com/PokeAPI/sprites/master/"
+            "sprites/pokemon/other/official-artwork/1.png"
+        )
 
     def test_process_corpus_yields_valid_docs(self):
         """process_corpus should yield documents with required fields."""

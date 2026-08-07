@@ -1,18 +1,42 @@
 """Chunking and preprocessing pipeline for LLM Zoomcamp capstone.
 
 Reads corpus.jsonl, applies optional re-chunking if passages exceed token limits,
-adds metadata, and saves chunked documents to data/chunks/documents.jsonl.
+adds Pokémon metadata from the raw pokedex cache, and saves chunked documents
+to data/chunks/documents.jsonl.
 """
 
 import json
-import os
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 # Token estimation: ~4 chars per token (rough approximation for English text)
 CHARS_PER_TOKEN = 4
 MIN_TOKENS = 500
 MAX_TOKENS = 1000
+
+# Official artwork URL pattern (PokeAPI sprites; verified 200 for ids 1..1025).
+ARTWORK_URL = (
+    'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/'
+    'pokemon/other/official-artwork/{pokemon_id}.png'
+)
+
+_POKEDEX_PATH = Path(__file__).parent.parent.parent / 'data' / 'raw' / 'complete_pokedex.json'
+_POKEDEX: dict[int, dict] | None = None
+
+
+def _get_pokedex() -> dict[int, dict]:
+    """Load the raw pokedex cache (ingest output) once, keyed by Pokémon id."""
+    global _POKEDEX
+    if _POKEDEX is None:
+        try:
+            with open(_POKEDEX_PATH, 'r', encoding='utf-8') as f:
+                _POKEDEX = {record['id']: record for record in json.load(f)}
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f'Missing raw pokedex cache at {_POKEDEX_PATH}. '
+                'Run `uv run python -m src.data.ingest` first.'
+            ) from exc
+    return _POKEDEX
 
 
 def estimate_tokens(text: str) -> int:
@@ -75,40 +99,51 @@ def re_chunk_passage(passage: str, min_tokens: int = MIN_TOKENS, max_tokens: int
 
 
 def generate_metadata(passage_id: int, chunk_index: int, total_chunks: int) -> dict:
-    """Generate metadata for a chunk.
-    
-    Since corpus.jsonl only has passage and id, we derive minimal metadata.
-    The title/section/url can be enriched later if source data becomes available.
+    """Generate Pokémon metadata for a document from the raw pokedex cache.
+
+    Derives title, section (types joined with '+') and url (official artwork)
+    from the Pokémon record with the given id. Falls back to a deterministic
+    id-derived metadata when the id is absent from the cache.
     """
+    record = _get_pokedex().get(passage_id)
+    if record is None:
+        return {
+            'title': f'Pokémon #{passage_id}',
+            'section': 'unknown',
+            'url': ARTWORK_URL.format(pokemon_id=passage_id),
+        }
+    types = '+'.join(record.get('types', []))
+    section = types if types else record.get('generation', 'unknown')
     return {
-        'title': f'Passage {passage_id}',
-        'section': 'llm-zoomcamp',
-        'url': f'https://github.com/DataTalksClub/llm-zoomcamp/blob/main/passage/{passage_id}'
+        'title': f"{record['name'].capitalize()} (#{passage_id})",
+        'section': section,
+        'url': ARTWORK_URL.format(pokemon_id=passage_id),
     }
 
 
-def process_corpus(input_path: Path, output_path: Path) -> Generator[dict, None, None]:
-    """Process corpus.jsonl and yield chunked documents."""
+def process_corpus(input_path: Path, output_path: Path) -> Generator[dict]:
+    """Process corpus.jsonl and yield one chunked document per Pokémon."""
     with open(input_path, 'r', encoding='utf-8') as f:
         for line in f:
             record = json.loads(line.strip())
             passage = record['passage']
             passage_id = record['id']
-            
-            # Apply re-chunking if needed
+
+            # A re-chunk split would yield suffixed ids "{id}_{n}" and break
+            # eval exact-id linkage (review M4) — never split: keep ONE doc
+            # per Pokémon (truncated to fit) so every id is a pure integer.
             chunks = re_chunk_passage(passage)
-            
-            # Yield each chunk as a document
+            if len(chunks) > 1:
+                chunks = [chunks[0]]
+
             for chunk_index, chunk in enumerate(chunks):
                 metadata = generate_metadata(passage_id, chunk_index, len(chunks))
-                doc_id = f'{passage_id}_{chunk_index}' if len(chunks) > 1 else str(passage_id)
-                
                 yield {
-                    'id': doc_id,
+                    'id': str(passage_id),
                     'title': metadata['title'],
                     'content': chunk,
                     'section': metadata['section'],
-                    'url': metadata['url']
+                    'url': metadata['url'],
                 }
 
 
@@ -117,20 +152,23 @@ def main():
     project_root = Path(__file__).parent.parent.parent
     input_path = project_root / 'data' / 'corpus.jsonl'
     output_path = project_root / 'data' / 'chunks' / 'documents.jsonl'
-    
+
+    if not input_path.exists():
+        raise FileNotFoundError(
+            f'Missing corpus at {input_path}. Run `uv run python -m src.data.ingest` first.'
+        )
+
     # Create output directory
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Process and save
-    chunk_count = 0
+    docs = list(process_corpus(input_path, output_path))
     with open(output_path, 'w', encoding='utf-8') as f:
-        for doc in process_corpus(input_path, output_path):
-            f.write(json.dumps(doc, ensure_ascii=False) + '\n')
-            chunk_count += 1
-    
+        f.writelines(json.dumps(doc, ensure_ascii=False) + '\n' for doc in docs)
+
     print(f'Processed {input_path}')
-    print(f'Saved {chunk_count} chunks to {output_path}')
-    
+    print(f'Saved {len(docs)} chunks to {output_path}')
+
     # Quick validation
     with open(output_path, 'r', encoding='utf-8') as f:
         first_doc = json.loads(f.readline())
