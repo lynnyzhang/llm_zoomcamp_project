@@ -1,4 +1,4 @@
-# AGENTS.md — LLM Zoomcamp 2026 Capstone (`project/`)
+# AGENTS.md — LLM Zoomcamp 2026 Capstone
 
 ## What This Is
 
@@ -7,17 +7,14 @@ agentic RAG system with a Streamlit chat UI, hybrid search (keyword + vector,
 RRF fusion), LLM-driven query reformulation, evaluation scripts, monitoring,
 and Docker deployment.
 
-**Self-contained:** this project does NOT depend on the course module folders
-at the repo root (`1-Agentic RAG/`, `2-Vector Search/`, `3-Orchestration/`,
-`4-Evaluation/`, `5-Monitoring/`, `dlt_workshop/`). Those folders are course
-content and reference material for coding patterns only — never import from
-them. (A few source files carry docstring attributions like "Adapted from
-4-Evaluation/rag_helper.py" — comments only, not dependencies.)
+**Self-contained:** this project depends only on its own `src/` — never import
+from external course content or reference material. (A few source files carry
+docstring attributions like "Adapted from 4-Evaluation/rag_helper.py" —
+comments only, not dependencies.)
 
 ## Setup
 
 ```bash
-cd project
 uv sync                          # install deps into .venv (Python 3.13+)
 cp .env.example .env             # then edit the LLM vars (see below)
 uv run python -m src.data.download_model   # fetch ONNX embedder artifacts
@@ -28,7 +25,7 @@ Docker alternative: `docker-compose up --build` (app + Postgres + Grafana).
 
 ## LLM Backend
 
-`project/.env` supplies the LLM config, read centrally by `src/llm.py`
+`.env` supplies the LLM config, read centrally by `src/llm.py`
 (`get_api_key()`, `get_base_url()`, `get_model()`, `create_client()`):
 
 - `OPENAI_API_KEY` — API key (required; RuntimeError if missing)
@@ -80,5 +77,5 @@ set -a; source .env; set +a; uv run pytest -q   # 85 tests
   `MODEL_ID`; there is no default model. LLM calls fail lazily at first use.
 - **`.env`, `uv.lock`, `.python-version` are gitignored** — don't commit them.
 - `data/`, `models/`, `results/` hold downloaded/generated artifacts — not committed.
-- Course module folders at the repo root are reference material only; keep
-  the project self-contained (no imports across the boundary).
+- Keep the project self-contained: no imports from external reference
+  material (docstring attributions are comments only, never dependencies).
