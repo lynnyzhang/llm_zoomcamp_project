@@ -434,7 +434,7 @@ class RAGAgent:
 
 if __name__ == "__main__":
     agent = RAGAgent()
-    result = agent.run("What is machine learning?")
+    result = agent.run("What are Pikachu's stats?")
     print(f"Answer: {result['answer'][:200]}")
     print(f"Iterations: {result['iterations']}")
     for i, s in enumerate(result["searches"]):

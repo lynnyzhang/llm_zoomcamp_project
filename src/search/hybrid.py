@@ -6,7 +6,6 @@ indices with Reciprocal Rank Fusion.
 import json
 from pathlib import Path
 
-import numpy as np
 from minsearch import Index, VectorSearch
 
 from src.search.embedder import Embedder
@@ -192,9 +191,9 @@ if __name__ == "__main__":
     hybrid = HybridSearch(documents_path=data_path, vector_weight=0.7, keyword_weight=1.0)
 
     test_queries = [
-        "machine learning",
-        "How do I store vectors in PostgreSQL?",
-        "What is deep learning?",
+        "pikachu",
+        "Which Pokémon are weak to fire?",
+        "electric pokemon stats",
     ]
 
     for q in test_queries:

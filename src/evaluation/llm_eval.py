@@ -10,11 +10,11 @@ Uses 1-5 scale for each dimension.
 """
 
 import json
-import os
 import sys
 import time
 import types
 from pathlib import Path
+
 from pydantic import BaseModel
 
 # Add project root to path
@@ -22,7 +22,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.llm import get_model
-
 
 # ---------------------------------------------------------------------------
 # Pydantic model for structured judge output
@@ -79,17 +78,17 @@ You are an expert evaluator for question-answering systems.
 Examples of ratings:
 
 Example 1:
-Q: "What is Python?"
-Context: "Python is a high-level programming language."
-Answer: "Python is a programming language."
-Ground Truth: "Python is a programming language."
+Q: "What type is Pikachu?"
+Context: "Pikachu is an electric-type Pokémon."
+Answer: "Pikachu is an electric type."
+Ground Truth: "Pikachu is an electric type."
 Rating: faithfulness=5, relevance=5, coherence=5
 
 Example 2:
-Q: "What is Python?"
-Context: "Python is a high-level programming language."
-Answer: "Java is an object-oriented language."
-Ground Truth: "Python is a programming language."
+Q: "What type is Pikachu?"
+Context: "Pikachu is an electric-type Pokémon."
+Answer: "Pikachu is a grass type."
+Ground Truth: "Pikachu is an electric type."
 Rating: faithfulness=1, relevance=2, coherence=4
 
 Now evaluate the following:""",
@@ -155,7 +154,7 @@ def llm_judge(client, instructions, user_prompt, model: str | None = None):
             text_format=JudgeScores,
         )
         return response.output_parsed
-    except Exception:
+    except Exception:  # noqa: BLE001 — fall back to create-mode on any parse-mode failure
         # Fallback: use responses.create and parse JSON from text
         response = client.responses.create(
             model=model,
@@ -165,8 +164,7 @@ def llm_judge(client, instructions, user_prompt, model: str | None = None):
         # Extract JSON from response (handle markdown code blocks)
         if "```" in text:
             text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
+            text = text.removeprefix("json")
             text = text.strip()
         return JudgeScores.model_validate_json(text)
 
@@ -177,7 +175,7 @@ def llm_judge_retry(client, instructions, user_prompt, model: str | None = None,
     for attempt in range(max_retries):
         try:
             return llm_judge(client, instructions, user_prompt, model=model)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — retry covers any judge failure
             if attempt == max_retries - 1:
                 print(f"  Judge call failed after {max_retries} attempts: {e}")
                 return None
@@ -260,7 +258,7 @@ def evaluate_with_prompt(
             search_results = rag_pipeline.search(question)
             context = rag_pipeline.build_context(search_results)
             generated = rag_pipeline.rag(question)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-question errors never abort the batch
             print(f"  [{i+1}/{len(pairs)}] RAG error for question {pair.get('id')}: {e}")
             errors += 1
             continue
@@ -308,6 +306,7 @@ def main():
     """Run LLM-as-judge evaluation across multiple judge prompts."""
     from dotenv import load_dotenv
     from openai import OpenAI
+
     from src.llm import get_api_key, get_base_url
 
     load_dotenv(PROJECT_ROOT / ".env")
@@ -333,8 +332,8 @@ def main():
 
     print("Initializing RAG pipeline...")
     t0 = time.time()
-    from src.search.hybrid import HybridSearch
     from src.rag.pipeline import RAGBase
+    from src.search.hybrid import HybridSearch
 
     search_index = HybridSearch()
     rag = RAGBase(search_index=search_index, llm_client=client)
