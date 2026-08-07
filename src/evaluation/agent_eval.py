@@ -1,7 +1,7 @@
 """Agent loop vs simple RAG evaluation.
 
 Compares agentic RAG (iterative search with query reformulation) against
-simple RAG (single search) on 918 Q&A pairs from rag-mini-wikipedia.
+simple RAG (single search) on the Pokémon dev-subset QA pairs (250).
 
 Measures:
 - Accuracy (retrieval match + LLM answer quality)

@@ -3,7 +3,7 @@ Retrieval evaluation for LLM Zoomcamp capstone.
 
 Evaluates retrieval quality using precision@k, recall@k, MRR.
 Compares keyword-only vs vector-only vs hybrid search.
-Uses 918 Q&A pairs from rag-mini-wikipedia as ground truth.
+Uses the Pokémon dev-subset QA pairs (250) as ground truth.
 """
 
 import json
