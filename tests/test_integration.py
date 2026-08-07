@@ -125,7 +125,9 @@ class TestDataIngestion:
                 assert "answer" in record, f"Record {i} missing 'answer' field"
                 assert "id" in record, f"Record {i} missing 'id' field"
                 records.append(record)
-        assert len(records) >= 900, f"Expected >= 900 Q&A pairs, got {len(records)}"
+        # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: the default
+        # dev subset generates 50 records × 5 pairs (user directive 2026-08-07).
+        assert len(records) >= 250, f"Expected >= 250 Q&A pairs, got {len(records)}"
 
     def test_chunker_output_exists(self):
         """data/chunks/documents.jsonl must exist after chunking."""
@@ -1186,7 +1188,9 @@ class TestEvaluationScripts:
 
         qa_path = DATA_DIR / "qa.jsonl"
         questions = load_ground_truth(str(qa_path))
-        assert len(questions) >= 900
+        # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: default dev
+        # subset = 50 records × 5 LLM-generated pairs (user directive 2026-08-07).
+        assert len(questions) >= 250
         assert "question" in questions[0]
         assert "id" in questions[0]
 
