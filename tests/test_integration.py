@@ -410,7 +410,9 @@ class TestAgentLoop:
         analysis_response.output_text = json.dumps({
             "sufficient": True,
             "reason": "Results contain relevant information",
-            "reformulated_query": ""
+            "reformulated_query": "",
+            "off_topic": False,
+            "off_topic_reason": "",
         })
 
         # Second call: final answer
@@ -430,7 +432,9 @@ class TestAgentLoop:
         insufficient_response.output_text = json.dumps({
             "sufficient": False,
             "reason": "Results not specific enough",
-            "reformulated_query": "Python programming language features"
+            "reformulated_query": "Python programming language features",
+            "off_topic": False,
+            "off_topic_reason": "",
         })
 
         # Call 2: analysis after reformulation (sufficient)
@@ -438,7 +442,9 @@ class TestAgentLoop:
         sufficient_response.output_text = json.dumps({
             "sufficient": True,
             "reason": "Found relevant information",
-            "reformulated_query": ""
+            "reformulated_query": "",
+            "off_topic": False,
+            "off_topic_reason": "",
         })
 
         # Call 3: final answer
@@ -484,23 +490,28 @@ class TestAgentLoop:
         assert "sufficient" in analysis
         assert "reason" in analysis
 
-    def test_agent_analyze_handles_markdown_json(self, search_index):
+    def test_agent_analyze_handles_markdown_json(self):
         """Agent.analyze_results should handle markdown code-block JSON."""
         from src.rag.agent import RAGAgent
 
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.output_text = '```json\n{"sufficient": true, "reason": "ok", "reformulated_query": ""}\n```'
+        mock_response.output_text = (
+            '```json\n{"sufficient": true, "reason": "ok", '
+            '"reformulated_query": "", "off_topic": false, '
+            '"off_topic_reason": ""}\n```'
+        )
         mock_client.responses.create.return_value = mock_response
 
-        agent = RAGAgent(search_index=search_index, llm_client=mock_client)
+        agent = RAGAgent(search_index=StubSearchIndex(), llm_client=mock_client)
         results = agent.perform_search("test")
         analysis = agent.analyze_results("test", results)
 
         assert analysis["sufficient"] is True
 
-    def test_agent_analyze_handles_invalid_json(self, search_index):
-        """Agent.analyze_results should fallback gracefully on invalid JSON."""
+    def test_agent_analyze_handles_invalid_json(self):
+        """Agent.analyze_results deterministic fail-safe: unparseable JSON with
+        no Pokémon-domain signals → rejection dict (out-of-scope by default)."""
         from src.rag.agent import RAGAgent
 
         mock_client = MagicMock()
@@ -508,12 +519,12 @@ class TestAgentLoop:
         mock_response.output_text = "This is not JSON at all"
         mock_client.responses.create.return_value = mock_response
 
-        agent = RAGAgent(search_index=search_index, llm_client=mock_client)
+        agent = RAGAgent(search_index=StubSearchIndex(), llm_client=mock_client)
         results = agent.perform_search("test")
         analysis = agent.analyze_results("test", results)
 
-        # Should fallback to sufficient=True
-        assert analysis["sufficient"] is True
+        # No Pokémon-domain signals in "test" → deterministic fail-safe rejection
+        assert analysis["rejected"] is True
 
     def test_agent_reformulate_query_from_analysis(self, search_index):
         """Agent.reformulate_query should use analysis.reformulated_query."""
@@ -593,7 +604,8 @@ class TestAgentLoop:
         mock_client = MagicMock()
         insufficient = MagicMock()
         insufficient.output_text = json.dumps({
-            "sufficient": False, "reason": "bad", "reformulated_query": "retry"
+            "sufficient": False, "reason": "bad", "reformulated_query": "retry",
+            "off_topic": False, "off_topic_reason": "",
         })
         answer = MagicMock()
         answer.output_text = "fallback answer"
@@ -603,6 +615,160 @@ class TestAgentLoop:
         result = agent.run("test")
 
         assert result["iterations"] <= 2
+
+
+# ===========================================================================
+# PHASE 5b: Agent Guardrails (rule pre-gate + off-topic flag + fail-safe)
+# ===========================================================================
+
+
+class TestAgentGuardrails:
+    """Guardrail rejection paths (todo 4): rule pre-gate, LLM off-topic flag,
+    and the deterministic fail-safe, all against a stub search index."""
+
+    @staticmethod
+    def _response(text: str):
+        response = MagicMock()
+        response.output_text = text
+        return response
+
+    @staticmethod
+    def _in_domain_client(answer_text: str = "Pikachu is an Electric-type Pokémon."):
+        """Analysis sufficient + off_topic:false, then a grounded answer."""
+        mock_client = MagicMock()
+        analysis_response = MagicMock()
+        analysis_response.output_text = json.dumps({
+            "sufficient": True,
+            "reason": "Results contain relevant Pokémon information",
+            "reformulated_query": "",
+            "off_topic": False,
+            "off_topic_reason": "",
+        })
+        answer_response = MagicMock()
+        answer_response.output_text = answer_text
+        mock_client.responses.create.side_effect = [analysis_response, answer_response]
+        return mock_client
+
+    def _agent(self, llm_client, **kwargs):
+        from src.rag.agent import RAGAgent
+
+        return RAGAgent(search_index=StubSearchIndex(), llm_client=llm_client, **kwargs)
+
+    def test_rejects_battle_simulation(self):
+        """Out-of-scope battle-simulation query → structured rejection."""
+        result = self._agent(MagicMock()).run("Who would win Charizard vs Blastoise?")
+        assert result["rejected"] is True
+        assert result["searches"] == []
+        assert result["iterations"] == 0
+        assert "can't" in result["answer"]
+
+    def test_rejects_docker_question(self):
+        """Non-Pokémon topic (docker) → structured rejection."""
+        result = self._agent(MagicMock()).run("What is Docker?")
+        assert result["rejected"] is True
+        assert result["searches"] == []
+        assert result["iterations"] == 0
+
+    def test_rejects_cooking_question(self):
+        """Non-Pokémon topic (cooking) → structured rejection."""
+        result = self._agent(MagicMock()).run("How do I cook pasta?")
+        assert result["rejected"] is True
+
+    def test_rejects_finance_question(self):
+        """Non-Pokémon topic (finance) → structured rejection."""
+        result = self._agent(MagicMock()).run("Recommend a cheap stock to invest in")
+        assert result["rejected"] is True
+
+    def test_rejects_medical_question(self):
+        """Non-Pokémon topic (medical) → structured rejection."""
+        result = self._agent(MagicMock()).run("I have a fever, what medicine should I take?")
+        assert result["rejected"] is True
+
+    def test_rejects_save_file_request(self):
+        """Save-file access request → structured rejection."""
+        result = self._agent(MagicMock()).run("Can you load my Pokémon save file?")
+        assert result["rejected"] is True
+
+    def test_rejects_cheating_request(self):
+        """Cheating/hacking request → structured rejection."""
+        result = self._agent(MagicMock()).run("Is there a hack to catch Mewtwo easily?")
+        assert result["rejected"] is True
+
+    def test_rejection_answer_is_friendly_redirect(self):
+        """The rejection answer is the exact friendly redirect message."""
+        from src.rag.agent import REJECTION_MESSAGE
+
+        result = self._agent(MagicMock()).run("Who would win Charizard vs Blastoise?")
+        assert result["answer"] == REJECTION_MESSAGE
+
+    def test_team_building_is_not_rejected(self):
+        """Team-building query (battle TEAM, allowed by scope) → normal path."""
+        agent = self._agent(self._in_domain_client("Water types are weak to Electric and Grass."))
+        result = agent.run("Help me build a battle team against water types")
+        assert result.get("rejected", False) is False
+        assert result["iterations"] >= 1
+        assert result["answer"] == "Water types are weak to Electric and Grass."
+
+    def test_bare_battle_question_is_not_rejected(self):
+        """Bare 'battle' must not trip the pre-gate (battle TEAM is in-scope)."""
+        agent = self._agent(self._in_domain_client("Pikachu is a strong special attacker."))
+        result = agent.run("Tell me about battle strategies for Pikachu")
+        assert result.get("rejected", False) is False
+        assert result["answer"] == "Pikachu is a strong special attacker."
+
+    def test_in_domain_question_with_off_topic_false_is_not_rejected(self):
+        """Analysis says off_topic:false → normal answer path."""
+        agent = self._agent(self._in_domain_client("Pikachu has 90 base Speed."))
+        result = agent.run("Tell me about Pikachu")
+        assert result.get("rejected", False) is False
+        assert result["iterations"] == 1
+        assert result["answer"] == "Pikachu has 90 base Speed."
+
+    def test_off_topic_flag_is_rejected(self):
+        """Analysis flags the query as outside the Pokémon domain → rejection."""
+        mock_client = MagicMock()
+        mock_client.responses.create.return_value = self._response(json.dumps({
+            "sufficient": False,
+            "reason": "Not about Pokémon",
+            "reformulated_query": "",
+            "off_topic": True,
+            "off_topic_reason": "Asks about a non-Pokémon topic",
+        }))
+        result = self._agent(mock_client).run("Explain the theory of relativity")
+        assert result["rejected"] is True
+        assert result["searches"] == []
+        assert result["iterations"] == 0
+
+    def test_fail_safe_rejects_query_without_domain_signals(self):
+        """Unparseable analysis + no Pokémon-domain signals → rejected."""
+        mock_client = MagicMock()
+        mock_client.responses.create.return_value = self._response("garbage not json")
+        result = self._agent(mock_client).run("How does gravity work?")
+        assert result["rejected"] is True
+        assert result["searches"] == []
+        assert result["iterations"] == 0
+
+    def test_fail_safe_allows_query_with_domain_signals(self):
+        """Unparseable analysis + 'pikachu stats' (stat signal) → normal path."""
+        mock_client = MagicMock()
+        mock_client.responses.create.side_effect = [
+            self._response("garbage not json"),
+            self._response("Pikachu's base Speed is 90."),
+        ]
+        result = self._agent(mock_client).run("pikachu stats")
+        assert result.get("rejected", False) is False
+        assert result["iterations"] == 1
+        assert result["answer"] == "Pikachu's base Speed is 90."
+
+    def test_fail_safe_analysis_keeps_sufficient_for_domain_signals(self):
+        """analyze_results keeps sufficient:true when signals are present."""
+        from src.rag.agent import RAGAgent
+
+        mock_client = MagicMock()
+        mock_client.responses.create.return_value = self._response("not json")
+        agent = RAGAgent(search_index=StubSearchIndex(), llm_client=mock_client)
+        analysis = agent.analyze_results("pikachu stats", [])
+        assert analysis["sufficient"] is True
 
 
 # ===========================================================================
@@ -1180,7 +1346,9 @@ class TestFullPipeline:
         analysis_response.output_text = json.dumps({
             "sufficient": True,
             "reason": "Results contain information about machine learning",
-            "reformulated_query": ""
+            "reformulated_query": "",
+            "off_topic": False,
+            "off_topic_reason": "",
         })
 
         # Answer response

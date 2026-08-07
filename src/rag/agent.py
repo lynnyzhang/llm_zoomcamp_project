@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,20 +28,28 @@ from src.search.hybrid import HybridSearch
 # ---------------------------------------------------------------------------
 
 ANALYSIS_INSTRUCTIONS = """\
-You are evaluating search results for a question-answering system.
+You are evaluating search results for a Pokémon question-answering system.
 
 Given a question and a set of search results (documents), determine:
-1. Whether the results contain enough information to answer the question confidently.
-2. If not, suggest a reformulated query that might find better results.
+1. Whether the question is about the Pokémon domain (stats, types,
+   weaknesses, abilities, evolutions, team building). If it is about anything
+   else — battle simulation, winner prediction, save files, cheating, or
+   unrelated topics (cooking, finance, medicine, software, etc.) — set
+   off_topic to true.
+2. Whether the results contain enough information to answer the question confidently.
+3. If not, suggest a reformulated query that might find better results.
 
 Respond with a JSON object:
 {
   "sufficient": true/false,
   "reason": "brief explanation",
-  "reformulated_query": "improved search query (only if sufficient=false)"
+  "reformulated_query": "improved search query (only if sufficient=false)",
+  "off_topic": false,
+  "off_topic_reason": ""
 }
 
 If results are sufficient, set reformulated_query to an empty string.
+If the question is about Pokémon, set off_topic to false.
 """
 
 ANSWER_INSTRUCTIONS = """\
@@ -52,6 +61,96 @@ If multiple searches were performed, synthesize information from all results.
 """
 
 MAX_ITERATIONS = 3
+
+
+# ---------------------------------------------------------------------------
+# Guardrails
+# ---------------------------------------------------------------------------
+
+REJECTION_MESSAGE = (
+    "I'm a Pokémon knowledge assistant — I can answer questions about Pokémon "
+    "stats, types, weaknesses, abilities, evolutions, and team building. I can't "
+    "simulate battles, predict winners, access save files, or help with cheating. "
+    "Try asking about a specific Pokémon!"
+)
+
+# Rule pre-gate: regex patterns matched against the lowercased query.
+# Deliberately phrase/word-based so bare "battle" (battle TEAM suggestions,
+# in-scope) never trips the gate.
+REJECT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Battle simulation / outcome prediction
+    re.compile(r"who would win"),
+    re.compile(r"predict (?:the )?winner"),
+    re.compile(r"battle simulation"),
+    re.compile(r"battle sim"),
+    re.compile(r"simulate battle"),
+    re.compile(r"battle outcome"),
+    re.compile(r"win rate"),
+    # Save files
+    re.compile(r"save ?file"),
+    re.compile(r"save ?game"),
+    re.compile(r"\.sav\b"),
+    # Cheating / hacking / emulation
+    re.compile(r"\bcheat"),
+    re.compile(r"\bhack"),
+    re.compile(r"\bemulator"),
+    re.compile(r"\bshowdown"),
+    # Non-Pokémon topics
+    re.compile(r"\bdocker\b"),
+    re.compile(r"\bcourse\b"),
+    re.compile(r"\bpython\b"),
+    re.compile(r"\bcook"),
+    re.compile(r"\bfinance"),
+    re.compile(r"\bstock\b"),
+    re.compile(r"\binvest"),
+    re.compile(r"\bmedic"),
+    re.compile(r"\bfever\b"),
+)
+
+# Deterministic fail-safe domain signals (static only, no data/ dependency):
+# the 18 Pokémon type names plus high-confidence Pokédex vocabulary. Type-name
+# substrings deliberately also catch compound Pokémon names (dragonite, darkrai).
+POKEMON_TYPE_NAMES = frozenset({
+    "normal", "fire", "water", "electric", "grass", "ice", "fighting",
+    "poison", "ground", "flying", "psychic", "bug", "rock", "ghost",
+    "dragon", "steel", "dark", "fairy",
+})
+
+# Dex numbers 1..1025 (whole numbers only) and the "stat(s)" vocabulary term.
+_DEX_NUMBER_RE = re.compile(r"\b(?:[1-9][0-9]{0,2}|10[0-2][0-5])\b")
+_STAT_TERM_RE = re.compile(r"\bstat(?:s)?\b")
+
+
+def rejection_result() -> dict:
+    """Structured rejection dict for out-of-scope queries."""
+    return {
+        "answer": REJECTION_MESSAGE,
+        "searches": [],
+        "iterations": 0,
+        "rejected": True,
+    }
+
+
+def _is_out_of_scope(query: str) -> bool:
+    """Rule pre-gate: True when the query matches a rejection pattern."""
+    normalized = query.lower()
+    return any(pattern.search(normalized) for pattern in REJECT_PATTERNS)
+
+
+def _has_pokemon_signals(text: str) -> bool:
+    """True when the text carries static Pokémon-domain signals.
+
+    Static only (no data/ dependency): dex numbers, the 18 type names,
+    "pokemon"/"pokémon", and the "stat(s)" vocabulary term.
+    """
+    normalized = text.lower()
+    if "pokemon" in normalized or "pokémon" in normalized:
+        return True
+    if _DEX_NUMBER_RE.search(normalized):
+        return True
+    if _STAT_TERM_RE.search(normalized):
+        return True
+    return any(t in normalized for t in POKEMON_TYPE_NAMES)
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +246,19 @@ class RAGAgent:
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            # Fallback: treat as sufficient if we can't parse
-            return {"sufficient": True, "reason": "Could not parse analysis", "reformulated_query": ""}
+            # Deterministic fail-safe: never blindly treat unparseable analysis
+            # as sufficient. If the query carries static Pokémon-domain signals,
+            # keep the current fail-open behavior; otherwise reject the query as
+            # out-of-scope by default.
+            if _has_pokemon_signals(query):
+                return {
+                    "sufficient": True,
+                    "reason": "Could not parse analysis (fallback)",
+                    "reformulated_query": "",
+                    "off_topic": False,
+                    "off_topic_reason": "",
+                }
+            return rejection_result()
 
     # ------------------------------------------------------------------
     # Tool: reformulate_query
@@ -215,16 +325,24 @@ class RAGAgent:
     def run(self, query: str) -> dict:
         """Execute the agentic RAG loop.
 
-        1. Search with the query
-        2. Analyze if results are sufficient
-        3. If not, reformulate and search again
-        4. Repeat up to max_iterations
-        5. Generate final answer from all collected results
+        1. Reject out-of-scope queries up front (rule pre-gate)
+        2. Search with the query
+        3. Analyze if results are sufficient
+        4. If not, reformulate and search again
+        5. Repeat up to max_iterations
+        6. Generate final answer from all collected results
 
         Returns:
             Dict with 'answer' (str), 'searches' (list of SearchRecord),
-            and 'iterations' (int).
+            and 'iterations' (int). Out-of-scope queries return a structured
+            rejection dict with 'rejected' (True), empty searches, and 0
+            iterations.
         """
+        # Guardrail (layer 1): rule pre-gate rejects out-of-scope queries
+        # before any search is performed.
+        if _is_out_of_scope(query):
+            return rejection_result()
+
         searches: list[SearchRecord] = []
         all_results: list[dict] = []
         current_query = query
@@ -236,6 +354,16 @@ class RAGAgent:
 
             # Step 2: Analyze results
             analysis = self.analyze_results(current_query, results)
+
+            # Guardrail (layer 3): the deterministic fail-safe returned a
+            # rejection dict when the analysis could not be parsed and the
+            # query carried no Pokémon-domain signals.
+            if analysis.get("rejected", False):
+                return analysis
+
+            # Guardrail (layer 2): the analyzer flagged the query as off-topic.
+            if analysis.get("off_topic", False):
+                return rejection_result()
 
             record = SearchRecord(
                 query=current_query,
