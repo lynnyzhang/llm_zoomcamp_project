@@ -67,7 +67,9 @@ class TestDataIngestion:
                 assert "id" in record, f"Record {i} missing 'id' field"
                 assert isinstance(record["passage"], str), f"Record {i} 'passage' not a string"
                 records.append(record)
-        assert len(records) >= 3000, f"Expected >= 3000 passages, got {len(records)}"
+        # Floor relaxed from >= 3000 (rag-mini-wikipedia) to >= 50: the default
+        # dev subset is the first 50 Pokémon by id (user directive 2026-08-07).
+        assert len(records) >= 50, f"Expected >= 50 passages, got {len(records)}"
 
     def test_qa_records_are_valid(self):
         """Each line in qa.jsonl must be valid JSON with required fields."""
