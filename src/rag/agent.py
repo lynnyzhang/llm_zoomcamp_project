@@ -1,21 +1,7 @@
-"""Agentic RAG pipeline with iterative search and query reformulation.
-
-Implements the agent loop pattern from Module 1 (1-Agentic RAG):
-1. Perform initial hybrid search
-2. Analyze results quality with LLM
-3. Reformulate query if results are insufficient
-4. Repeat up to MAX_ITERATIONS times
-5. Generate final answer with all gathered context
-"""
-
-from __future__ import annotations
-
 import json
 import re
 from dataclasses import dataclass
 from typing import Any
-
-from openai import OpenAI
 
 from src.llm import get_model
 from src.rag.pipeline import RAGBase
@@ -87,7 +73,7 @@ UNCERTAINTY_NOTE = (
 # Rule pre-gate: regex patterns matched against the lowercased query.
 # Deliberately phrase/word-based so bare "battle" (battle TEAM suggestions,
 # in-scope) never trips the gate.
-REJECT_PATTERNS: tuple[re.Pattern[str], ...] = (
+REJECT_PATTERNS = (
     # Battle simulation / outcome prediction
     re.compile(r"who would win"),
     re.compile(r"predict (?:the )?winner"),
@@ -131,8 +117,7 @@ _DEX_NUMBER_RE = re.compile(r"\b(?:[1-9][0-9]{0,2}|10[0-2][0-5])\b")
 _STAT_TERM_RE = re.compile(r"\bstat(?:s)?\b")
 
 
-def rejection_result() -> dict:
-    """Structured rejection dict for out-of-scope queries."""
+def rejection_result():
     return {
         "answer": REJECTION_MESSAGE,
         "searches": [],
@@ -141,18 +126,12 @@ def rejection_result() -> dict:
     }
 
 
-def _is_out_of_scope(query: str) -> bool:
-    """Rule pre-gate: True when the query matches a rejection pattern."""
+def _is_out_of_scope(query):
     normalized = query.lower()
     return any(pattern.search(normalized) for pattern in REJECT_PATTERNS)
 
 
-def _has_pokemon_signals(text: str) -> bool:
-    """True when the text carries static Pokémon-domain signals.
-
-    Static only (no data/ dependency): dex numbers, the 18 type names,
-    "pokemon"/"pokémon", and the "stat(s)" vocabulary term.
-    """
+def _has_pokemon_signals(text):
     normalized = text.lower()
     if "pokemon" in normalized or "pokémon" in normalized:
         return True
@@ -169,7 +148,6 @@ def _has_pokemon_signals(text: str) -> bool:
 
 @dataclass
 class SearchRecord:
-    """One search iteration's results."""
     query: str
     results: list[dict]
     analysis: dict[str, Any] | None = None
@@ -177,7 +155,6 @@ class SearchRecord:
 
 @dataclass
 class AgentResult:
-    """Final output from the agent loop."""
     answer: str
     searches: list[SearchRecord]
     iterations: int
@@ -188,20 +165,14 @@ class AgentResult:
 # ---------------------------------------------------------------------------
 
 class RAGAgent:
-    """Agentic RAG: iterative search with LLM-driven query reformulation.
-
-    Demonstrates Module 1 patterns (agent loop, tool calling) applied to
-    a RAG pipeline. The agent decides whether search results are sufficient
-    and reformulates queries when they aren't.
-    """
 
     def __init__(
         self,
-        search_index: HybridSearch | None = None,
-        llm_client: OpenAI | None = None,
-        model: str | None = None,
-        max_iterations: int = MAX_ITERATIONS,
-        search_type: str = "hybrid",
+        search_index=None,
+        llm_client=None,
+        model=None,
+        max_iterations=MAX_ITERATIONS,
+        search_type="hybrid",
     ):
         if search_index is None:
             search_index = HybridSearch()
@@ -221,16 +192,14 @@ class RAGAgent:
     # Tool: perform_search
     # ------------------------------------------------------------------
 
-    def perform_search(self, query: str, num_results: int = 5) -> list[dict]:
-        """Execute hybrid search for the given query."""
+    def perform_search(self, query, num_results=5):
         return self.rag.search(query, num_results=num_results)
 
     # ------------------------------------------------------------------
     # Tool: analyze_results
     # ------------------------------------------------------------------
 
-    def analyze_results(self, query: str, results: list[dict]) -> dict:
-        """Ask the LLM to evaluate whether search results are sufficient."""
+    def analyze_results(self, query, results):
         context = self.rag.build_context(results)
         prompt = (
             f"Question: {query}\n\n"
@@ -276,8 +245,7 @@ class RAGAgent:
     # Tool: reformulate_query
     # ------------------------------------------------------------------
 
-    def reformulate_query(self, original_query: str, analysis: dict) -> str:
-        """Use the LLM to reformulate the query for better results."""
+    def reformulate_query(self, original_query, analysis):
         reformulated = analysis.get("reformulated_query", "").strip()
         if reformulated:
             return reformulated
@@ -307,10 +275,9 @@ class RAGAgent:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _dedupe_results(all_results: list[dict]) -> list[dict]:
-        """Deduplicate results by id, preserving first-seen order."""
-        seen_ids: set[str] = set()
-        unique_results: list[dict] = []
+    def _dedupe_results(all_results):
+        seen_ids = set()
+        unique_results = []
         for doc in all_results:
             doc_id = doc.get("id", "")
             if doc_id not in seen_ids:
@@ -318,8 +285,7 @@ class RAGAgent:
                 unique_results.append(doc)
         return unique_results
 
-    def generate_answer(self, query: str, all_results: list[dict]) -> str:
-        """Generate the final answer using all gathered search results."""
+    def generate_answer(self, query, all_results):
         unique_results = self._dedupe_results(all_results)
 
         prompt = self.rag.build_prompt(query, unique_results)
@@ -339,39 +305,20 @@ class RAGAgent:
     # Agent loop: run
     # ------------------------------------------------------------------
 
-    def run(self, query: str) -> dict:
-        """Execute the agentic RAG loop.
-
-        1. Reject out-of-scope queries up front (rule pre-gate)
-        2. Search with the query
-        3. Analyze if results are sufficient
-        4. If not, reformulate and search again
-        5. Repeat up to max_iterations
-        6. Generate final answer from all collected results
-
-        Returns:
-            Dict with 'answer' (str), 'searches' (list of SearchRecord),
-            and 'iterations' (int). Out-of-scope queries return a structured
-            rejection dict with 'rejected' (True), empty searches, and 0
-            iterations. In-domain low-confidence queries (empty results,
-            exhausted iterations with all analyses insufficient, or an empty
-            final context) return the uncertainty note with 'rejected' (False).
-        """
+    def run(self, query):
         # Guardrail (layer 1): rule pre-gate rejects out-of-scope queries
         # before any search is performed.
         if _is_out_of_scope(query):
             return rejection_result()
 
-        searches: list[SearchRecord] = []
-        all_results: list[dict] = []
+        searches = []
+        all_results = []
         current_query = query
 
         for i in range(self.max_iterations):
-            # Step 1: Perform search
             results = self.perform_search(current_query)
             all_results.extend(results)
 
-            # Step 2: Analyze results
             analysis = self.analyze_results(current_query, results)
 
             # Guardrail (layer 3): the deterministic fail-safe returned a
@@ -391,18 +338,16 @@ class RAGAgent:
             )
             searches.append(record)
 
-            # Step 3: Check if sufficient
             if analysis.get("sufficient", True):
                 break
 
-            # Step 4: Reformulate query for next iteration
             current_query = self.reformulate_query(query, analysis)
 
-        # Step 5: Low-confidence path — in-domain queries the loop could not
-        # answer confidently get the uncertainty note with rejected: false
-        # (never a rejection dict). Triggers: zero results across all
-        # searches (no LLM answer call at all), max_iterations reached with
-        # every analysis insufficient, or an empty final context.
+        # Low-confidence path — in-domain queries the loop could not answer
+        # confidently get the uncertainty note with rejected: false (never a
+        # rejection dict). Triggers: zero results across all searches (no LLM
+        # answer call at all), max_iterations reached with every analysis
+        # insufficient, or an empty final context.
         unique_results = self._dedupe_results(all_results)
         final_context = self.rag.build_context(unique_results)
         exhausted = (
@@ -417,7 +362,6 @@ class RAGAgent:
                 "rejected": False,
             }
 
-        # Step 6: Generate final answer
         answer = self.generate_answer(query, all_results)
 
         return {

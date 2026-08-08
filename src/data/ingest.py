@@ -1,22 +1,3 @@
-"""
-Data ingestion script for the Complete Pokémon Dataset (Kaggle: elroytan/pokemondata).
-
-Downloads the dataset archive anonymously via the Kaggle dataset API endpoint
-(GET-only — HEAD returns 404 on this endpoint), inspects the archive before
-parsing (schema_inspection.json), persists the FULL raw dataset to
-data/raw/complete_pokedex.json, and builds data/corpus.jsonl with the exact
-contract {"id": int, "passage": str} — one structured passage per Pokémon.
-
-Default (dev subset): --limit 50 → the first 50 records by id.
---full: all 1,025 records. --limit N: any N.
-
-The raw cache is the deterministic source for downstream todos (chunker
-metadata, QA generation): the corpus is a derived slice of it and is never a
-re-download.
-"""
-
-from __future__ import annotations
-
 import argparse
 import io
 import json
@@ -35,7 +16,7 @@ RAW_POKEDEX = RAW_DIR / "complete_pokedex.json"
 SCHEMA_INSPECTION = RAW_DIR / "schema_inspection.json"
 CORPUS_FILE = DATA_DIR / "corpus.jsonl"
 
-# Required minimum field set — anything else must be mapped via .get() fallbacks.
+# Required minimum field set - anything else must be mapped via .get() fallbacks.
 REQUIRED_FIELDS = ("id", "name", "types", "stats", "damage_taken")
 
 STAT_KEYS = ["hp", "attack", "defense", "special_attack", "special_defense", "speed"]
@@ -46,12 +27,9 @@ DAMAGE_TAKEN_KEYS = [
 ]
 
 
-def download_archive(url: str = KAGGLE_DATASET_URL) -> zipfile.ZipFile:
-    """GET the Kaggle dataset archive, following the 302 → signed GCS redirect.
-
-    Must always use GET: this endpoint returns 404 for HEAD requests. The
-    signed GCS URL is never hardcoded — we always go through the API endpoint.
-    """
+def download_archive(url=KAGGLE_DATASET_URL):
+    # Must always use GET: the Kaggle API endpoint returns 404 for HEAD
+    # requests, and the signed GCS URL is never hardcoded - always go through it.
     print(f"Downloading archive from {url} ...")
     try:
         resp = requests.get(url, allow_redirects=True, timeout=120)
@@ -62,8 +40,7 @@ def download_archive(url: str = KAGGLE_DATASET_URL) -> zipfile.ZipFile:
     return zipfile.ZipFile(io.BytesIO(resp.content))
 
 
-def inspect_archive(zf: zipfile.ZipFile) -> str:
-    """List the archive contents (inspect-first) and find the pokedex JSON."""
+def inspect_archive(zf):
     names = zf.namelist()
     print("Archive contents:")
     for name in names:
@@ -78,8 +55,8 @@ def inspect_archive(zf: zipfile.ZipFile) -> str:
     return pokedex_name
 
 
-def write_schema_inspection(source_file: str, records: list[dict]) -> None:
-    """Record the detected schema before any parse decisions are made."""
+def write_schema_inspection(source_file, records):
+    # Snapshot the detected schema before any parse decisions are made.
     detected = sorted(set().union(*(set(r.keys()) for r in records)))
     inspection = {
         "source_file": source_file,
@@ -99,12 +76,9 @@ def write_schema_inspection(source_file: str, records: list[dict]) -> None:
     )
 
 
-def load_raw_pokedex() -> list[dict]:
-    """Return the full pokedex records, keying idempotence on the raw cache.
-
-    If data/raw/complete_pokedex.json already exists it is reused — the dev
-    subset in corpus.jsonl is a derived slice, never a re-download.
-    """
+def load_raw_pokedex():
+    # Idempotent on the raw cache: corpus.jsonl is a derived slice of it and is
+    # never a re-download, so the raw file is the deterministic source.
     if RAW_POKEDEX.exists():
         print(f"Using cached raw dataset: {RAW_POKEDEX}")
         with open(RAW_POKEDEX, encoding="utf-8") as f:
@@ -127,13 +101,9 @@ def load_raw_pokedex() -> list[dict]:
     return records
 
 
-def parse_record(record: dict) -> dict:
-    """Defensively map a raw Pokémon record into a normalized dict.
-
-    Required minimum {id, name, types, stats, damage_taken}; every other field
-    uses .get() fallbacks. If a required field is missing we fail loudly,
-    listing the found keys — never a silently wrong parse.
-    """
+def parse_record(record):
+    # Fail loudly on a missing required field, listing the found keys - never a
+    # silently wrong parse.
     found = set(record.keys())
     missing = [f for f in REQUIRED_FIELDS if f not in record]
     if missing:
@@ -164,19 +134,13 @@ def parse_record(record: dict) -> dict:
     }
 
 
-def _fmt(value, suffix: str = "") -> str:
+def _fmt(value, suffix=""):
     if value is None:
         return "unknown"
     return f"{value}{suffix}"
 
 
-def build_passage(p: dict) -> str:
-    """Build the readable structured passage for one Pokémon.
-
-    Contains: name, category, generation, is_legendary/is_mythical, types,
-    height (m), weight (kg), habitat, evolves_from, abilities (incl.
-    "(Hidden)"), stats, and the full 18-key damage_taken table.
-    """
+def build_passage(p):
     lines = [
         f"Name: {p['name']}",
         f"Category: {p['category'] or 'unknown'}",
@@ -203,14 +167,13 @@ def build_passage(p: dict) -> str:
     return "\n".join(lines)
 
 
-def build_corpus(records: list[dict], limit: int | None) -> list[dict]:
-    """Select records (first N by id) and build the corpus rows."""
+def build_corpus(records, limit):
     records = sorted(records, key=lambda r: r["id"])
     selected = records if limit is None else records[:limit]
     return [{"id": p["id"], "passage": build_passage(p)} for p in (parse_record(r) for r in selected)]
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Build data/corpus.jsonl from the Pokémon dataset (elroytan/pokemondata)."
     )

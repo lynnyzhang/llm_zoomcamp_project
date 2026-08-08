@@ -1,14 +1,3 @@
-"""LLM-as-judge evaluation for RAG answer quality.
-
-Evaluates generated answers on three dimensions:
-- Faithfulness: Is the answer supported by the retrieved context?
-- Relevance: Does the answer address the question?
-- Coherence: Is the answer well-structured and clear?
-
-Tests multiple judge prompts (simple, detailed, with examples) and compares.
-Uses 1-5 scale for each dimension.
-"""
-
 import json
 import sys
 import time
@@ -28,7 +17,6 @@ from src.llm import get_model
 # ---------------------------------------------------------------------------
 
 class JudgeScores(BaseModel):
-    """Structured output from the LLM judge."""
     faithfulness: int  # 1-5
     relevance: int     # 1-5
     coherence: int     # 1-5
@@ -112,7 +100,8 @@ Rate faithfulness (1-5), relevance (1-5), coherence (1-5). Explain briefly.""",
 # ---------------------------------------------------------------------------
 
 def _patch_openai_client(client):
-    """Patch client.responses.parse for local llama.cpp backend."""
+    # responses.parse sends a "text" field llama.cpp rejects — inject the
+    # pydantic json_schema via extra_body.response_format instead.
     _original_parse = client.responses.parse
 
     def _patched_responses_parse(self, model, input, **kwargs):
@@ -137,8 +126,7 @@ def _patch_openai_client(client):
     return client
 
 
-def llm_judge(client, instructions, user_prompt, model: str | None = None):
-    """Call LLM judge and parse JSON output."""
+def llm_judge(client, instructions, user_prompt, model=None):
     model = model or get_model()
     messages = [
         {"role": "developer", "content": instructions},
@@ -169,8 +157,7 @@ def llm_judge(client, instructions, user_prompt, model: str | None = None):
         return JudgeScores.model_validate_json(text)
 
 
-def llm_judge_retry(client, instructions, user_prompt, model: str | None = None, max_retries=3):
-    """Call LLM judge with retries."""
+def llm_judge_retry(client, instructions, user_prompt, model=None, max_retries=3):
     model = model or get_model()
     for attempt in range(max_retries):
         try:
@@ -186,8 +173,7 @@ def llm_judge_retry(client, instructions, user_prompt, model: str | None = None,
 # Core evaluation
 # ---------------------------------------------------------------------------
 
-def load_qa_pairs(qa_path: str) -> list[dict]:
-    """Load Q&A pairs from JSONL."""
+def load_qa_pairs(qa_path):
     pairs = []
     with open(qa_path) as f:
         for line in f:
@@ -197,14 +183,13 @@ def load_qa_pairs(qa_path: str) -> list[dict]:
 
 def evaluate_single(
     client,
-    question: str,
-    context: str,
-    generated_answer: str,
-    ground_truth: str,
-    judge_config: dict,
-    model: str | None = None,
-) -> dict | None:
-    """Evaluate a single Q&A pair with the LLM judge."""
+    question,
+    context,
+    generated_answer,
+    ground_truth,
+    judge_config,
+    model=None,
+):
     model = model or get_model()
     user_prompt = judge_config["template"].format(
         question=question,
@@ -226,24 +211,11 @@ def evaluate_single(
 def evaluate_with_prompt(
     rag_pipeline,
     client,
-    qa_pairs: list[dict],
-    judge_config: dict,
-    model: str | None = None,
-    sample_size: int = 50,
-) -> dict:
-    """Evaluate RAG answers using a specific judge prompt.
-
-    Args:
-        rag_pipeline: RAGBase instance with .rag(query) method.
-        client: OpenAI client for judge calls.
-        qa_pairs: List of Q&A dicts with 'question', 'answer', 'id'.
-        judge_config: Dict with 'instructions' and 'template'.
-        model: LLM model name.
-        sample_size: Number of pairs to evaluate (0 = all).
-
-    Returns:
-        Dict with mean scores and per-sample results.
-    """
+    qa_pairs,
+    judge_config,
+    model=None,
+    sample_size=50,
+):
     model = model or get_model()
     pairs = qa_pairs[:sample_size] if sample_size > 0 else qa_pairs
     scores = []
@@ -303,7 +275,6 @@ def evaluate_with_prompt(
 # ---------------------------------------------------------------------------
 
 def main():
-    """Run LLM-as-judge evaluation across multiple judge prompts."""
     from dotenv import load_dotenv
     from openai import OpenAI
 

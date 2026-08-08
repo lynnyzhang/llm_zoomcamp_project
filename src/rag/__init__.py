@@ -1,6 +1,6 @@
 """RAG pipeline and agent for LLM Zoomcamp capstone."""
 
-from .pipeline import RAGBase
 from .agent import RAGAgent
+from .pipeline import RAGBase
 
-__all__ = ["RAGBase", "RAGAgent"]
+__all__ = ["RAGAgent", "RAGBase"]

@@ -1,12 +1,4 @@
-"""Chunking and preprocessing pipeline for LLM Zoomcamp capstone.
-
-Reads corpus.jsonl, applies optional re-chunking if passages exceed token limits,
-adds Pokémon metadata from the raw pokedex cache, and saves chunked documents
-to data/chunks/documents.jsonl.
-"""
-
 import json
-from collections.abc import Generator
 from pathlib import Path
 
 # Token estimation: ~4 chars per token (rough approximation for English text)
@@ -21,11 +13,10 @@ ARTWORK_URL = (
 )
 
 _POKEDEX_PATH = Path(__file__).parent.parent.parent / 'data' / 'raw' / 'complete_pokedex.json'
-_POKEDEX: dict[int, dict] | None = None
+_POKEDEX = None
 
 
-def _get_pokedex() -> dict[int, dict]:
-    """Load the raw pokedex cache (ingest output) once, keyed by Pokémon id."""
+def _get_pokedex():
     global _POKEDEX
     if _POKEDEX is None:
         try:
@@ -39,25 +30,17 @@ def _get_pokedex() -> dict[int, dict]:
     return _POKEDEX
 
 
-def estimate_tokens(text: str) -> int:
-    """Estimate token count from character count (rough approximation)."""
+def estimate_tokens(text):
     return len(text) // CHARS_PER_TOKEN
 
 
-def re_chunk_passage(passage: str, min_tokens: int = MIN_TOKENS, max_tokens: int = MAX_TOKENS) -> list[str]:
-    """Re-chunk a passage if it exceeds max_tokens.
-    
-    Splits on sentence boundaries. Merges small sentences until they form
-    chunks of at least min_tokens, but never exceeds max_tokens.
-    
-    Returns list of chunks. If passage is already within limits, returns [passage].
-    """
+def re_chunk_passage(passage, min_tokens=MIN_TOKENS, max_tokens=MAX_TOKENS):
     tokens = estimate_tokens(passage)
-    
+
     # If within limits, return as-is
     if tokens <= max_tokens:
         return [passage]
-    
+
     # Split on sentence boundaries
     sentences = []
     current = []
@@ -68,43 +51,37 @@ def re_chunk_passage(passage: str, min_tokens: int = MIN_TOKENS, max_tokens: int
             current = []
     if current:
         sentences.append(''.join(current).strip())
-    
+
     # Merge sentences into chunks
     chunks = []
     current_chunk = []
     current_tokens = 0
-    
+
     for sentence in sentences:
         sentence_tokens = estimate_tokens(sentence)
-        
+
         # If adding this sentence would exceed max, finalize current chunk
         if current_tokens + sentence_tokens > max_tokens and current_chunk:
             chunks.append(' '.join(current_chunk))
             current_chunk = []
             current_tokens = 0
-        
+
         current_chunk.append(sentence)
         current_tokens += sentence_tokens
-    
+
     # Add final chunk
     if current_chunk:
         chunks.append(' '.join(current_chunk))
-    
+
     # Merge very small final chunks
     if len(chunks) > 1 and estimate_tokens(chunks[-1]) < min_tokens:
         chunks[-2] = chunks[-2] + ' ' + chunks[-1]
         chunks.pop()
-    
+
     return chunks if chunks else [passage]
 
 
-def generate_metadata(passage_id: int, chunk_index: int, total_chunks: int) -> dict:
-    """Generate Pokémon metadata for a document from the raw pokedex cache.
-
-    Derives title, section (types joined with '+') and url (official artwork)
-    from the Pokémon record with the given id. Falls back to a deterministic
-    id-derived metadata when the id is absent from the cache.
-    """
+def generate_metadata(passage_id, chunk_index, total_chunks):
     record = _get_pokedex().get(passage_id)
     if record is None:
         return {
@@ -121,8 +98,7 @@ def generate_metadata(passage_id: int, chunk_index: int, total_chunks: int) -> d
     }
 
 
-def process_corpus(input_path: Path, output_path: Path) -> Generator[dict]:
-    """Process corpus.jsonl and yield one chunked document per Pokémon."""
+def process_corpus(input_path, output_path):
     with open(input_path, 'r', encoding='utf-8') as f:
         for line in f:
             record = json.loads(line.strip())
@@ -130,7 +106,7 @@ def process_corpus(input_path: Path, output_path: Path) -> Generator[dict]:
             passage_id = record['id']
 
             # A re-chunk split would yield suffixed ids "{id}_{n}" and break
-            # eval exact-id linkage (review M4) — never split: keep ONE doc
+            # eval exact-id linkage (review M4) - never split: keep ONE doc
             # per Pokémon (truncated to fit) so every id is a pure integer.
             chunks = re_chunk_passage(passage)
             if len(chunks) > 1:
@@ -148,7 +124,6 @@ def process_corpus(input_path: Path, output_path: Path) -> Generator[dict]:
 
 
 def main():
-    """Main entry point for the chunker pipeline."""
     project_root = Path(__file__).parent.parent.parent
     input_path = project_root / 'data' / 'corpus.jsonl'
     output_path = project_root / 'data' / 'chunks' / 'documents.jsonl'

@@ -1,26 +1,21 @@
-"""OpenAI client construction from environment.
+# Pure os.environ reader — no load_dotenv inside; callers own .env loading.
+# The openai SDK only honors OPENAI_BASE_URL (not OPENAI_API_BASE_URL), so we
+# build the client with an explicit base_url= pointing at the configured
+# OpenAI-compatible endpoint (locally hosted LLM or cloud API).
 
-Pure ``os.environ`` reader — no ``load_dotenv`` inside. Callers own
-.env loading (e.g. eval scripts call ``load_dotenv(PROJECT_ROOT / ".env")``
-at main() start, Streamlit loads it via dotenv on import).
-
-The openai SDK only honors ``OPENAI_BASE_URL`` (not ``OPENAI_API_BASE_URL``),
-so we build the client with an explicit ``base_url=`` pointing at the
-configured OpenAI-compatible endpoint (locally hosted LLM or cloud API).
-"""
 import os
+
 from openai import OpenAI
 
 
-def _env(name: str) -> str | None:
-    """Read ``name`` from env; return ``None`` for missing or empty/whitespace."""
+def _env(name):
     value = os.environ.get(name)
     if value is None or not value.strip():
         return None
     return value
 
 
-def get_api_key() -> str:
+def get_api_key():
     key = _env("OPENAI_API_KEY")
     if key is None:
         raise RuntimeError(
@@ -29,7 +24,7 @@ def get_api_key() -> str:
     return key
 
 
-def get_base_url() -> str:
+def get_base_url():
     url = _env("OPENAI_API_BASE_URL") or _env("OPENAI_BASE_URL")
     if url is None:
         raise RuntimeError(
@@ -38,7 +33,7 @@ def get_base_url() -> str:
     return url
 
 
-def get_model() -> str:
+def get_model():
     model = _env("MODEL_ID")
     if model is None:
         raise RuntimeError(
@@ -47,5 +42,5 @@ def get_model() -> str:
     return model
 
 
-def create_client() -> OpenAI:
+def create_client():
     return OpenAI(api_key=get_api_key(), base_url=get_base_url())

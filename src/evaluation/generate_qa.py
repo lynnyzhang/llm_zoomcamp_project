@@ -1,32 +1,5 @@
-"""LLM-generated Pokémon Q&A set (data/qa.jsonl).
-
-Adapts the course 4-Evaluation data-generation pattern (reference only — the
-technique is copied here; nothing is imported from 4-Evaluation/):
-
-- per Pokémon record, prompt the LLM to formulate 5 natural fan questions
-  plus answers grounded in the record (Responses API, structured output);
-- pydantic structured output via ``client.responses.parse(text_format=...)``
-  with a ``patch_openai_client``-style json_schema injection for local
-  OpenAI-compatible servers (e.g. llama.cpp) and a plain
-  ``responses.create`` + ``json.loads`` fallback for servers that reject
-  ``parse`` entirely;
-- 3 retries with 2^n backoff (``llm_structured_retry`` pattern);
-- ThreadPoolExecutor (max_workers 2 — see MAX_WORKERS for the measured
-  deviation from the plan's 6) + tqdm progress;
-- writes ``data/qa.jsonl`` rows ``{"question": str, "answer": str, "id": int}``
-  where id = Pokémon id (exact ground-truth linkage).
-
-Default (dev subset): ids are read from ``data/corpus.jsonl`` — QA always
-matches the indexed corpus (50 records × 5 = 250 pairs).
-``--limit N``: first N records by id from the raw cache. ``--full``: all
-1,025 records × 5 = 5,125 pairs — MANUAL only (user directive 2026-08-07:
-never generate on the full set during execution).
-
-data/qa.jsonl is written atomically: only after ALL records generated
-successfully, so a failed run never leaves a partial file behind.
-"""
-
-from __future__ import annotations
+# LLM-generated Pokémon Q&A set (data/qa.jsonl) — adapts the 4-Evaluation
+# data-generation pattern (reference only; nothing imported from 4-Evaluation/).
 
 import argparse
 import json
@@ -97,13 +70,9 @@ class QAResponse(BaseModel):
 
 
 def patch_openai_client(client):
-    """Port of the course 4-Evaluation patch for local OpenAI-compatible servers.
-
-    ``responses.parse`` sends a ``text`` field in the request body that
-    llama.cpp-style servers reject; this injects the pydantic json_schema via
-    ``extra_body.response_format`` instead and falls back to the native SDK
-    parse when no ``text_format`` is given.
-    """
+    # responses.parse sends a "text" field in the request body that llama.cpp
+    # rejects; inject the pydantic json_schema via extra_body.response_format
+    # instead (falls back to native parse when no text_format is given).
     _original_parse = client.responses.parse
 
     def _patched_responses_parse(self, model, input, **kwargs):
@@ -127,8 +96,7 @@ def patch_openai_client(client):
     return client
 
 
-def _extract_json(text: str) -> dict:
-    """Parse a JSON object out of an LLM completion (strips code fences)."""
+def _extract_json(text):
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -146,13 +114,7 @@ def _extract_json(text: str) -> dict:
     return data
 
 
-def _repair_json(text: str) -> dict:
-    """Light repairs for model JSON quirks, tried in order of likelihood.
-
-    The local model frequently drops the outer closing brace
-    (``{"qa_pairs": [...]``), sometimes adds trailing prose, and occasionally
-    emits trailing commas — each variant below handles one combination.
-    """
+def _repair_json(text):
     stripped = text.rstrip()
     variants = [stripped]
     if not stripped.endswith("}"):
@@ -173,8 +135,7 @@ def _repair_json(text: str) -> dict:
     raise ValueError(f"could not repair model JSON output: {text[:80]}...")
 
 
-def _try_parse(client, model: str, messages: list[dict]) -> list[QAPair] | None:
-    """parse(text_format=...) result, or None if the endpoint cannot produce it."""
+def _try_parse(client, model, messages):
     try:
         parsed = client.responses.parse(model=model, input=messages, text_format=QAResponse).output_parsed
     except Exception:  # noqa: BLE001 — servers that reject parse fall back to create
@@ -182,10 +143,7 @@ def _try_parse(client, model: str, messages: list[dict]) -> list[QAPair] | None:
     return parsed.qa_pairs if parsed is not None else None
 
 
-def _generate_qa_pairs(
-    client, model: str, record: dict, use_parse: bool, instructions: str = DATA_GEN_INSTRUCTIONS
-) -> list[QAPair]:
-    """One structured generation attempt: parse() with a create() fallback."""
+def _generate_qa_pairs(client, model, record, use_parse, instructions=DATA_GEN_INSTRUCTIONS):
     messages = [
         {"role": "developer", "content": instructions},
         {"role": "user", "content": json.dumps(record)},
@@ -200,14 +158,9 @@ def _generate_qa_pairs(
     return QAResponse.model_validate(_extract_json(response.output_text)).qa_pairs
 
 
-def supports_structured_output(client, model: str) -> bool:
-    """Probe once whether the endpoint honors parse(text_format=...).
-
-    Local OpenAI-compatible servers (e.g. llama.cpp) commonly accept the
-    request but return plain text (output_parsed=None), silently wasting a
-    full generation per record — so we probe cheaply and skip parse entirely
-    when it is not honored.
-    """
+def supports_structured_output(client, model):
+    # Local servers (e.g. llama.cpp) accept the request but return plain text
+    # (output_parsed=None), silently wasting a generation — probe once and skip.
     try:
         probe = client.responses.parse(
             model=model,
@@ -222,13 +175,12 @@ def supports_structured_output(client, model: str) -> bool:
 
 def llm_structured_retry(
     client,
-    model: str,
-    record: dict,
-    use_parse: bool,
-    max_retries: int = 3,
-    instructions: str = DATA_GEN_INSTRUCTIONS,
-) -> list[QAPair]:
-    """Try structured generation up to ``max_retries`` times with 2^n backoff."""
+    model,
+    record,
+    use_parse,
+    max_retries=3,
+    instructions=DATA_GEN_INSTRUCTIONS,
+):
     for attempt in range(max_retries):
         try:
             return _generate_qa_pairs(client, model, record, use_parse, instructions)
@@ -238,19 +190,11 @@ def llm_structured_retry(
             time.sleep(2**attempt)
 
 
-def generate_for_record(
-    pokemon_id: int, record: dict, client, model: str, use_parse: bool
-) -> list[dict]:
-    """Generate the Q&A rows for one Pokémon record (id = ground truth).
+def generate_for_record(pokemon_id, record, client, model, use_parse):
+    seen = set()
+    rows = []
 
-    Rows are deduplicated by question, topped up to TARGET_PAIRS_PER_RECORD
-    with follow-up generations when the model returns fewer, and capped at the
-    target so every record contributes exactly 5 rows.
-    """
-    seen: set[str] = set()
-    rows: list[dict] = []
-
-    def add(pairs: list[QAPair]) -> None:
+    def add(pairs):
         for pair in pairs:
             question = (pair.question or "").strip()
             answer = (pair.answer or "").strip()
@@ -275,8 +219,7 @@ def generate_for_record(
     return rows[:TARGET_PAIRS_PER_RECORD]
 
 
-def load_raw_records() -> dict[int, dict]:
-    """Load the full pokedex cache (todo 1's deterministic source), keyed by id."""
+def load_raw_records():
     if not RAW_POKEDEX.exists():
         raise SystemExit(
             f"FATAL: raw pokedex cache missing at {RAW_POKEDEX}. "
@@ -287,8 +230,7 @@ def load_raw_records() -> dict[int, dict]:
     return {int(record["id"]): record for record in records}
 
 
-def load_corpus_ids() -> list[int]:
-    """The exact id set indexed in corpus.jsonl (QA must match the corpus)."""
+def load_corpus_ids():
     if not CORPUS_FILE.exists():
         raise SystemExit(
             f"FATAL: corpus missing at {CORPUS_FILE}. "
@@ -308,10 +250,7 @@ def load_corpus_ids() -> list[int]:
     return sorted(ids)
 
 
-def resolve_ids(
-    records: dict[int, dict], limit: int | None, full: bool, corpus_ids: list[int]
-) -> list[int]:
-    """Dev subset (default) = corpus ids; --limit N / --full = slice of the raw cache."""
+def resolve_ids(records, limit, full, corpus_ids):
     if full:
         return sorted(records)
     if limit is not None:
@@ -319,7 +258,7 @@ def resolve_ids(
     return corpus_ids
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Generate LLM Pokémon Q&A pairs into data/qa.jsonl "
         "(default: the exact id set in data/corpus.jsonl = 50 records × 5 pairs)."
@@ -355,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
     mode = "parse" if use_parse else "create + json.loads (JSON fallback)"
     print(f"Model: {model} | structured mode: {mode} | expected pairs: {len(ids) * 5}")
 
-    all_rows: list[dict] = []
+    all_rows = []
     try:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             futures = [

@@ -1,18 +1,3 @@
-"""Streamlit monitoring dashboard for the LLM Zoomcamp capstone.
-
-Displays charts from the traces database:
-1. Queries over time
-2. Feedback distribution (thumbs up/down)
-3. Latency distribution (span durations)
-4. Token usage per query
-5. Popular topics (top queries)
-6. Agent search patterns (iterations per query)
-
-Run: streamlit run src/monitoring/dashboard.py
-"""
-
-from __future__ import annotations
-
 import sqlite3
 import sys
 from pathlib import Path
@@ -22,11 +7,10 @@ project_root = Path(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
 from src.monitoring.tracer import get_traces_db_path
-
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -43,12 +27,9 @@ st.set_page_config(
 # Database helpers
 # ---------------------------------------------------------------------------
 
-def load_dataframe(query: str) -> pd.DataFrame:
-    """Load a SQL query into a pandas DataFrame.
-
-    Opens a fresh connection per call: SQLite connections are thread-bound,
-    so a cached one would break reruns from a different thread.
-    """
+def load_dataframe(query):
+    # Opens a fresh connection per call: SQLite connections are thread-bound,
+    # so a cached one would break reruns from a different thread.
     conn = sqlite3.connect(str(get_traces_db_path()))
     try:
         return pd.read_sql_query(query, conn)

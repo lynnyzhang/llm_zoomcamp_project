@@ -1,17 +1,3 @@
-"""Agent loop vs simple RAG evaluation.
-
-Compares agentic RAG (iterative search with query reformulation) against
-simple RAG (single search) on the Pokémon dev-subset QA pairs (250).
-
-Measures:
-- Accuracy (retrieval match + LLM answer quality)
-- Number of searches per query
-- Latency overhead
-- Visual comparison chart
-"""
-
-from __future__ import annotations
-
 import json
 import sys
 import time
@@ -33,8 +19,7 @@ from src.llm import get_model
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_qa_pairs(qa_path: str) -> list[dict]:
-    """Load Q&A pairs from JSONL."""
+def load_qa_pairs(qa_path):
     pairs = []
     with open(qa_path) as f:
         for line in f:
@@ -46,22 +31,7 @@ def load_qa_pairs(qa_path: str) -> list[dict]:
 # Retrieval accuracy (fast, no LLM needed)
 # ---------------------------------------------------------------------------
 
-def retrieval_accuracy(
-    search_fn,
-    questions: list[dict],
-    k: int = 5,
-) -> dict:
-    """Check if the correct document appears in top-k search results.
-
-    Args:
-        search_fn: Function taking (query, num_results) -> list[dict].
-        questions: List of {"question", "answer", "id"} dicts.
-        k: Number of top results to check.
-
-    Returns:
-        Dict with hit_rate (fraction of queries with correct doc in top-k)
-        and per-query details.
-    """
+def retrieval_accuracy(search_fn, questions, k=5):
     hits = 0
     details = []
 
@@ -94,15 +64,11 @@ def retrieval_accuracy(
 
 def llm_judge_score(
     client,
-    question: str,
-    generated_answer: str,
-    ground_truth: str,
-    model: str | None = None,
-) -> dict | None:
-    """Use LLM to judge answer quality on a 1-5 scale.
-
-    Returns dict with correctness score (1-5) or None on failure.
-    """
+    question,
+    generated_answer,
+    ground_truth,
+    model=None,
+):
     model = model or get_model()
     instructions = """\
 You are an expert judge for question-answering systems.
@@ -156,22 +122,10 @@ Ground Truth Answer: {ground_truth}
 def evaluate_answer_quality(
     rag_fn,
     client,
-    questions: list[dict],
-    sample_size: int = 50,
-    model: str | None = None,
-) -> dict:
-    """Evaluate answer quality using LLM judge on a sample.
-
-    Args:
-        rag_fn: Function taking (query) -> str (the answer).
-        client: OpenAI client for judge calls.
-        questions: List of Q&A dicts.
-        sample_size: Number of pairs to evaluate (0 = all).
-        model: LLM model name.
-
-    Returns:
-        Dict with mean score, per-sample results.
-    """
+    questions,
+    sample_size=50,
+    model=None,
+):
     model = model or get_model()
     pairs = questions[:sample_size] if sample_size > 0 else questions
     scores = []
@@ -216,8 +170,7 @@ def evaluate_answer_quality(
 # Visualization
 # ---------------------------------------------------------------------------
 
-def create_comparison_chart(results: dict, output_path: str) -> None:
-    """Create a bar chart comparing simple RAG vs agentic RAG."""
+def create_comparison_chart(results, output_path):
     _, axes = plt.subplots(1, 3, figsize=(14, 5))
 
     simple = results["simple_rag"]
@@ -268,7 +221,6 @@ def create_comparison_chart(results: dict, output_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main():
-    """Run agent loop vs simple RAG evaluation."""
     from dotenv import load_dotenv
     from openai import OpenAI
 

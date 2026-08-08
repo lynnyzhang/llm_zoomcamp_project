@@ -41,7 +41,7 @@ class StubSearchIndex:
     guardrail tests run independently of the data/model artifacts (todo 1).
     """
 
-    def __init__(self, documents: list[dict] | None = None):
+    def __init__(self, documents=None):
         self._documents = documents if documents is not None else [
             {
                 "id": "25",
@@ -69,7 +69,7 @@ class StubSearchIndex:
             },
         ]
 
-    def search(self, query: str, num_results: int = 5) -> list[dict]:
+    def search(self, query, num_results=5):
         return [dict(doc) for doc in self._documents[:num_results]]
 
 
@@ -82,17 +82,14 @@ class TestDataIngestion:
     """Verify that data ingestion produced valid output files."""
 
     def test_corpus_file_exists(self):
-        """data/corpus.jsonl must exist after ingestion."""
         corpus_path = DATA_DIR / "corpus.jsonl"
         assert corpus_path.exists(), f"Missing {corpus_path}"
 
     def test_qa_file_exists(self):
-        """data/qa.jsonl must exist after ingestion."""
         qa_path = DATA_DIR / "qa.jsonl"
         assert qa_path.exists(), f"Missing {qa_path}"
 
     def test_corpus_records_are_valid(self):
-        """Each line in corpus.jsonl must be valid JSON with required fields."""
         corpus_path = DATA_DIR / "corpus.jsonl"
         records = []
         with open(corpus_path) as f:
@@ -110,7 +107,6 @@ class TestDataIngestion:
         assert len(records) >= 50, f"Expected >= 50 passages, got {len(records)}"
 
     def test_qa_records_are_valid(self):
-        """Each line in qa.jsonl must be valid JSON with required fields."""
         qa_path = DATA_DIR / "qa.jsonl"
         records = []
         with open(qa_path) as f:
@@ -128,12 +124,10 @@ class TestDataIngestion:
         assert len(records) >= 250, f"Expected >= 250 Q&A pairs, got {len(records)}"
 
     def test_chunker_output_exists(self):
-        """data/chunks/documents.jsonl must exist after chunking."""
         docs_path = CHUNKS_DIR / "documents.jsonl"
         assert docs_path.exists(), f"Missing {docs_path}"
 
     def test_chunked_documents_are_valid(self):
-        """Each chunked document must have required fields."""
         docs_path = CHUNKS_DIR / "documents.jsonl"
         count = 0
         with open(docs_path) as f:
@@ -165,7 +159,6 @@ class TestChunkingPipeline:
     """Test the chunking logic directly."""
 
     def test_estimate_tokens(self):
-        """Token estimation should be roughly len(text) / 4."""
         from src.data.chunker import estimate_tokens
 
         assert estimate_tokens("abcd") == 1
@@ -173,7 +166,6 @@ class TestChunkingPipeline:
         assert estimate_tokens("") == 0
 
     def test_re_chunk_passage_short(self):
-        """Short passages should not be re-chunked."""
         from src.data.chunker import re_chunk_passage
 
         short_text = "This is a short passage."
@@ -182,7 +174,6 @@ class TestChunkingPipeline:
         assert chunks[0] == short_text
 
     def test_re_chunk_passage_long(self):
-        """Long passages should be split into multiple chunks."""
         from src.data.chunker import re_chunk_passage
 
         # Create a passage longer than max_tokens
@@ -199,7 +190,6 @@ class TestChunkingPipeline:
             assert tokens <= 1200, f"Chunk too large: {tokens} tokens"
 
     def test_generate_metadata(self):
-        """Metadata should derive Pokémon fields from the raw pokedex cache."""
         from src.data.chunker import generate_metadata
 
         meta = generate_metadata(1, 0, 1)
@@ -211,7 +201,6 @@ class TestChunkingPipeline:
         )
 
     def test_process_corpus_yields_valid_docs(self):
-        """process_corpus should yield documents with required fields."""
         from src.data.chunker import process_corpus
 
         corpus_path = DATA_DIR / "corpus.jsonl"
@@ -238,21 +227,18 @@ class TestHybridSearch:
 
     @pytest.fixture(scope="class")
     def search_index(self):
-        """Build a HybridSearch index (cached per test class)."""
         from src.search.hybrid import HybridSearch
 
         docs_path = CHUNKS_DIR / "documents.jsonl"
         return HybridSearch(documents_path=docs_path)
 
     def test_index_loads_documents(self, search_index):
-        """Search index should load documents from JSONL."""
         # Floor relaxed from >= 3000 (rag-mini-wikipedia) to >= 50: the default
         # dev subset is 50 Pokémon, one document per Pokémon (user directive
         # 2026-08-07) — 3000 can never hold on the dev subset.
         assert len(search_index.documents) >= 50
 
     def test_keyword_search_returns_results(self, search_index):
-        """Keyword search should return results for a valid query."""
         results = search_index.keyword_search("pikachu", num_results=5)
         assert len(results) > 0
         assert len(results) <= 5
@@ -261,7 +247,6 @@ class TestHybridSearch:
             assert "content" in doc
 
     def test_vector_search_returns_results(self, search_index):
-        """Vector search should return results for a valid query."""
         results = search_index.vector_search("electric pokemon stats", num_results=5)
         assert len(results) > 0
         assert len(results) <= 5
@@ -269,7 +254,6 @@ class TestHybridSearch:
             assert "id" in doc
 
     def test_hybrid_search_returns_results(self, search_index):
-        """Hybrid search should return fused results with scores."""
         results = search_index.search("What are Pikachu's stats?", num_results=5)
         assert len(results) > 0
         assert len(results) <= 5
@@ -279,13 +263,11 @@ class TestHybridSearch:
             assert isinstance(doc["score"], (int, float))
 
     def test_hybrid_search_scores_are_ranked(self, search_index):
-        """Results should be ranked by score (descending)."""
         results = search_index.search("fire type pokemon", num_results=5)
         scores = [doc["score"] for doc in results]
         assert scores == sorted(scores, reverse=True), "Scores should be in descending order"
 
     def test_rrf_fusion(self):
-        """Reciprocal Rank Fusion should combine ranked lists correctly."""
         from src.search.hybrid import reciprocal_rank_fusion
 
         list1 = [{"id": "a", "content": "1"}, {"id": "b", "content": "2"}, {"id": "c", "content": "3"}]
@@ -303,7 +285,6 @@ class TestHybridSearch:
         assert scores == sorted(scores, reverse=True)
 
     def test_rrf_with_weights(self):
-        """RRF should respect per-list weights."""
         from src.search.hybrid import reciprocal_rank_fusion
 
         list1 = [{"id": "a", "content": "1"}, {"id": "b", "content": "2"}]
@@ -315,7 +296,6 @@ class TestHybridSearch:
         assert fused[0]["id"] == "a"
 
     def test_search_empty_query(self, search_index):
-        """Empty query should still return results (not crash)."""
         results = search_index.search("", num_results=3)
         assert isinstance(results, list)
 
@@ -336,7 +316,6 @@ class TestRAGPipeline:
 
     @pytest.fixture
     def mock_llm_client(self):
-        """Create a mock OpenAI client for LLM calls."""
         mock_client = MagicMock()
         mock_response = MagicMock()
         mock_response.output_text = "This is a mock answer about Pikachu."
@@ -344,7 +323,6 @@ class TestRAGPipeline:
         return mock_client
 
     def test_rag_base_search(self, search_index):
-        """RAGBase.search should delegate to the search index."""
         from src.rag.pipeline import RAGBase
 
         rag = RAGBase(search_index=search_index)
@@ -353,7 +331,6 @@ class TestRAGPipeline:
         assert "content" in results[0]
 
     def test_rag_build_context(self, search_index):
-        """build_context should format results into a text block."""
         from src.rag.pipeline import RAGBase
 
         rag = RAGBase(search_index=search_index)
@@ -366,7 +343,6 @@ class TestRAGPipeline:
             assert doc["content"] in context or doc["title"] in context
 
     def test_rag_build_prompt(self, search_index):
-        """build_prompt should include both question and context."""
         from src.rag.pipeline import RAGBase
 
         rag = RAGBase(search_index=search_index)
@@ -376,7 +352,6 @@ class TestRAGPipeline:
         assert "CONTEXT" in prompt
 
     def test_rag_llm_call(self, search_index, mock_llm_client):
-        """RAGBase.llm should call the LLM and return the answer text."""
         from src.rag.pipeline import RAGBase
 
         rag = RAGBase(search_index=search_index, llm_client=mock_llm_client)
@@ -385,7 +360,6 @@ class TestRAGPipeline:
         mock_llm_client.responses.create.assert_called_once()
 
     def test_rag_full_pipeline(self, search_index, mock_llm_client):
-        """Full RAG pipeline: search → prompt → LLM answer."""
         from src.rag.pipeline import RAGBase
 
         rag = RAGBase(search_index=search_index, llm_client=mock_llm_client)
@@ -412,7 +386,6 @@ class TestAgentLoop:
 
     @pytest.fixture
     def mock_llm_client(self):
-        """Mock LLM that returns sufficient analysis and an answer."""
         mock_client = MagicMock()
 
         # First call: analysis (sufficient=True → no reformulation needed)
@@ -434,7 +407,6 @@ class TestAgentLoop:
 
     @pytest.fixture
     def mock_llm_client_reformulate(self):
-        """Mock LLM that triggers reformulation (insufficient → reformulate → sufficient)."""
         mock_client = MagicMock()
 
         # Call 1: analysis (insufficient)
@@ -467,7 +439,6 @@ class TestAgentLoop:
         return mock_client
 
     def test_agent_dataclasses(self):
-        """SearchRecord and AgentResult dataclasses should work correctly."""
         from src.rag.agent import AgentResult, SearchRecord
 
         record = SearchRecord(query="test", results=[{"id": "1"}], analysis={"sufficient": True})
@@ -480,7 +451,6 @@ class TestAgentLoop:
         assert result.iterations == 1
 
     def test_agent_perform_search(self, search_index):
-        """Agent.perform_search should return search results."""
         from src.rag.agent import RAGAgent
 
         agent = RAGAgent(search_index=search_index, llm_client=MagicMock())
@@ -489,7 +459,6 @@ class TestAgentLoop:
         assert "id" in results[0]
 
     def test_agent_analyze_results(self, search_index, mock_llm_client):
-        """Agent.analyze_results should call LLM and return analysis dict."""
         from src.rag.agent import RAGAgent
 
         agent = RAGAgent(search_index=search_index, llm_client=mock_llm_client)
@@ -501,7 +470,6 @@ class TestAgentLoop:
         assert "reason" in analysis
 
     def test_agent_analyze_handles_markdown_json(self):
-        """Agent.analyze_results should handle markdown code-block JSON."""
         from src.rag.agent import RAGAgent
 
         mock_client = MagicMock()
@@ -537,7 +505,6 @@ class TestAgentLoop:
         assert analysis["rejected"] is True
 
     def test_agent_reformulate_query_from_analysis(self, search_index):
-        """Agent.reformulate_query should use analysis.reformulated_query."""
         from src.rag.agent import RAGAgent
 
         mock_client = MagicMock()
@@ -549,7 +516,6 @@ class TestAgentLoop:
         mock_client.responses.create.assert_not_called()
 
     def test_agent_reformulate_query_via_llm(self, search_index):
-        """Agent.reformulate_query should call LLM if no reformulated_query in analysis."""
         from src.rag.agent import RAGAgent
 
         mock_client = MagicMock()
@@ -564,7 +530,6 @@ class TestAgentLoop:
         mock_client.responses.create.assert_called_once()
 
     def test_agent_generate_answer_deduplicates(self, search_index, mock_llm_client):
-        """Agent.generate_answer should deduplicate results by id."""
         from src.rag.agent import RAGAgent
 
         agent = RAGAgent(search_index=search_index, llm_client=mock_llm_client)
@@ -580,7 +545,6 @@ class TestAgentLoop:
         assert call_args is not None
 
     def test_agent_run_single_iteration(self, search_index, mock_llm_client):
-        """Agent.run should complete in 1 iteration when results are sufficient."""
         from src.rag.agent import RAGAgent
 
         agent = RAGAgent(search_index=search_index, llm_client=mock_llm_client)
@@ -594,7 +558,6 @@ class TestAgentLoop:
         assert result["searches"][0].analysis is not None
 
     def test_agent_run_with_reformulation(self, search_index, mock_llm_client_reformulate):
-        """Agent.run should reformulate when first results are insufficient."""
         from src.rag.agent import RAGAgent
 
         agent = RAGAgent(search_index=search_index, llm_client=mock_llm_client_reformulate)
@@ -774,14 +737,13 @@ class TestAgentGuardrails:
     and the deterministic fail-safe, all against a stub search index."""
 
     @staticmethod
-    def _response(text: str):
+    def _response(text):
         response = MagicMock()
         response.output_text = text
         return response
 
     @staticmethod
-    def _in_domain_client(answer_text: str = "Pikachu is an Electric-type Pokémon."):
-        """Analysis sufficient + off_topic:false, then a grounded answer."""
+    def _in_domain_client(answer_text="Pikachu is an Electric-type Pokémon."):
         mock_client = MagicMock()
         analysis_response = MagicMock()
         analysis_response.output_text = json.dumps({
@@ -802,7 +764,6 @@ class TestAgentGuardrails:
         return RAGAgent(search_index=StubSearchIndex(), llm_client=llm_client, **kwargs)
 
     def test_rejects_battle_simulation(self):
-        """Out-of-scope battle-simulation query → structured rejection."""
         result = self._agent(MagicMock()).run("Who would win Charizard vs Blastoise?")
         assert result["rejected"] is True
         assert result["searches"] == []
@@ -810,46 +771,38 @@ class TestAgentGuardrails:
         assert "can't" in result["answer"]
 
     def test_rejects_docker_question(self):
-        """Non-Pokémon topic (docker) → structured rejection."""
         result = self._agent(MagicMock()).run("What is Docker?")
         assert result["rejected"] is True
         assert result["searches"] == []
         assert result["iterations"] == 0
 
     def test_rejects_cooking_question(self):
-        """Non-Pokémon topic (cooking) → structured rejection."""
         result = self._agent(MagicMock()).run("How do I cook pasta?")
         assert result["rejected"] is True
 
     def test_rejects_finance_question(self):
-        """Non-Pokémon topic (finance) → structured rejection."""
         result = self._agent(MagicMock()).run("Recommend a cheap stock to invest in")
         assert result["rejected"] is True
 
     def test_rejects_medical_question(self):
-        """Non-Pokémon topic (medical) → structured rejection."""
         result = self._agent(MagicMock()).run("I have a fever, what medicine should I take?")
         assert result["rejected"] is True
 
     def test_rejects_save_file_request(self):
-        """Save-file access request → structured rejection."""
         result = self._agent(MagicMock()).run("Can you load my Pokémon save file?")
         assert result["rejected"] is True
 
     def test_rejects_cheating_request(self):
-        """Cheating/hacking request → structured rejection."""
         result = self._agent(MagicMock()).run("Is there a hack to catch Mewtwo easily?")
         assert result["rejected"] is True
 
     def test_rejection_answer_is_friendly_redirect(self):
-        """The rejection answer is the exact friendly redirect message."""
         from src.rag.agent import REJECTION_MESSAGE
 
         result = self._agent(MagicMock()).run("Who would win Charizard vs Blastoise?")
         assert result["answer"] == REJECTION_MESSAGE
 
     def test_team_building_is_not_rejected(self):
-        """Team-building query (battle TEAM, allowed by scope) → normal path."""
         agent = self._agent(self._in_domain_client("Water types are weak to Electric and Grass."))
         result = agent.run("Help me build a battle team against water types")
         assert result.get("rejected", False) is False
@@ -857,14 +810,12 @@ class TestAgentGuardrails:
         assert result["answer"] == "Water types are weak to Electric and Grass."
 
     def test_bare_battle_question_is_not_rejected(self):
-        """Bare 'battle' must not trip the pre-gate (battle TEAM is in-scope)."""
         agent = self._agent(self._in_domain_client("Pikachu is a strong special attacker."))
         result = agent.run("Tell me about battle strategies for Pikachu")
         assert result.get("rejected", False) is False
         assert result["answer"] == "Pikachu is a strong special attacker."
 
     def test_in_domain_question_with_off_topic_false_is_not_rejected(self):
-        """Analysis says off_topic:false → normal answer path."""
         agent = self._agent(self._in_domain_client("Pikachu has 90 base Speed."))
         result = agent.run("Tell me about Pikachu")
         assert result.get("rejected", False) is False
@@ -872,7 +823,6 @@ class TestAgentGuardrails:
         assert result["answer"] == "Pikachu has 90 base Speed."
 
     def test_off_topic_flag_is_rejected(self):
-        """Analysis flags the query as outside the Pokémon domain → rejection."""
         mock_client = MagicMock()
         mock_client.responses.create.return_value = self._response(json.dumps({
             "sufficient": False,
@@ -887,7 +837,6 @@ class TestAgentGuardrails:
         assert result["iterations"] == 0
 
     def test_fail_safe_rejects_query_without_domain_signals(self):
-        """Unparseable analysis + no Pokémon-domain signals → rejected."""
         mock_client = MagicMock()
         mock_client.responses.create.return_value = self._response("garbage not json")
         result = self._agent(mock_client).run("How does gravity work?")
@@ -896,7 +845,6 @@ class TestAgentGuardrails:
         assert result["iterations"] == 0
 
     def test_fail_safe_allows_query_with_domain_signals(self):
-        """Unparseable analysis + 'pikachu stats' (stat signal) → normal path."""
         mock_client = MagicMock()
         mock_client.responses.create.side_effect = [
             self._response("garbage not json"),
@@ -908,7 +856,6 @@ class TestAgentGuardrails:
         assert result["answer"] == "Pikachu's base Speed is 90."
 
     def test_fail_safe_analysis_keeps_sufficient_for_domain_signals(self):
-        """analyze_results keeps sufficient:true when signals are present."""
         from src.rag.agent import RAGAgent
 
         mock_client = MagicMock()
@@ -931,19 +878,19 @@ class RecordingSearchIndex(StubSearchIndex):
     proves the agent/pipeline dispatched to the right one.
     """
 
-    def __init__(self, documents: list[dict] | None = None):
+    def __init__(self, documents=None):
         super().__init__(documents=documents)
         self.calls: list[tuple[str, str, int]] = []
 
-    def search(self, query: str, num_results: int = 5) -> list[dict]:
+    def search(self, query, num_results=5):
         self.calls.append(("search", query, num_results))
         return super().search(query, num_results=num_results)
 
-    def keyword_search(self, query: str, num_results: int = 5) -> list[dict]:
+    def keyword_search(self, query, num_results=5):
         self.calls.append(("keyword_search", query, num_results))
         return [dict(doc) for doc in self._documents[:num_results]]
 
-    def vector_search(self, query: str, num_results: int = 5) -> list[dict]:
+    def vector_search(self, query, num_results=5):
         self.calls.append(("vector_search", query, num_results))
         return [dict(doc) for doc in self._documents[:num_results]]
 
@@ -953,7 +900,7 @@ class TestSearchTypeDispatch:
     search backend — stub index only, never a real HybridSearch."""
 
     @staticmethod
-    def _rag(search_type: str | None = None):
+    def _rag(search_type=None):
         from src.rag.pipeline import RAGBase
 
         index = RecordingSearchIndex()
@@ -963,7 +910,7 @@ class TestSearchTypeDispatch:
         return RAGBase(search_index=index, **kwargs), index
 
     @staticmethod
-    def _agent(search_type: str):
+    def _agent(search_type):
         from src.rag.agent import RAGAgent
 
         index = RecordingSearchIndex()
@@ -1012,7 +959,6 @@ class TestMonitoring:
     """Test OpenTelemetry tracing with SQLite storage."""
 
     def test_tracer_setup_creates_db(self, tmp_path):
-        """TracerSetup should create the SQLite database."""
         from src.monitoring.tracer import SQLiteSpanExporter
 
         db_path = tmp_path / "test_traces.db"
@@ -1021,7 +967,6 @@ class TestMonitoring:
         exporter.shutdown()
 
     def test_tracer_schema_has_required_columns(self, tmp_path):
-        """SQLite spans table should have all required columns."""
         from src.monitoring.tracer import SQLiteSpanExporter
 
         db_path = tmp_path / "test_traces.db"
@@ -1041,7 +986,6 @@ class TestMonitoring:
         assert expected.issubset(columns), f"Missing columns: {expected - columns}"
 
     def test_tracer_records_spans(self, tmp_path):
-        """SQLiteSpanExporter should record spans to SQLite."""
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
@@ -1071,7 +1015,6 @@ class TestMonitoring:
         assert row[0] == "test.span"
 
     def test_record_feedback(self, tmp_path):
-        """record_feedback should update the feedback column of the exact span."""
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
@@ -1174,7 +1117,6 @@ class TestMonitoring:
         assert rows == [("first", "negative"), ("second", None)]
 
     def test_tracing_enabled_gate(self, monkeypatch):
-        """tracing_enabled() defaults on; explicit env values disable it."""
         from src.monitoring.tracer import tracing_enabled
 
         monkeypatch.delenv("TRACING_ENABLED", raising=False)
@@ -1186,7 +1128,6 @@ class TestMonitoring:
         assert tracing_enabled() is True
 
     def test_get_trace_stats(self, tmp_path):
-        """get_trace_stats should return summary statistics."""
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
@@ -1214,7 +1155,6 @@ class TestMonitoring:
         assert stats["total_cost"] >= 0.01
 
     def test_traced_ragent_run(self, tmp_path):
-        """TracedRAGAgent should wrap agent.run with tracing."""
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
@@ -1248,7 +1188,6 @@ class TestMonitoring:
         assert stats["total_traces"] >= 1
 
     def test_traced_ragent_run_with_feedback_returns_span_id(self, tmp_path):
-        """run_with_feedback returns (result, span_id) for exact feedback."""
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
@@ -1292,12 +1231,10 @@ class TestEvaluationResults:
     """Verify that evaluation results are valid and meet minimum thresholds."""
 
     def test_retrieval_eval_file_exists(self):
-        """retrieval_eval.json must exist."""
         path = RESULTS_DIR / "retrieval_eval.json"
         assert path.exists(), f"Missing {path}"
 
     def test_retrieval_eval_structure(self):
-        """retrieval_eval.json must have keyword/vector/hybrid sections."""
         with open(RESULTS_DIR / "retrieval_eval.json") as f:
             data = json.load(f)
 
@@ -1318,7 +1255,6 @@ class TestEvaluationResults:
             assert section["num_questions"] >= 250
 
     def test_retrieval_eval_metrics_are_valid(self):
-        """Retrieval metrics should be within valid ranges (0-1)."""
         with open(RESULTS_DIR / "retrieval_eval.json") as f:
             data = json.load(f)
 
@@ -1330,7 +1266,6 @@ class TestEvaluationResults:
                 )
 
     def test_retrieval_eval_vector_beats_keyword(self):
-        """Vector search should outperform keyword-only (recall)."""
         with open(RESULTS_DIR / "retrieval_eval.json") as f:
             data = json.load(f)
 
@@ -1340,12 +1275,10 @@ class TestEvaluationResults:
         )
 
     def test_llm_eval_file_exists(self):
-        """llm_eval.json must exist."""
         path = RESULTS_DIR / "llm_eval.json"
         assert path.exists(), f"Missing {path}"
 
     def test_llm_eval_structure(self):
-        """llm_eval.json must have simple/detailed/with_examples sections."""
         with open(RESULTS_DIR / "llm_eval.json") as f:
             data = json.load(f)
 
@@ -1362,7 +1295,6 @@ class TestEvaluationResults:
             assert section["num_evaluated"] >= 10
 
     def test_llm_eval_scores_are_high(self):
-        """LLM answer quality scores should meet per-prompt floors (model performs well)."""
         with open(RESULTS_DIR / "llm_eval.json") as f:
             data = json.load(f)
 
@@ -1390,7 +1322,6 @@ class TestEvaluationResults:
             )
 
     def test_llm_eval_with_examples_is_best(self):
-        """The with_examples prompt should be the highest-scoring judge prompt."""
         with open(RESULTS_DIR / "llm_eval.json") as f:
             data = json.load(f)
 
@@ -1403,12 +1334,10 @@ class TestEvaluationResults:
         assert best == "with_examples", f"Expected 'with_examples' to be best, got '{best}'"
 
     def test_agent_eval_file_exists(self):
-        """agent_eval.json must exist."""
         path = RESULTS_DIR / "agent_eval.json"
         assert path.exists(), f"Missing {path}"
 
     def test_agent_eval_structure(self):
-        """agent_eval.json must have simple_rag, agentic_rag, comparison sections."""
         with open(RESULTS_DIR / "agent_eval.json") as f:
             data = json.load(f)
 
@@ -1418,7 +1347,6 @@ class TestEvaluationResults:
         assert "config" in data
 
     def test_agent_eval_comparison_metrics(self):
-        """Comparison section should have retrieval_improvement and latency_overhead."""
         with open(RESULTS_DIR / "agent_eval.json") as f:
             data = json.load(f)
 
@@ -1429,7 +1357,6 @@ class TestEvaluationResults:
         assert "search_overhead" in comp
 
     def test_agent_eval_agentic_beats_simple(self):
-        """Agentic RAG should stay within ~1pp of simple RAG's retrieval hit rate."""
         with open(RESULTS_DIR / "agent_eval.json") as f:
             data = json.load(f)
 
@@ -1444,7 +1371,6 @@ class TestEvaluationResults:
         )
 
     def test_agent_eval_retrieval_improvement_positive(self):
-        """Agentic RAG should not show retrieval regression beyond ~1pp over simple."""
         with open(RESULTS_DIR / "agent_eval.json") as f:
             data = json.load(f)
 
@@ -1456,7 +1382,6 @@ class TestEvaluationResults:
         )
 
     def test_agent_eval_config_is_valid(self):
-        """Config should specify total_questions and model."""
         with open(RESULTS_DIR / "agent_eval.json") as f:
             data = json.load(f)
 
@@ -1477,11 +1402,9 @@ class TestEvaluationScripts:
     """Verify that evaluation scripts can be imported and their functions work."""
 
     def test_retrieval_eval_importable(self):
-        """retrieval_eval module should be importable."""
         sys.path.insert(0, str(PROJECT_ROOT))
 
     def test_precision_at_k(self):
-        """precision_at_k should compute correctly."""
         from src.evaluation.retrieval_eval import precision_at_k
 
         # Relevant doc is at position 0 in top-5
@@ -1490,14 +1413,12 @@ class TestEvaluationScripts:
         assert precision_at_k(["a", "b", "c", "d", "e"], "f", 5) == 0.0
 
     def test_recall_at_k(self):
-        """recall_at_k should return 1.0 if relevant doc is in top-k."""
         from src.evaluation.retrieval_eval import recall_at_k
 
         assert recall_at_k(["a", "b", "c"], "a", 5) == 1.0
         assert recall_at_k(["a", "b", "c"], "d", 5) == 0.0
 
     def test_mrr(self):
-        """mrr should return 1/rank of first relevant result."""
         from src.evaluation.retrieval_eval import mrr
 
         assert mrr(["a", "b", "c"], "a") == 1.0  # rank 1
@@ -1508,7 +1429,6 @@ class TestEvaluationScripts:
         """llm_eval module should be importable."""
 
     def test_judge_prompts_have_required_fields(self):
-        """All judge prompts should have instructions and template."""
         from src.evaluation.llm_eval import JUDGE_PROMPTS
 
         for name, config in JUDGE_PROMPTS.items():
@@ -1520,7 +1440,6 @@ class TestEvaluationScripts:
             assert "{answer}" in config["template"]
 
     def test_judge_scores_model(self):
-        """JudgeScores Pydantic model should validate correctly."""
         from src.evaluation.llm_eval import JudgeScores
 
         scores = JudgeScores(faithfulness=5, relevance=4, coherence=5, explanation="Good answer")
@@ -1531,7 +1450,6 @@ class TestEvaluationScripts:
         """agent_eval module should be importable."""
 
     def test_retrieval_accuracy_function(self):
-        """retrieval_accuracy should compute hit rate correctly."""
         from src.evaluation.agent_eval import retrieval_accuracy
 
         # Create a simple search function that returns the correct doc
@@ -1548,7 +1466,6 @@ class TestEvaluationScripts:
         assert result["total"] == 2
 
     def test_load_ground_truth(self):
-        """load_ground_truth should load qa.jsonl correctly."""
         from src.evaluation.retrieval_eval import load_ground_truth
 
         qa_path = DATA_DIR / "qa.jsonl"
@@ -1569,40 +1486,32 @@ class TestDockerConfiguration:
     """Verify Docker files are valid and deployment-ready."""
 
     def test_dockerfile_exists(self):
-        """Dockerfile must exist at project root."""
         assert (PROJECT_ROOT / "Dockerfile").exists()
 
     def test_dockerfile_uses_official_python(self):
-        """Dockerfile should use official Python image."""
         dockerfile = (PROJECT_ROOT / "Dockerfile").read_text()
         assert "FROM python:" in dockerfile
 
     def test_dockerfile_installs_uv(self):
-        """Dockerfile should install uv for package management."""
         dockerfile = (PROJECT_ROOT / "Dockerfile").read_text()
         assert "uv" in dockerfile.lower()
 
     def test_dockerfile_has_healthcheck(self):
-        """Dockerfile should define a healthcheck."""
         dockerfile = (PROJECT_ROOT / "Dockerfile").read_text()
         assert "HEALTHCHECK" in dockerfile
 
     def test_dockerfile_exposes_8501(self):
-        """Dockerfile should expose Streamlit port 8501."""
         dockerfile = (PROJECT_ROOT / "Dockerfile").read_text()
         assert "EXPOSE 8501" in dockerfile
 
     def test_dockerfile_sets_pythonpath(self):
-        """Dockerfile should set PYTHONPATH for module imports."""
         dockerfile = (PROJECT_ROOT / "Dockerfile").read_text()
         assert "PYTHONPATH" in dockerfile
 
     def test_docker_compose_exists(self):
-        """docker-compose.yml must exist."""
         assert (PROJECT_ROOT / "docker-compose.yml").exists()
 
     def test_docker_compose_has_services(self):
-        """docker-compose.yml should define app and postgres services."""
         # Parse as YAML-like check (just verify structure)
         compose = (PROJECT_ROOT / "docker-compose.yml").read_text()
         assert "services:" in compose
@@ -1610,27 +1519,22 @@ class TestDockerConfiguration:
         assert "app:" in compose
 
     def test_docker_compose_exposes_port(self):
-        """docker-compose.yml should map port 8501."""
         compose = (PROJECT_ROOT / "docker-compose.yml").read_text()
         assert "8501" in compose
 
     def test_docker_compose_has_healthcheck(self):
-        """docker-compose.yml should have health checks."""
         compose = (PROJECT_ROOT / "docker-compose.yml").read_text()
         assert "healthcheck:" in compose
 
     def test_entrypoint_script_exists(self):
-        """docker/entrypoint.sh must exist."""
         assert (PROJECT_ROOT / "docker" / "entrypoint.sh").exists()
 
     def test_entrypoint_script_is_executable_bash(self):
-        """entrypoint.sh should be a bash script."""
         entrypoint = (PROJECT_ROOT / "docker" / "entrypoint.sh").read_text()
         assert "#!/bin/bash" in entrypoint
         assert "set -" in entrypoint  # strict mode
 
     def test_entrypoint_has_pipeline_steps(self):
-        """entrypoint.sh should orchestrate: download → chunk → index → monitor → streamlit."""
         entrypoint = (PROJECT_ROOT / "docker" / "entrypoint.sh").read_text()
         assert "ingest" in entrypoint or "download" in entrypoint.lower()
         assert "chunker" in entrypoint or "chunk" in entrypoint.lower()
@@ -1638,7 +1542,6 @@ class TestDockerConfiguration:
         assert "streamlit" in entrypoint.lower()
 
     def test_pyproject_has_required_deps(self):
-        """pyproject.toml should list key dependencies."""
         pyproject = (PROJECT_ROOT / "pyproject.toml").read_text()
         assert "openai" in pyproject
         assert "onnxruntime" in pyproject
@@ -1648,7 +1551,6 @@ class TestDockerConfiguration:
         assert "opentelemetry" in pyproject
 
     def test_pyproject_has_pytest_in_dev(self):
-        """pyproject.toml should include pytest in dev dependencies."""
         pyproject = (PROJECT_ROOT / "pyproject.toml").read_text()
         assert "pytest" in pyproject
 
@@ -1663,14 +1565,12 @@ class TestFullPipeline:
 
     @pytest.fixture(scope="class")
     def full_pipeline(self):
-        """Set up the full pipeline (search index + RAG + agent)."""
         from src.search.hybrid import HybridSearch
 
         search_index = HybridSearch(documents_path=CHUNKS_DIR / "documents.jsonl")
         return search_index
 
     def test_data_to_search_pipeline(self, full_pipeline):
-        """Verify data flows from ingestion → chunking → search index."""
         # Verify data exists
         assert (DATA_DIR / "corpus.jsonl").exists()
         assert (DATA_DIR / "qa.jsonl").exists()
@@ -1687,7 +1587,6 @@ class TestFullPipeline:
         assert len(results) > 0
 
     def test_search_to_rag_pipeline(self, full_pipeline):
-        """Verify search results flow into RAG context and prompt."""
         mock_client = MagicMock()
         mock_response = MagicMock()
         mock_response.output_text = "Pikachu is an electric type Pokémon."
@@ -1715,7 +1614,6 @@ class TestFullPipeline:
         assert len(answer) > 0
 
     def test_full_agent_loop(self, full_pipeline):
-        """Full agent loop: search → analyze → answer (with mocked LLM)."""
         mock_client = MagicMock()
 
         # Analysis response
@@ -1750,7 +1648,6 @@ class TestFullPipeline:
         assert result["searches"][0].analysis is not None
 
     def test_full_agent_with_feedback(self, full_pipeline):
-        """Full pipeline with monitoring: agent run → trace → feedback."""
         import tempfile
 
         from opentelemetry.sdk.trace import TracerProvider
@@ -1791,7 +1688,6 @@ class TestFullPipeline:
             assert stats["total_traces"] >= 1
 
     def test_postgres_export_opt_in_via_env(self, monkeypatch, tmp_path):
-        """Without POSTGRES_HOST, tracer setup must not require Postgres."""
         from src.monitoring.tracer import TracerSetup, _postgres_config
 
         monkeypatch.delenv("POSTGRES_HOST", raising=False)
@@ -1805,7 +1701,6 @@ class TestFullPipeline:
         setup.shutdown()
 
     def test_postgres_down_does_not_break_tracer(self, monkeypatch):
-        """Postgres unreachable -> SQLite tracing still works, no crash."""
         from src.monitoring.tracer import TracerSetup, _postgres_config
 
         monkeypatch.setenv("POSTGRES_HOST", "127.0.0.1")
@@ -1820,7 +1715,6 @@ class TestFullPipeline:
         setup.shutdown()
 
     def test_qa_pairs_match_search(self, full_pipeline):
-        """A sample of Q&A questions should return results with valid document IDs."""
         qa_path = DATA_DIR / "qa.jsonl"
         questions = []
         with open(qa_path) as f:

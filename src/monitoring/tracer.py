@@ -1,20 +1,14 @@
-"""OpenTelemetry tracing with SQLite storage for the capstone RAG agent.
-
-Adapted from 5-Monitoring/assignment.ipynb (SQLiteSpanExporter pattern) and
-5-Monitoring/starter.py (OpenTelemetry setup).
-
-Schema: name, start_time, end_time, input_tokens, output_tokens, cost,
-        feedback, agent_iterations, query, search_queries
-"""
-
-from __future__ import annotations
+# Adapted from 5-Monitoring/assignment.ipynb (SQLiteSpanExporter pattern) and
+# 5-Monitoring/starter.py (OpenTelemetry setup).
+#
+# Schema: name, start_time, end_time, input_tokens, output_tokens, cost,
+#         feedback, agent_iterations, query, search_queries
 
 import json
 import logging
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any
 
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
@@ -32,17 +26,13 @@ _DB_DIR = Path(__file__).resolve().parents[2] / "data"
 _DB_PATH = _DB_DIR / "traces.db"
 
 
-def get_traces_db_path() -> Path:
-    """Return the path to the traces SQLite database."""
+def get_traces_db_path():
     return _DB_PATH
 
 
-def _postgres_config() -> dict[str, Any] | None:
-    """Return Postgres connection params when POSTGRES_HOST is set.
-
-    Returns None (local-dev path) when POSTGRES_HOST is unset, so local runs
-    and tests never require Postgres. Defaults mirror docker-compose.yml.
-    """
+def _postgres_config():
+    # Returns None (local-dev path) when POSTGRES_HOST is unset, so local runs
+    # and tests never require Postgres. Defaults mirror docker-compose.yml.
     host = os.environ.get("POSTGRES_HOST")
     if not host:
         return None
@@ -55,17 +45,14 @@ def _postgres_config() -> dict[str, Any] | None:
     }
 
 
-def _span_id(span) -> str:
-    """Stable hex span id shared by exporters and run_with_feedback."""
+def _span_id(span):
+    # Stable hex span id shared by exporters and run_with_feedback.
     return format(span.get_span_context().span_id, "016x")
 
 
-def tracing_enabled() -> bool:
-    """Whether application tracing is enabled (env TRACING_ENABLED).
-
-    Defaults to enabled; set TRACING_ENABLED=0|false|no|off to disable, e.g.
-    for environments without a writable data/ directory.
-    """
+def tracing_enabled():
+    # Defaults to enabled; set TRACING_ENABLED=0|false|no|off to disable, e.g.
+    # for environments without a writable data/ directory.
     raw = os.environ.get("TRACING_ENABLED", "1").strip().lower()
     return raw not in {"0", "false", "no", "off", ""}
 
@@ -75,20 +62,17 @@ def tracing_enabled() -> bool:
 # ---------------------------------------------------------------------------
 
 class SQLiteSpanExporter(SpanExporter):
-    """Export finished spans to a SQLite database.
+    """Export finished spans to a SQLite database."""
 
-    Extended schema beyond the homework: adds feedback, agent_iterations,
-    query, and search_queries columns for richer monitoring.
-    """
-
-    def __init__(self, db_path: str | Path | None = None):
+    # Extended schema beyond the homework: adds feedback, agent_iterations,
+    # query, and search_queries columns for richer monitoring.
+    def __init__(self, db_path=None):
         self.db_path = Path(db_path) if db_path else _DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.db_path))
         self._ensure_schema()
 
-    def _ensure_schema(self) -> None:
-        """Create the spans table if it doesn't exist (plus span_id)."""
+    def _ensure_schema(self):
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS spans (
                 name TEXT,
@@ -115,12 +99,9 @@ class SQLiteSpanExporter(SpanExporter):
             )
         self.conn.commit()
 
-    def export(self, spans) -> SpanExportResult:
-        """Export a batch of finished spans to SQLite.
-
-        Every write failure is contained (warning + FAILURE) — an unwritable
-        database must never crash the app.
-        """
+    def export(self, spans):
+        # Every write failure is contained (warning + FAILURE) — an unwritable
+        # database must never crash the app.
         try:
             for span in spans:
                 attrs = dict(span.attributes or {})
@@ -153,7 +134,7 @@ class SQLiteSpanExporter(SpanExporter):
             return SpanExportResult.FAILURE
         return SpanExportResult.SUCCESS
 
-    def shutdown(self) -> None:
+    def shutdown(self):
         try:
             self.conn.close()
         except Exception:
@@ -161,7 +142,7 @@ class SQLiteSpanExporter(SpanExporter):
                 "SQLite shutdown failed", exc_info=True
             )
 
-    def force_flush(self) -> bool:
+    def force_flush(self):
         try:
             self.conn.commit()
         except Exception:
@@ -193,8 +174,7 @@ CREATE TABLE IF NOT EXISTS spans (
 """
 
 
-def _ensure_postgres_schema(conn) -> None:
-    """Create the Postgres spans table (+ span_id on pre-existing tables)."""
+def _ensure_postgres_schema(conn):
     with conn.cursor() as cur:
         cur.execute(_PG_SPANS_SCHEMA)
         cur.execute(
@@ -204,17 +184,15 @@ def _ensure_postgres_schema(conn) -> None:
 
 
 class PostgresSpanExporter(SpanExporter):
-    """Export finished spans to a Postgres `spans` table.
+    """Export finished spans to a Postgres `spans` table."""
 
-    Mirrors SQLiteSpanExporter: same columns, BIGINT nanosecond timestamps
-    (start_time/end_time), created via psycopg if it doesn't exist. Used only
-    when POSTGRES_HOST is set (docker path); SQLite remains the always-on
-    store. Every failure is contained — the exporter logs and returns
-    FAILURE instead of raising, so the app never crashes when Postgres is
-    down or unreachable.
-    """
-
-    def __init__(self, config: dict[str, Any] | None = None):
+    # Mirrors SQLiteSpanExporter: same columns, BIGINT nanosecond timestamps
+    # (start_time/end_time), created via psycopg if it doesn't exist. Used only
+    # when POSTGRES_HOST is set (docker path); SQLite remains the always-on
+    # store. Every failure is contained — the exporter logs and returns
+    # FAILURE instead of raising, so the app never crashes when Postgres is
+    # down or unreachable.
+    def __init__(self, config=None):
         import psycopg
 
         self._logger = logging.getLogger(__name__)
@@ -226,8 +204,7 @@ class PostgresSpanExporter(SpanExporter):
         self.conn = psycopg.connect(**cfg)
         _ensure_postgres_schema(self.conn)
 
-    def export(self, spans) -> SpanExportResult:
-        """Export a batch of finished spans to Postgres."""
+    def export(self, spans):
         try:
             with self.conn.cursor() as cur:
                 for span in spans:
@@ -261,13 +238,13 @@ class PostgresSpanExporter(SpanExporter):
             return SpanExportResult.FAILURE
         return SpanExportResult.SUCCESS
 
-    def shutdown(self) -> None:
+    def shutdown(self):
         try:
             self.conn.close()
         except Exception:
             self._logger.warning("Postgres shutdown failed", exc_info=True)
 
-    def force_flush(self) -> bool:
+    def force_flush(self):
         try:
             self.conn.commit()
         except Exception:
@@ -283,16 +260,7 @@ class PostgresSpanExporter(SpanExporter):
 # ---------------------------------------------------------------------------
 
 class TracerSetup:
-    """Initialize and configure the OpenTelemetry tracer.
-
-    Usage:
-        setup = TracerSetup()
-        tracer = setup.tracer
-        # ... use tracer ...
-        setup.shutdown()
-    """
-
-    def __init__(self, service_name: str = "llm-zoomcapstone"):
+    def __init__(self, service_name="llm-zoomcapstone"):
         self.provider = TracerProvider()
         self.exporter: SQLiteSpanExporter | None = None
         self.postgres_exporter: PostgresSpanExporter | None = None
@@ -323,8 +291,7 @@ class TracerSetup:
         trace.set_tracer_provider(self.provider)
         self.tracer = trace.get_tracer(service_name)
 
-    def shutdown(self) -> None:
-        """Flush and close the exporters."""
+    def shutdown(self):
         if self.exporter is not None:
             self.exporter.force_flush()
             self.exporter.shutdown()
@@ -340,8 +307,7 @@ class TracerSetup:
 _default_setup: TracerSetup | None = None
 
 
-def get_tracer() -> trace.Tracer:
-    """Return the global tracer, initializing if needed."""
+def get_tracer():
     global _default_setup
     if _default_setup is None:
         _default_setup = TracerSetup()
@@ -353,22 +319,12 @@ def get_tracer() -> trace.Tracer:
 # ---------------------------------------------------------------------------
 
 class TracedRAGAgent:
-    """Wrapper around RAGAgent that records OpenTelemetry traces.
-
-    Records spans for:
-    - agent.run: top-level span with query, iterations, feedback
-    - agent.search: individual search iterations
-    - agent.llm: LLM calls with token counts
-
-    Adapted from 5-Monitoring/assignment.ipynb RAGTraced pattern.
-    """
-
-    def __init__(self, agent: Any, tracer: trace.Tracer | None = None):
+    # Adapted from 5-Monitoring/assignment.ipynb RAGTraced pattern.
+    def __init__(self, agent, tracer=None):
         self.agent = agent
         self.tracer = tracer or get_tracer()
 
-    def run(self, query: str) -> dict:
-        """Run the agent with tracing."""
+    def run(self, query):
         with self.tracer.start_as_current_span("agent.run") as span:
             span.set_attribute("query", query)
 
@@ -385,12 +341,7 @@ class TracedRAGAgent:
 
             return result
 
-    def run_with_feedback(self, query: str) -> tuple[dict, str]:
-        """Run agent, return result and a span_id for later feedback.
-
-        Returns:
-            (result_dict, span_id) — pass span_id to record_feedback().
-        """
+    def run_with_feedback(self, query):
         with self.tracer.start_as_current_span("agent.run") as span:
             span.set_attribute("query", query)
 
@@ -413,14 +364,12 @@ class TracedRAGAgent:
 # Feedback storage
 # ---------------------------------------------------------------------------
 
-def _record_feedback_postgres(span_id: str | None, feedback: str) -> None:
-    """Dual-write feedback into the Postgres spans table (docker path).
-
-    Runs only when POSTGRES_HOST is set. Updates the exact span by span_id,
-    inserting a placeholder row when the span export never reached Postgres.
-    Failures are logged and swallowed — feedback in SQLite must never be
-    lost because Postgres is down.
-    """
+def _record_feedback_postgres(span_id, feedback):
+    # Dual-write feedback into the Postgres spans table (docker path), running
+    # only when POSTGRES_HOST is set. Updates the exact span by span_id,
+    # inserting a placeholder row when the span export never reached Postgres.
+    # Failures are logged and swallowed — feedback in SQLite must never be
+    # lost because Postgres is down.
     cfg = _postgres_config()
     if cfg is None or not span_id:
         return
@@ -446,24 +395,11 @@ def _record_feedback_postgres(span_id: str | None, feedback: str) -> None:
         )
 
 
-def record_feedback(
-    span_id: str | None,
-    feedback: str,
-    db_path: str | Path | None = None,
-) -> bool:
-    """Record user feedback for a trace.
-
-    Args:
-        span_id: The span ID to associate feedback with (exact match against
-            the span_id column). When None, falls back to the legacy
-            behavior: update the first (oldest) feedback-less agent.run row.
-        feedback: "positive" or "negative".
-        db_path: Optional path to the traces database.
-
-    Returns:
-        True if feedback was recorded, False otherwise. Never raises — an
-        unwritable database logs a warning and returns False.
-    """
+def record_feedback(span_id, feedback, db_path=None):
+    # Feedback is matched by exact span_id against the span_id column. When
+    # None, falls back to the legacy behavior: update the first (oldest)
+    # feedback-less agent.run row. Never raises — an unwritable database logs
+    # a warning and returns False.
     path = Path(db_path) if db_path else _DB_PATH
     if not path.exists():
         return False
@@ -498,15 +434,14 @@ def record_feedback(
     return recorded
 
 
-def get_trace_stats(db_path: str | Path | None = None) -> dict[str, Any]:
-    """Return summary statistics from the traces database."""
+def get_trace_stats(db_path=None):
     path = Path(db_path) if db_path else _DB_PATH
     if not path.exists():
         return {"total_traces": 0}
 
     conn = sqlite3.connect(str(path))
     try:
-        stats: dict[str, Any] = {}
+        stats = {}
 
         # Total traces
         row = conn.execute("SELECT COUNT(*) FROM spans").fetchone()

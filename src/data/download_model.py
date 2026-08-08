@@ -1,13 +1,3 @@
-"""
-Download the ONNX embedding model (tokenizer.json + model.onnx).
-
-Usage:
-    uv run python -m src.data.download_model
-    uv run python -m src.data.download_model --dest /path/to/models
-"""
-
-from __future__ import annotations
-
 import argparse
 import logging
 import os
@@ -16,6 +6,7 @@ from pathlib import Path
 
 from huggingface_hub import hf_hub_download, list_repo_files
 
+# Suppress HF telemetry and download progress noise.
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
@@ -26,11 +17,7 @@ ONNX_CANDIDATES = [
 ]
 
 
-def download(repo: str = "Xenova/all-MiniLM-L6-v2", dest: str | Path = "models") -> Path:
-    """Download tokenizer.json + model.onnx from an HF repo into dest/<repo>/.
-
-    Returns the model directory.
-    """
+def download(repo="Xenova/all-MiniLM-L6-v2", dest="models"):
     dest = Path(dest) / repo
     dest.mkdir(parents=True, exist_ok=True)
 
@@ -64,7 +51,7 @@ def download(repo: str = "Xenova/all-MiniLM-L6-v2", dest: str | Path = "models")
     return dest
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(description="Download the ONNX embedding model")
     parser.add_argument("--repo", default="Xenova/all-MiniLM-L6-v2", help="HF repo with ONNX model")
     parser.add_argument("--dest", default="models", help="Destination directory (default: <project>/models)")

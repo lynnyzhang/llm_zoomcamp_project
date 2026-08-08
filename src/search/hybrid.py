@@ -1,8 +1,3 @@
-"""
-Hybrid search combining keyword (minsearch) and vector (ONNX embedder)
-indices with Reciprocal Rank Fusion.
-"""
-
 import json
 from pathlib import Path
 
@@ -11,8 +6,7 @@ from minsearch import Index, VectorSearch
 from src.search.embedder import Embedder
 
 
-def _load_documents(path: str | Path) -> list[dict]:
-    """Load documents from a JSONL file."""
+def _load_documents(path):
     docs = []
     with open(path) as f:
         for line in f:
@@ -22,31 +16,14 @@ def _load_documents(path: str | Path) -> list[dict]:
     return docs
 
 
-def reciprocal_rank_fusion(
-    result_lists: list[list[dict]],
-    weights: list[float] | None = None,
-    k: int = 60,
-    num_results: int = 5,
-) -> list[dict]:
-    """Combine multiple ranked result lists using weighted Reciprocal Rank Fusion.
-
-    For each document appearing in any result list, its score is:
-        sum(weight_i * 1 / (k + rank_i))
-
-    where rank_i is 0-based position in list i, and weight_i is the
-    weight for that list.
-
-    Args:
-        result_lists: List of ranked result lists (each a list of dicts).
-        weights: Per-list weights. Defaults to equal weights (1.0 each).
-        k: RRF constant (higher = less weight to top ranks). Default 60.
-        num_results: How many results to return.
-    """
+# Weighted Reciprocal Rank Fusion:
+# score(doc) = sum over lists of weight_i * 1 / (k + rank_i)
+def reciprocal_rank_fusion(result_lists, weights=None, k=60, num_results=5):
     if weights is None:
         weights = [1.0] * len(result_lists)
 
-    scores: dict[tuple, float] = {}
-    docs: dict[tuple, dict] = {}
+    scores = {}
+    docs = {}
 
     for weight, results in zip(weights, result_lists):
         for rank, doc in enumerate(results):
@@ -64,38 +41,18 @@ def reciprocal_rank_fusion(
 
 
 class HybridSearch:
-    """Hybrid search index combining keyword search and vector search.
-
-    Keyword search uses minsearch.Index on content/title fields.
-    Vector search uses the ONNX all-MiniLM-L6-v2 embedder (onnxruntime,
-    no torch) with minsearch.VectorSearch.
-
-    Results are fused using weighted Reciprocal Rank Fusion (RRF).
-    """
-
     # Default data path relative to this file
     _DEFAULT_DATA = Path(__file__).resolve().parents[2] / "data" / "chunks" / "documents.jsonl"
 
     def __init__(
         self,
-        documents_path: str | Path | None = None,
-        documents: list[dict] | None = None,
-        model_path: str | Path | None = None,
-        keyword_weight: float = 1.0,
-        vector_weight: float = 1.0,
-        rrf_k: int = 60,
+        documents_path=None,
+        documents=None,
+        model_path=None,
+        keyword_weight=1.0,
+        vector_weight=1.0,
+        rrf_k=60,
     ):
-        """
-        Args:
-            documents_path: Path to JSONL file with documents.
-                Defaults to project/data/chunks/documents.jsonl.
-            documents: Pre-loaded documents (overrides documents_path).
-            model_path: Directory with the ONNX model (tokenizer.json +
-                model.onnx). Defaults to the standard model location.
-            keyword_weight: Weight for keyword search in RRF fusion.
-            vector_weight: Weight for vector search in RRF fusion.
-            rrf_k: RRF constant (higher = less rank sensitivity).
-        """
         if documents is not None:
             self.documents = documents
         elif documents_path is not None:
@@ -107,39 +64,21 @@ class HybridSearch:
         self.vector_weight = vector_weight
         self.rrf_k = rrf_k
 
-        # --- keyword index ---
+        # keyword index
         self.keyword_index = Index(
             text_fields=["content", "title"],
             keyword_fields=["section", "id"],
         )
         self.keyword_index.fit(self.documents)
 
-        # --- vector index ---
+        # vector index
         self.embedder = Embedder(model_path)
         texts = [doc["content"] for doc in self.documents]
         self.embeddings = self.embedder.encode_batch(texts, normalize=True)
         self.vector_index = VectorSearch()
         self.vector_index.fit(self.embeddings, self.documents)
 
-    def search(
-        self,
-        query: str,
-        num_results: int = 5,
-        keyword_weight: float | None = None,
-        vector_weight: float | None = None,
-    ) -> list[dict]:
-        """Search combining keyword and vector results via RRF.
-
-        Args:
-            query: Search query string.
-            num_results: Number of results to return.
-            keyword_weight: Override default keyword weight.
-            vector_weight: Override default vector weight.
-
-        Returns:
-            List of document dicts sorted by fused RRF score, each with
-            an added 'score' field.
-        """
+    def search(self, query, num_results=5, keyword_weight=None, vector_weight=None):
         kw = keyword_weight if keyword_weight is not None else self.keyword_weight
         vw = vector_weight if vector_weight is not None else self.vector_weight
 
@@ -164,12 +103,10 @@ class HybridSearch:
 
         return fused
 
-    def keyword_search(self, query: str, num_results: int = 5) -> list[dict]:
-        """Keyword-only search via minsearch."""
+    def keyword_search(self, query, num_results=5):
         return self.keyword_index.search(query, num_results=num_results)
 
-    def vector_search(self, query: str, num_results: int = 5) -> list[dict]:
-        """Vector-only search via minsearch VectorSearch."""
+    def vector_search(self, query, num_results=5):
         query_vector = self.embedder.encode(query, normalize=True)
         return self.vector_index.search(query_vector, num_results=num_results)
 

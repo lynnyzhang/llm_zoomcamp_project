@@ -1,11 +1,3 @@
-"""
-Retrieval evaluation for LLM Zoomcamp capstone.
-
-Evaluates retrieval quality using precision@k, recall@k, MRR.
-Compares keyword-only vs vector-only vs hybrid search.
-Uses the Pokémon dev-subset QA pairs (250) as ground truth.
-"""
-
 import json
 import sys
 import time
@@ -16,8 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def load_ground_truth(qa_path: str) -> list[dict]:
-    """Load Q&A pairs as ground truth."""
+def load_ground_truth(qa_path):
     questions = []
     with open(qa_path) as f:
         for line in f:
@@ -25,42 +16,25 @@ def load_ground_truth(qa_path: str) -> list[dict]:
     return questions
 
 
-def precision_at_k(retrieved_ids: list[str], relevant_id: str, k: int) -> float:
-    """Precision@k: fraction of top-k results that are relevant."""
+def precision_at_k(retrieved_ids, relevant_id, k):
     top_k = retrieved_ids[:k]
     relevant_in_top_k = sum(1 for doc_id in top_k if doc_id == relevant_id)
     return relevant_in_top_k / k
 
 
-def recall_at_k(retrieved_ids: list[str], relevant_id: str, k: int) -> float:
-    """Recall@k: whether the relevant document is in top-k results."""
+def recall_at_k(retrieved_ids, relevant_id, k):
     top_k = retrieved_ids[:k]
     return 1.0 if relevant_id in top_k else 0.0
 
 
-def mrr(retrieved_ids: list[str], relevant_id: str) -> float:
-    """Mean Reciprocal Rank: 1/rank of first relevant result."""
+def mrr(retrieved_ids, relevant_id):
     for i, doc_id in enumerate(retrieved_ids):
         if doc_id == relevant_id:
             return 1.0 / (i + 1)
     return 0.0
 
 
-def evaluate_search(
-    search_fn,
-    questions: list[dict],
-    k: int = 5,
-) -> dict:
-    """Evaluate a search function against ground truth questions.
-
-    Args:
-        search_fn: Function that takes (query, num_results) and returns list of doc dicts.
-        questions: List of {"question": str, "answer": str, "id": int} dicts.
-        k: Number of top results to evaluate.
-
-    Returns:
-        Dict with precision@k, recall@k, MRR scores.
-    """
+def evaluate_search(search_fn, questions, k=5):
     precisions = []
     recalls = []
     mrrs = []
@@ -86,7 +60,6 @@ def evaluate_search(
 
 
 def main():
-    """Run retrieval evaluation comparing keyword, vector, and hybrid search."""
     from src.search.hybrid import HybridSearch
 
     # Paths

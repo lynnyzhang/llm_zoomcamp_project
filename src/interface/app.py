@@ -1,16 +1,3 @@
-"""Streamlit chat interface with agent transparency for LLM Zoomcamp capstone.
-
-Features:
-- Chat UI with input box and message history
-- Answer display with confidence score
-- Feedback buttons (thumbs up/down)
-- Source documents display
-- Agent process visualization: search iterations, reformulation steps, search history
-- Sidebar with settings (num_results, search_type, max_iterations)
-"""
-
-from __future__ import annotations
-
 import contextlib
 import logging
 import re
@@ -98,8 +85,7 @@ if "feedback" not in st.session_state:
 # Initialize agent (lazy loading)
 # ---------------------------------------------------------------------------
 
-def _make_agent() -> RAGAgent:
-    """Build a fresh RAGAgent with the current sidebar settings."""
+def _make_agent():
     search_index = HybridSearch()
     return RAGAgent(
         search_index=search_index,
@@ -109,12 +95,9 @@ def _make_agent() -> RAGAgent:
     )
 
 
-def _maybe_trace(agent: RAGAgent):
-    """Wrap the agent with TracedRAGAgent when tracing is enabled.
-
-    Falls back to the plain agent when tracing is disabled or the tracer
-    cannot be initialized (an unwritable data/ must never break the app).
-    """
+def _maybe_trace(agent):
+    # Fall back to the plain agent when tracing is disabled or the tracer
+    # cannot be initialized (an unwritable data/ must never break the app).
     try:
         from src.monitoring.tracer import TracedRAGAgent, tracing_enabled
 
@@ -128,7 +111,6 @@ def _maybe_trace(agent: RAGAgent):
 
 
 def get_agent():
-    """Get or create the RAG agent (traced when monitoring is enabled)."""
     if st.session_state.agent is None:
         with st.spinner("Loading search index and LLM..."):
             st.session_state.agent = _maybe_trace(_make_agent())
@@ -144,12 +126,7 @@ def get_agent():
 # Helper functions
 # ---------------------------------------------------------------------------
 
-def compute_confidence(searches: list) -> float:
-    """Compute confidence score from search analyses.
-    
-    High confidence if any iteration found sufficient results.
-    Score increases with more iterations finding sufficient results.
-    """
+def compute_confidence(searches):
     if not searches:
         return 0.0
 
@@ -170,8 +147,7 @@ def compute_confidence(searches: list) -> float:
     return min(confidence, 1.0)
 
 
-def display_search_iteration(idx: int, search) -> None:
-    """Display a single search iteration with full transparency."""
+def display_search_iteration(idx, search):
     with st.expander(f"🔍 Search Iteration {idx + 1}", expanded=(idx == 0)):
         # Query used
         st.markdown(f"**Query:** `{search.query}`")
@@ -209,10 +185,9 @@ def display_search_iteration(idx: int, search) -> None:
                     st.caption(f"Section: {section}")
 
 
-def _unique_docs(searches: list) -> list[dict]:
-    """Collect unique documents across search iterations (dedup by id)."""
-    seen_ids: set[str] = set()
-    unique_docs: list[dict] = []
+def _unique_docs(searches):
+    seen_ids = set()
+    unique_docs = []
 
     for search in searches:
         for doc in search.results:
@@ -224,8 +199,7 @@ def _unique_docs(searches: list) -> list[dict]:
     return unique_docs
 
 
-def display_source_documents(searches: list) -> None:
-    """Display all source documents from search iterations."""
+def display_source_documents(searches):
     unique_docs = _unique_docs(searches)
 
     if not unique_docs:
@@ -252,8 +226,7 @@ def display_source_documents(searches: list) -> None:
                 )
 
 
-def _doc_artwork_url(doc: dict) -> str:
-    """Official PokeAPI artwork URL for a doc's Pokémon id (pure digits)."""
+def _doc_artwork_url(doc):
     doc_id = str(doc.get("id", ""))
     pokemon_id = re.sub(r"\D", "", doc_id)
     if not pokemon_id:
@@ -264,8 +237,7 @@ def _doc_artwork_url(doc: dict) -> str:
     )
 
 
-def _stats_excerpt(content: str, limit: int = 200) -> str:
-    """Short stats excerpt from doc content: the 'Stats:' line when present."""
+def _stats_excerpt(content, limit=200):
     if not content:
         return ""
     stats_idx = content.lower().find("stats:")
@@ -274,8 +246,7 @@ def _stats_excerpt(content: str, limit: int = 200) -> str:
     return content.strip()[:limit]
 
 
-def _pokemon_card_grid(docs: list[dict]) -> None:
-    """Render retrieved Pokémon as artwork cards in a 4-per-row grid."""
+def _pokemon_card_grid(docs):
     st.subheader("Pokémon Cards")
 
     for row_start in range(0, len(docs), 4):
@@ -299,12 +270,10 @@ def _pokemon_card_grid(docs: list[dict]) -> None:
                     st.caption(excerpt)
 
 
-def _record_feedback(span_id: str | None, feedback: str) -> None:
-    """Persist feedback for a message's span; never crash the UI.
-
-    Messages without a span (untraced agent or pre-tracing history) are
-    skipped; write failures (unwritable database) are logged and swallowed.
-    """
+def _record_feedback(span_id, feedback):
+    # Persist feedback for a message's span; never crash the UI. Messages
+    # without a span (untraced agent or pre-tracing history) are skipped;
+    # write failures (unwritable database) are logged and swallowed.
     if not span_id:
         return
     try:
@@ -317,14 +286,8 @@ def _record_feedback(span_id: str | None, feedback: str) -> None:
         )
 
 
-def render_message(msg: dict) -> None:
-    """Render one chat message — the single path for history and live replies.
-
-    Assistant messages carrying an ``agent_result`` render the answer (or a
-    rejection banner), Pokémon cards, confidence, agent-process transparency,
-    source documents, and the feedback buttons; all other messages render
-    their content as plain markdown.
-    """
+def render_message(msg):
+    # Single path for history and live replies.
     with st.chat_message(msg["role"]):
         if msg["role"] != "assistant" or "agent_result" not in msg:
             st.markdown(msg["content"])
