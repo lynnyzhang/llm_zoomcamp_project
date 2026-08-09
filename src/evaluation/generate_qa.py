@@ -1,5 +1,5 @@
-# LLM-generated Pokémon Q&A set (data/qa.jsonl) — adapts the 4-Evaluation
-# data-generation pattern (reference only; nothing imported from 4-Evaluation/).
+# LLM-generated Pokémon Q&A set (data/qa.jsonl): per-record natural-language
+# questions with answers grounded in the record.
 
 import argparse
 import json

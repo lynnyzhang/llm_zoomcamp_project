@@ -14,15 +14,17 @@ The knowledge base is the Kaggle Complete Pokémon Dataset
 automated runs; full-data runs are manual (see `docs/setup.md`).
 
 **Self-contained:** this project depends only on its own `src/` — never import
-from external course content or reference material. (A few source files carry
-docstring attributions like "Adapted from 4-Evaluation/rag_helper.py" —
-comments only, not dependencies.)
+from external course content or reference material.
 
-**Reference folders:** `4-Evaluation/` and `5-Monitoring/` at the repo root are
-USER-PROVIDED reference folders from the course material. They are untracked
-(via a global gitignore rule — the repo has no `.gitignore`), never imported by
-`src/`, and never staged or committed. The user removes them; do not delete,
-move, or add them.
+**Reference folders:** a set of numbered course-material folders at the repo
+root (e.g. `<number>-<Function>`) are USER-PROVIDED reference only. They are
+untracked (via a global gitignore rule — the repo has no `.gitignore`), never
+imported by `src/`, never staged or committed, and never named in project
+documents. The user removes them; do not delete, move, or add them.
+
+**Design guidance:** mirror the reference folders' code design as closely as
+possible — reuse their patterns unless a production limitation (scale,
+reliability, observability, maintainability) requires improvement.
 
 ## Setup
 
@@ -48,6 +50,8 @@ Docker alternative: `docker-compose up --build` (app + Postgres + Grafana).
   API (e.g. `https://api.openai.com/v1`); RuntimeError if missing
 - `MODEL_ID` — model name (required, no default fallback; RuntimeError if
   missing)
+- `DATASET_PATH` — optional local data directory override (default `./data`,
+  used by `src/data/ingest.py`)
 
 All LLM calls use the OpenAI Responses API (`client.responses.create`), not
 Chat Completions. In Docker, `docker/entrypoint.sh` rewrites a
@@ -76,14 +80,17 @@ unchanged).
 | `src/rag/` | `pipeline.py` (RAGBase), `agent.py` (agentic loop + guardrails) |
 | `src/interface/app.py` | Streamlit chat UI (Pokémon cards, feedback) |
 | `src/evaluation/` | `generate_qa.py` (QA set), `retrieval_eval.py`, `llm_eval.py`, `agent_eval.py` |
-| `src/monitoring/` | tracer (SQLiteSpanExporter + PostgresSpanExporter) + Grafana dashboards |
+| `src/monitoring/` | `tracer.py` (SQLiteSpanExporter + PostgresSpanExporter), `dashboard.py` (Streamlit) |
 | `tests/` | pytest suite (`conftest.py`, `test_integration.py`) |
+| `docs/` | `setup.md`, `usage.md`, `evaluation.md`, `code_overview.md` |
 | `docker/` | `entrypoint.sh` (pipeline orchestration + URL rewrite) |
+| root config | `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `project.md`, `README.md` |
+| `grafana/` + `dashboards/` | Grafana provisioning + dashboard JSON on the Postgres span store |
 
 ## Testing
 
 ```bash
-set -a; source .env; set +a; uv run pytest -q   # 116 tests
+set -a; source .env; set +a; uv run pytest -q   # 118 tests
 ```
 
 ## Gotchas
@@ -92,6 +99,6 @@ set -a; source .env; set +a; uv run pytest -q   # 116 tests
   `MODEL_ID`; there is no default model. LLM calls fail lazily at first use.
 - **`.env` must never be committed** — it holds the LLM API key (ignored via a global gitignore rule; no repo `.gitignore` exists — add one).
 - `uv.lock` and `.python-version` are committed in this repo; `results/` eval outputs are committed too.
-- `data/` and `models/` hold downloaded/generated artifacts — currently empty here; fetch them with `uv run python -m src.data.download_model`.
+- `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/corpus.jsonl`, `data/chunks/documents.jsonl`, `data/qa.jsonl`, `data/raw/`, `data/traces.db`, ONNX embedder under `models/`).
 - Keep the project self-contained: no imports from external reference
   material (docstring attributions are comments only, never dependencies).

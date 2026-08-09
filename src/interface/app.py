@@ -362,7 +362,7 @@ for message in st.session_state.messages:
 # Chat input
 # ---------------------------------------------------------------------------
 
-if prompt := st.chat_input("Ask a question about the course..."):
+if prompt := st.chat_input("Ask a question about Pokémon..."):
     # Add user message
     st.session_state.messages.append({"role": "user", "content": prompt})
 

@@ -1,6 +1,5 @@
-# Adapted from 4-Evaluation/rag_helper.py RAGBase pattern; modified to use
-# HybridSearch (keyword + vector) instead of minsearch, and to work with
-# documents that have 'content'/'title'/'section' fields.
+# RAGBase: search → build context → prompt → LLM answer, using HybridSearch
+# (keyword + vector) over documents with 'content'/'title'/'section' fields.
 
 from src.llm import create_client, get_model
 

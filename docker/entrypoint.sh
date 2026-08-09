@@ -38,9 +38,9 @@ echo "============================================="
 echo " LLM Zoomcamp Capstone - Starting Pipeline"
 echo "============================================="
 
-# Step 1: Download rag-mini-wikipedia dataset
+# Step 1: Download Pokémon dataset
 echo ""
-echo "[1/6] Downloading rag-mini-wikipedia dataset..."
+echo "[1/6] Downloading Pokémon dataset..."
 if [ -f "$CORPUS_FILE" ] && [ -f "$QA_FILE" ]; then
     echo "  Dataset already exists, skipping download."
 else

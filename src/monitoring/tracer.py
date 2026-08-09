@@ -1,5 +1,5 @@
-# Adapted from 5-Monitoring/assignment.ipynb (SQLiteSpanExporter pattern) and
-# 5-Monitoring/starter.py (OpenTelemetry setup).
+# OpenTelemetry tracing: SQLiteSpanExporter (always-on) plus
+# PostgresSpanExporter (when POSTGRES_HOST is set).
 #
 # Schema: name, start_time, end_time, input_tokens, output_tokens, cost,
 #         feedback, agent_iterations, query, search_queries
@@ -59,7 +59,7 @@ def tracing_enabled():
 
 
 # ---------------------------------------------------------------------------
-# SQLite span exporter (from 5-Monitoring/assignment.ipynb pattern)
+# SQLite span exporter
 # ---------------------------------------------------------------------------
 
 class SQLiteSpanExporter(SpanExporter):
@@ -327,7 +327,6 @@ def get_tracer():
 # ---------------------------------------------------------------------------
 
 class TracedRAGAgent:
-    # Adapted from 5-Monitoring/assignment.ipynb RAGTraced pattern.
     def __init__(self, agent, tracer=None):
         self.agent = agent
         self.tracer = tracer or get_tracer()

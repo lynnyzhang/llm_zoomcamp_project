@@ -96,7 +96,7 @@ Rate faithfulness (1-5), relevance (1-5), coherence (1-5). Explain briefly.""",
 
 
 # ---------------------------------------------------------------------------
-# LLM interaction (adapted from evaluation_utils.py pattern)
+# LLM interaction
 # ---------------------------------------------------------------------------
 
 def _patch_openai_client(client):
