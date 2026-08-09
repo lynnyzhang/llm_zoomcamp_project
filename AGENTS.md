@@ -79,7 +79,7 @@ unchanged).
 | `src/search/` | `hybrid.py` (keyword + vector + RRF), `embedder.py` (ONNX) |
 | `src/rag/` | `pipeline.py` (RAGBase), `agent.py` (agentic loop + guardrails) |
 | `src/interface/app.py` | Streamlit chat UI (Pokémon cards, feedback) |
-| `src/evaluation/` | `generate_qa.py` (QA set), `retrieval_eval.py`, `llm_eval.py`, `agent_eval.py` |
+| `evaluation/` | offline eval (pre-deployment): `generate_qa.py` (QA set), `retrieval_eval.py`, `llm_eval.py`, `agent_eval.py`; `data/` (qa.jsonl), `results/` |
 | `src/monitoring/` | `tracer.py` (SQLiteSpanExporter + PostgresSpanExporter), `dashboard.py` (Streamlit) |
 | `tests/` | pytest suite (`conftest.py`, `test_integration.py`) |
 | `docs/` | `setup.md`, `usage.md`, `evaluation.md`, `code_overview.md` |
@@ -98,7 +98,7 @@ set -a; source .env; set +a; uv run pytest -q   # 118 tests
 - **`.env` is required for any LLM call** — `get_model()` raises without
   `MODEL_ID`; there is no default model. LLM calls fail lazily at first use.
 - **`.env` must never be committed** — it holds the LLM API key (ignored via a global gitignore rule; no repo `.gitignore` exists — add one).
-- `uv.lock` and `.python-version` are committed in this repo; `results/` eval outputs are committed too.
-- `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/corpus.jsonl`, `data/chunks/documents.jsonl`, `data/qa.jsonl`, `data/raw/`, `data/traces.db`, ONNX embedder under `models/`).
+- `uv.lock` and `.python-version` are committed in this repo; `evaluation/results/` eval outputs are committed too.
+- `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/corpus.jsonl`, `data/chunks/documents.jsonl`, `data/raw/`, `data/traces.db`, ONNX embedder under `models/`); `evaluation/data/qa.jsonl` is an LLM-generated eval artifact.
 - Keep the project self-contained: no imports from external reference
   material (docstring attributions are comments only, never dependencies).

@@ -119,12 +119,12 @@ See [docs/setup.md](docs/setup.md) for detailed setup instructions.
 set -a; source .env; set +a; uv run python -c "from src.rag.agent import RAGAgent; a = RAGAgent(); r = a.run('What are Pikachu's stats?'); print(r['answer'][:200])"
 
 # Generate the QA set (dev subset, 250 pairs):
-uv run python -m src.evaluation.generate_qa
+uv run python -m evaluation.generate_qa
 
 # Run evaluations:
-uv run python -m src.evaluation.retrieval_eval
-uv run python -m src.evaluation.llm_eval
-uv run python -m src.evaluation.agent_eval
+uv run python -m evaluation.retrieval_eval
+uv run python -m evaluation.llm_eval
+uv run python -m evaluation.agent_eval
 
 # Open the monitoring dashboard:
 docker-compose up -d grafana   # then open http://localhost:3000
@@ -193,7 +193,6 @@ project/
 ├── data/
 │   ├── raw/complete_pokedex.json  # Full 1,025-record Pokédex (cached)
 │   ├── corpus.jsonl        # One structured passage per Pokémon (dev: 50)
-│   ├── qa.jsonl            # Q&A pairs (dev: 250)
 │   ├── chunks/documents.jsonl     # Chunked documents (indexed)
 │   └── traces.db           # Monitoring data (SQLite)
 ├── models/
@@ -203,12 +202,19 @@ project/
 ├── grafana/provisioning/   # Grafana datasource + dashboard provisioning
 ├── docker/
 │   └── entrypoint.sh       # Pipeline orchestration
-├── results/
-│   ├── retrieval_eval.json # Retrieval evaluation results
-│   ├── llm_eval.json       # LLM evaluation results
-│   ├── agent_eval.json     # Agent evaluation results
-│   ├── agent_eval_comparison.png
-│   └── final_report.md     # Final evaluation report
+├── evaluation/
+│   ├── generate_qa.py      # LLM-generated Pokémon QA set
+│   ├── retrieval_eval.py   # Retrieval evaluation
+│   ├── llm_eval.py         # LLM evaluation
+│   ├── agent_eval.py       # Agent evaluation
+│   ├── data/
+│   │   └── qa.jsonl        # Q&A pairs (dev: 250)
+│   └── results/
+│       ├── retrieval_eval.json
+│       ├── llm_eval.json
+│       ├── agent_eval.json
+│       ├── agent_eval_comparison.png
+│       └── final_report.md     # Final evaluation report
 ├── src/
 │   ├── data/
 │   │   ├── ingest.py       # Kaggle dataset download → corpus.jsonl
@@ -222,11 +228,6 @@ project/
 │   │   └── agent.py        # Agentic RAG + guardrails + reformulation
 │   ├── interface/
 │   │   └── app.py          # Streamlit chat UI
-│   ├── evaluation/
-│   │   ├── generate_qa.py  # LLM-generated Pokémon QA set
-│   │   ├── retrieval_eval.py
-│   │   ├── llm_eval.py
-│   │   └── agent_eval.py
 │   └── monitoring/
 │       ├── tracer.py       # OpenTelemetry tracing (SQLite + Postgres exporters)
 │       └── dashboard.py    # Streamlit monitoring dashboard

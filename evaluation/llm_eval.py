@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 # Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.llm import get_model
@@ -283,8 +283,8 @@ def main():
     load_dotenv(PROJECT_ROOT / ".env")
 
     # Paths
-    qa_path = PROJECT_ROOT / "data" / "qa.jsonl"
-    results_dir = PROJECT_ROOT / "results"
+    qa_path = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
+    results_dir = PROJECT_ROOT / "evaluation" / "results"
     results_dir.mkdir(exist_ok=True)
     output_path = results_dir / "llm_eval.json"
 

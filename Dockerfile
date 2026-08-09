@@ -17,8 +17,8 @@ COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 
 # Copy application code and configuration only.
-# data/, models/ and results/ are excluded — they are downloaded or
-# generated at startup by docker/entrypoint.sh.
+# src/ is the production tree; evaluation/ (offline, pre-deployment),
+# data/, models/ and results/ are excluded.
 COPY src/ ./src/
 COPY .env.example ./.env.example
 

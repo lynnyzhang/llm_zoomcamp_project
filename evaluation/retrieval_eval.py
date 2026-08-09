@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 # Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
@@ -63,8 +63,8 @@ def main():
     from src.search.hybrid import HybridSearch
 
     # Paths
-    qa_path = PROJECT_ROOT / "data" / "qa.jsonl"
-    results_dir = PROJECT_ROOT / "results"
+    qa_path = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
+    results_dir = PROJECT_ROOT / "evaluation" / "results"
     results_dir.mkdir(exist_ok=True)
     output_path = results_dir / "retrieval_eval.json"
 

@@ -196,30 +196,30 @@ The `spans` table in `data/traces.db` (mirrored in Postgres) stores:
 Compares keyword, vector, and hybrid search on the dev-subset QA pairs (250).
 
 ```bash
-uv run python -m src.evaluation.retrieval_eval
+uv run python -m evaluation.retrieval_eval
 ```
 
-Output: `results/retrieval_eval.json`
+Output: `evaluation/results/retrieval_eval.json`
 
 ### LLM Answer Quality Evaluation
 
 Uses LLM-as-judge to rate answers on faithfulness, relevance, and coherence (1-5 scale). Tests 3 judge prompt variants on a 10-question sample (the in-script `sample_size` constant).
 
 ```bash
-uv run python -m src.evaluation.llm_eval
+uv run python -m evaluation.llm_eval
 ```
 
-Output: `results/llm_eval.json`
+Output: `evaluation/results/llm_eval.json`
 
 ### Agent vs Simple RAG Evaluation
 
 Compares agentic RAG (iterative search) against simple RAG (single search) on retrieval accuracy, answer quality, and latency.
 
 ```bash
-uv run python -m src.evaluation.agent_eval
+uv run python -m evaluation.agent_eval
 ```
 
-Output: `results/agent_eval.json` and `results/agent_eval_comparison.png`
+Output: `evaluation/results/agent_eval.json` and `evaluation/results/agent_eval_comparison.png`
 
 Full-data runs are manual — see "Manual full-data runs" in [docs/setup.md](setup.md).
 

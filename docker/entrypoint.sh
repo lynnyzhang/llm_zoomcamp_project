@@ -10,7 +10,6 @@ PROJECT_ROOT="/app"
 DATA_DIR="${PROJECT_ROOT}/data"
 CHUNKS_DIR="${DATA_DIR}/chunks"
 CORPUS_FILE="${DATA_DIR}/corpus.jsonl"
-QA_FILE="${DATA_DIR}/qa.jsonl"
 DOCUMENTS_FILE="${CHUNKS_DIR}/documents.jsonl"
 TRACES_DB="${DATA_DIR}/traces.db"
 MODELS_DIR="${DATA_DIR}/models"
@@ -41,7 +40,7 @@ echo "============================================="
 # Step 1: Download Pokémon dataset
 echo ""
 echo "[1/6] Downloading Pokémon dataset..."
-if [ -f "$CORPUS_FILE" ] && [ -f "$QA_FILE" ]; then
+if [ -f "$CORPUS_FILE" ]; then
     echo "  Dataset already exists, skipping download."
 else
     uv run python -c "

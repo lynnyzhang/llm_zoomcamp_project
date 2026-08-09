@@ -15,7 +15,7 @@ Dockerfile
 .dockerignore
 data/
 models/
-results/
+evaluation/
 notebooks/
 grafana/
 dashboards/

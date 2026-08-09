@@ -32,7 +32,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 DATA_DIR = PROJECT_ROOT / "data"
 CHUNKS_DIR = DATA_DIR / "chunks"
-RESULTS_DIR = PROJECT_ROOT / "results"
+RESULTS_DIR = PROJECT_ROOT / "evaluation" / "results"
+EVAL_QA = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
 
 
 class StubSearchIndex:
@@ -88,7 +89,7 @@ class TestDataIngestion:
         assert corpus_path.exists(), f"Missing {corpus_path}"
 
     def test_qa_file_exists(self):
-        qa_path = DATA_DIR / "qa.jsonl"
+        qa_path = EVAL_QA
         assert qa_path.exists(), f"Missing {qa_path}"
 
     def test_corpus_records_are_valid(self):
@@ -109,7 +110,7 @@ class TestDataIngestion:
         assert len(records) >= 50, f"Expected >= 50 passages, got {len(records)}"
 
     def test_qa_records_are_valid(self):
-        qa_path = DATA_DIR / "qa.jsonl"
+        qa_path = EVAL_QA
         records = []
         with open(qa_path) as f:
             for i, line in enumerate(f):
@@ -1478,7 +1479,7 @@ class TestEvaluationScripts:
         sys.path.insert(0, str(PROJECT_ROOT))
 
     def test_precision_at_k(self):
-        from src.evaluation.retrieval_eval import precision_at_k
+        from evaluation.retrieval_eval import precision_at_k
 
         # Relevant doc is at position 0 in top-5
         assert precision_at_k(["a", "b", "c", "d", "e"], "a", 5) == 1.0 / 5
@@ -1486,13 +1487,13 @@ class TestEvaluationScripts:
         assert precision_at_k(["a", "b", "c", "d", "e"], "f", 5) == 0.0
 
     def test_recall_at_k(self):
-        from src.evaluation.retrieval_eval import recall_at_k
+        from evaluation.retrieval_eval import recall_at_k
 
         assert recall_at_k(["a", "b", "c"], "a", 5) == 1.0
         assert recall_at_k(["a", "b", "c"], "d", 5) == 0.0
 
     def test_mrr(self):
-        from src.evaluation.retrieval_eval import mrr
+        from evaluation.retrieval_eval import mrr
 
         assert mrr(["a", "b", "c"], "a") == 1.0  # rank 1
         assert mrr(["a", "b", "c"], "b") == 0.5  # rank 2
@@ -1502,7 +1503,7 @@ class TestEvaluationScripts:
         """llm_eval module should be importable."""
 
     def test_judge_prompts_have_required_fields(self):
-        from src.evaluation.llm_eval import JUDGE_PROMPTS
+        from evaluation.llm_eval import JUDGE_PROMPTS
 
         for name, config in JUDGE_PROMPTS.items():
             assert "instructions" in config, f"{name} missing instructions"
@@ -1513,7 +1514,7 @@ class TestEvaluationScripts:
             assert "{answer}" in config["template"]
 
     def test_judge_scores_model(self):
-        from src.evaluation.llm_eval import JudgeScores
+        from evaluation.llm_eval import JudgeScores
 
         scores = JudgeScores(faithfulness=5, relevance=4, coherence=5, explanation="Good answer")
         assert scores.faithfulness == 5
@@ -1523,7 +1524,7 @@ class TestEvaluationScripts:
         """agent_eval module should be importable."""
 
     def test_retrieval_accuracy_function(self):
-        from src.evaluation.agent_eval import retrieval_accuracy
+        from evaluation.agent_eval import retrieval_accuracy
 
         # Create a simple search function that returns the correct doc
         def perfect_search(query, num_results=5):
@@ -1539,9 +1540,9 @@ class TestEvaluationScripts:
         assert result["total"] == 2
 
     def test_load_ground_truth(self):
-        from src.evaluation.retrieval_eval import load_ground_truth
+        from evaluation.retrieval_eval import load_ground_truth
 
-        qa_path = DATA_DIR / "qa.jsonl"
+        qa_path = EVAL_QA
         questions = load_ground_truth(str(qa_path))
         # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: default dev
         # subset = 50 records × 5 LLM-generated pairs (user directive 2026-08-07).
@@ -1646,7 +1647,7 @@ class TestFullPipeline:
     def test_data_to_search_pipeline(self, full_pipeline):
         # Verify data exists
         assert (DATA_DIR / "corpus.jsonl").exists()
-        assert (DATA_DIR / "qa.jsonl").exists()
+        assert EVAL_QA.exists()
         assert (CHUNKS_DIR / "documents.jsonl").exists()
 
         # Verify search index loaded data
@@ -1788,7 +1789,7 @@ class TestFullPipeline:
         setup.shutdown()
 
     def test_qa_pairs_match_search(self, full_pipeline):
-        qa_path = DATA_DIR / "qa.jsonl"
+        qa_path = EVAL_QA
         questions = []
         with open(qa_path) as f:
             for i, line in enumerate(f):

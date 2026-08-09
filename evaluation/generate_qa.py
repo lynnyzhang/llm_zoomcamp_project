@@ -1,4 +1,4 @@
-# LLM-generated Pokémon Q&A set (data/qa.jsonl): per-record natural-language
+# LLM-generated Pokémon Q&A set (evaluation/data/qa.jsonl): per-record natural-language
 # questions with answers grounded in the record.
 
 import argparse
@@ -16,11 +16,11 @@ from tqdm.auto import tqdm
 
 from src.llm import create_client, get_model
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
 CORPUS_FILE = DATA_DIR / "corpus.jsonl"
 RAW_POKEDEX = DATA_DIR / "raw" / "complete_pokedex.json"
-QA_FILE = DATA_DIR / "qa.jsonl"
+QA_FILE = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
 
 # PLAN DEVIATION (documented, 2026-08-07): the plan calls for max_workers 6,
 # but the local llama-server degrades under concurrent load — measured: 6
@@ -260,7 +260,7 @@ def resolve_ids(records, limit, full, corpus_ids):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Generate LLM Pokémon Q&A pairs into data/qa.jsonl "
+        description="Generate LLM Pokémon Q&A pairs into evaluation/data/qa.jsonl "
         "(default: the exact id set in data/corpus.jsonl = 50 records × 5 pairs)."
     )
     group = parser.add_mutually_exclusive_group()
@@ -310,13 +310,14 @@ def main(argv=None):
     except Exception as exc:  # noqa: BLE001 — any worker/SDK failure → clean non-zero exit
         print(f"FATAL: QA generation failed: {exc}", file=sys.stderr)
         print(
-            "No changes written to data/qa.jsonl (written atomically only on success).",
+            "No changes written to evaluation/data/qa.jsonl (written atomically only on success).",
             file=sys.stderr,
         )
         return 1
 
     all_rows.sort(key=lambda row: row["id"])
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    QA_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(QA_FILE, "w", encoding="utf-8") as f:
         f.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in all_rows)
     print(f"Wrote {len(all_rows)} Q&A pairs to {QA_FILE}")

@@ -12,8 +12,8 @@ All evaluations run on the **dev subset** by default: 50 Pokédex passages and 2
 
 ## 1. Retrieval Evaluation
 
-**Script:** `src/evaluation/retrieval_eval.py`
-**Output:** `results/retrieval_eval.json`
+**Script:** `evaluation/retrieval_eval.py`
+**Output:** `evaluation/results/retrieval_eval.json`
 
 ### Methodology
 
@@ -46,8 +46,8 @@ All evaluations run on the **dev subset** by default: 50 Pokédex passages and 2
 
 ## 2. LLM Answer Quality Evaluation
 
-**Script:** `src/evaluation/llm_eval.py`
-**Output:** `results/llm_eval.json`
+**Script:** `evaluation/llm_eval.py`
+**Output:** `evaluation/results/llm_eval.json`
 
 ### Methodology
 
@@ -80,7 +80,7 @@ All evaluations run on the **dev subset** by default: 50 Pokédex passages and 2
 ### Analysis
 
 - **With-examples is the best prompt** (3.9/4.7/4.9, average 4.5), as on the wiki corpus.
-- **Relevance (4.4-4.7) and coherence (4.8-4.9) are high**; **faithfulness is the weak dimension (3.0-3.9)**. Generated answers add details (stats, evolution levels) beyond the single retrieved document, which the judge counts against context support. This is a known gap — see recommendations in [results/final_report.md](../results/final_report.md).
+- **Relevance (4.4-4.7) and coherence (4.8-4.9) are high**; **faithfulness is the weak dimension (3.0-3.9)**. Generated answers add details (stats, evolution levels) beyond the single retrieved document, which the judge counts against context support. This is a known gap — see recommendations in [evaluation/results/final_report.md](../evaluation/results/final_report.md).
 - **Zero errors** across all variants — the local LLM handles structured judge output reliably.
 
 ### Key Numbers
@@ -93,8 +93,8 @@ All evaluations run on the **dev subset** by default: 50 Pokédex passages and 2
 
 ## 3. Agent vs Simple RAG Evaluation
 
-**Script:** `src/evaluation/agent_eval.py`
-**Output:** `results/agent_eval.json`, `results/agent_eval_comparison.png`
+**Script:** `evaluation/agent_eval.py`
+**Output:** `evaluation/results/agent_eval.json`, `evaluation/results/agent_eval_comparison.png`
 
 ### Methodology
 
@@ -151,22 +151,22 @@ All evaluations run on the **dev subset** by default: 50 Pokédex passages and 2
 ## Reproducing Results
 
 ```bash
-# 0. Ensure data/qa.jsonl exists (dev subset): 
-#    uv run python -m src.evaluation.generate_qa
+# 0. Ensure evaluation/data/qa.jsonl exists (dev subset): 
+#    uv run python -m evaluation.generate_qa
 
 # 1. Ensure the LLM API is reachable at the configured OPENAI_API_BASE_URL (e.g. localhost:9101/v1)
 
 # 2. Run retrieval evaluation (no LLM needed)
-uv run python -m src.evaluation.retrieval_eval
-# → results/retrieval_eval.json
+uv run python -m evaluation.retrieval_eval
+# → evaluation/results/retrieval_eval.json
 
 # 3. Run LLM evaluation (needs the LLM API; ~19 min on the dev subset)
-uv run python -m src.evaluation.llm_eval
-# → results/llm_eval.json
+uv run python -m evaluation.llm_eval
+# → evaluation/results/llm_eval.json
 
 # 4. Run agent evaluation (needs the LLM API; ~27 min on the dev subset)
-uv run python -m src.evaluation.agent_eval
-# → results/agent_eval.json, results/agent_eval_comparison.png
+uv run python -m evaluation.agent_eval
+# → evaluation/results/agent_eval.json, evaluation/results/agent_eval_comparison.png
 ```
 
 Full-data runs are manual: regenerate ingest → chunk → QA with `--full` first (see [docs/setup.md](setup.md), Manual full-data runs).

@@ -10,7 +10,7 @@ import numpy as np
 # Path setup
 # ---------------------------------------------------------------------------
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.llm import get_model
@@ -229,8 +229,8 @@ def main():
     load_dotenv(PROJECT_ROOT / ".env")
 
     # Paths
-    qa_path = PROJECT_ROOT / "data" / "qa.jsonl"
-    results_dir = PROJECT_ROOT / "results"
+    qa_path = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
+    results_dir = PROJECT_ROOT / "evaluation" / "results"
     results_dir.mkdir(exist_ok=True)
     output_path = results_dir / "agent_eval.json"
     chart_path = results_dir / "agent_eval_comparison.png"

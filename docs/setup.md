@@ -100,7 +100,7 @@ uv run python -m src.data.ingest
 uv run python -m src.data.chunker
 
 # Generate the QA set (dev subset: 250 pairs; requires the LLM API)
-uv run python -m src.evaluation.generate_qa
+uv run python -m evaluation.generate_qa
 ```
 
 `ingest.py` supports `--limit N` (any N) and `--full` (all 1,025 records); `generate_qa.py` supports the same flags. Defaults always produce the dev subset.
@@ -117,13 +117,13 @@ Open `http://localhost:8501`.
 
 ```bash
 # Retrieval evaluation (fast, no LLM needed)
-uv run python -m src.evaluation.retrieval_eval
+uv run python -m evaluation.retrieval_eval
 
 # LLM evaluation (requires the LLM API; ~19 min on the dev subset)
-uv run python -m src.evaluation.llm_eval
+uv run python -m evaluation.llm_eval
 
 # Agent evaluation (requires the LLM API; ~27 min on the dev subset)
-uv run python -m src.evaluation.agent_eval
+uv run python -m evaluation.agent_eval
 ```
 
 ### 6. Open the monitoring dashboard
@@ -147,11 +147,11 @@ The full dataset is 1,025 Pokémon; the full QA set would be 5,125 pairs (5 per 
 |------|---------|--------------|
 | Ingest | `uv run python -m src.data.ingest --full` | All 1,025 records → `data/corpus.jsonl` |
 | Chunk  | `uv run python -m src.data.chunker` | Re-chunks whatever corpus exists (no flags) |
-| QA     | `uv run python -m src.evaluation.generate_qa --full` | 1,025 records × 5 = 5,125 pairs (flagged MANUAL — slow/costly) |
+| QA     | `uv run python -m evaluation.generate_qa --full` | 1,025 records × 5 = 5,125 pairs (flagged MANUAL — slow/costly) |
 
 `--limit N` works the same way on both scripts (first N records by id).
 
-The eval scripts take no CLI flags: `retrieval_eval.py` reads the full `data/qa.jsonl`, while `llm_eval.py` and `agent_eval.py` use in-script `sample_size` constants (10 for the LLM judge, 20 judge / 50 agent-full in `agent_eval.py`). For a full judge pass, edit those constants to `0` (all pairs) before running.
+The eval scripts take no CLI flags: `retrieval_eval.py` reads the full `evaluation/data/qa.jsonl`, while `llm_eval.py` and `agent_eval.py` use in-script `sample_size` constants (10 for the LLM judge, 20 judge / 50 agent-full in `agent_eval.py`). For a full judge pass, edit those constants to `0` (all pairs) before running.
 
 ### Regeneration order
 
@@ -160,10 +160,10 @@ The pipeline is strictly ordered — each step reads the previous step's output:
 ```bash
 uv run python -m src.data.ingest --full      # 1. corpus.jsonl (1025)
 uv run python -m src.data.chunker            # 2. documents.jsonl
-uv run python -m src.evaluation.generate_qa --full   # 3. qa.jsonl (5125) — LLM cost
-uv run python -m src.evaluation.retrieval_eval       # 4. retrieval metrics (no LLM)
-uv run python -m src.evaluation.llm_eval             # 5. LLM judge (~19 min on dev subset)
-uv run python -m src.evaluation.agent_eval           # 6. agent vs simple (~27 min on dev subset)
+uv run python -m evaluation.generate_qa --full   # 3. qa.jsonl (5125) — LLM cost
+uv run python -m evaluation.retrieval_eval       # 4. retrieval metrics (no LLM)
+uv run python -m evaluation.llm_eval             # 5. LLM judge (~19 min on dev subset)
+uv run python -m evaluation.agent_eval           # 6. agent vs simple (~27 min on dev subset)
 ```
 
 ### Cost / time note
