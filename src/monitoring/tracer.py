@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 from pathlib import Path
 
 from opentelemetry import trace
@@ -69,87 +70,88 @@ class SQLiteSpanExporter(SpanExporter):
     def __init__(self, db_path=None):
         self.db_path = Path(db_path) if db_path else _DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path))
         self._ensure_schema()
 
+    def _connect(self):
+        # Fresh connection per call: SQLite connections are thread-bound, so a
+        # cached one would break exports from another thread (same reason
+        # dashboard.py opens a new connection per query).
+        return sqlite3.connect(str(self.db_path))
+
     def _ensure_schema(self):
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS spans (
-                name TEXT,
-                start_time INTEGER,
-                end_time INTEGER,
-                input_tokens INTEGER,
-                output_tokens INTEGER,
-                cost REAL,
-                feedback TEXT DEFAULT NULL,
-                agent_iterations INTEGER DEFAULT NULL,
-                query TEXT DEFAULT NULL,
-                search_queries TEXT DEFAULT NULL,
-                span_id TEXT DEFAULT NULL
-            )
-        """)
-        # Migrate databases created before the span_id column existed (e.g.
-        # docker/entrypoint.sh): SQLite has no ADD COLUMN IF NOT EXISTS.
-        columns = {
-            row[1] for row in self.conn.execute("PRAGMA table_info(spans)")
-        }
-        if "span_id" not in columns:
-            self.conn.execute(
-                "ALTER TABLE spans ADD COLUMN span_id TEXT DEFAULT NULL"
-            )
-        self.conn.commit()
+        conn = self._connect()
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS spans (
+                    name TEXT,
+                    start_time INTEGER,
+                    end_time INTEGER,
+                    input_tokens INTEGER,
+                    output_tokens INTEGER,
+                    cost REAL,
+                    feedback TEXT DEFAULT NULL,
+                    agent_iterations INTEGER DEFAULT NULL,
+                    query TEXT DEFAULT NULL,
+                    search_queries TEXT DEFAULT NULL,
+                    span_id TEXT DEFAULT NULL
+                )
+            """)
+            # Migrate databases created before the span_id column existed (e.g.
+            # docker/entrypoint.sh): SQLite has no ADD COLUMN IF NOT EXISTS.
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(spans)")
+            }
+            if "span_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE spans ADD COLUMN span_id TEXT DEFAULT NULL"
+                )
+            conn.commit()
+        finally:
+            conn.close()
 
     def export(self, spans):
         # Every write failure is contained (warning + FAILURE) — an unwritable
         # database must never crash the app.
         try:
-            for span in spans:
-                attrs = dict(span.attributes or {})
-                self.conn.execute(
-                    """INSERT INTO spans
-                       (name, start_time, end_time, input_tokens,
-                        output_tokens, cost, feedback, agent_iterations,
-                        query, search_queries, span_id)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        span.name,
-                        span.start_time,
-                        span.end_time,
-                        attrs.get("input_tokens"),
-                        attrs.get("output_tokens"),
-                        attrs.get("cost"),
-                        attrs.get("feedback"),
-                        attrs.get("agent_iterations"),
-                        attrs.get("query"),
-                        attrs.get("search_queries"),
-                        _span_id(span),
-                    ),
-                )
-            self.conn.commit()
+            conn = self._connect()
+            try:
+                for span in spans:
+                    attrs = dict(span.attributes or {})
+                    conn.execute(
+                        """INSERT INTO spans
+                           (name, start_time, end_time, input_tokens,
+                            output_tokens, cost, feedback, agent_iterations,
+                            query, search_queries, span_id)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            span.name,
+                            span.start_time,
+                            span.end_time,
+                            attrs.get("input_tokens"),
+                            attrs.get("output_tokens"),
+                            attrs.get("cost"),
+                            attrs.get("feedback"),
+                            attrs.get("agent_iterations"),
+                            attrs.get("query"),
+                            attrs.get("search_queries"),
+                            _span_id(span),
+                        ),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
         except Exception:
             logging.getLogger(__name__).warning(
                 "Failed to export spans to SQLite", exc_info=True
             )
-            self.conn.rollback()
             return SpanExportResult.FAILURE
         return SpanExportResult.SUCCESS
 
     def shutdown(self):
-        try:
-            self.conn.close()
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "SQLite shutdown failed", exc_info=True
-            )
+        # Connections are opened per export call — nothing to close here.
+        pass
 
     def force_flush(self):
-        try:
-            self.conn.commit()
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "SQLite force_flush failed", exc_info=True
-            )
-            return False
         return True
 
 
@@ -305,13 +307,19 @@ class TracerSetup:
 # ---------------------------------------------------------------------------
 
 _default_setup: TracerSetup | None = None
+_setup_lock = threading.Lock()
 
 
 def get_tracer():
+    # Streamlit reruns the script from different threads (and multiple sessions
+    # run concurrently), so the lazy singleton must be guarded: two threads
+    # racing here would each build a TracerSetup, double-register a global
+    # tracer provider, and orphan the first exporter.
     global _default_setup
-    if _default_setup is None:
-        _default_setup = TracerSetup()
-    return _default_setup.tracer
+    with _setup_lock:
+        if _default_setup is None:
+            _default_setup = TracerSetup()
+        return _default_setup.tracer
 
 
 # ---------------------------------------------------------------------------

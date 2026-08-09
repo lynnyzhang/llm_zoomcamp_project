@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -1013,6 +1015,77 @@ class TestMonitoring:
         assert len(rows) >= 1
         row = rows[0]
         assert row[0] == "test.span"
+
+    def test_sqlite_exporter_cross_thread_export(self, tmp_path):
+        # SQLite connections are thread-bound; the exporter must survive
+        # exports from a different thread than the one that built it
+        # (Streamlit reruns the script from different threads).
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        from src.monitoring.tracer import SQLiteSpanExporter
+
+        db_path = tmp_path / "cross_thread.db"
+        exporter = SQLiteSpanExporter(db_path=db_path)
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("test_cross_thread")
+
+        errors = []
+
+        def end_span_in_other_thread():
+            try:
+                with tracer.start_as_current_span("cross.thread.span") as span:
+                    span.set_attribute("query", "cross thread query")
+            except Exception as exc:  # noqa: BLE001 — catching any cross-thread failure is the point of this test
+                errors.append(exc)
+
+        thread = threading.Thread(target=end_span_in_other_thread)
+        thread.start()
+        thread.join()
+
+        exporter.force_flush()
+        exporter.shutdown()
+
+        assert errors == [], f"cross-thread export raised: {errors}"
+
+        conn = sqlite3.connect(str(db_path))
+        rows = conn.execute("SELECT name FROM spans").fetchall()
+        conn.close()
+
+        assert ("cross.thread.span",) in rows
+
+    def test_get_tracer_single_setup_under_concurrency(self, monkeypatch):
+        # Streamlit runs multiple sessions concurrently, so the lazy
+        # TracerSetup singleton must initialize exactly once under a race.
+        import src.monitoring.tracer as tracer_module
+
+        created = []
+
+        class CountingTracerSetup:
+            def __init__(self):
+                time.sleep(0.005)  # model real TracerSetup cost (exporter I/O) so the race window exists
+                created.append(self)
+                self.tracer = object()
+
+        monkeypatch.setattr(tracer_module, "TracerSetup", CountingTracerSetup)
+        monkeypatch.setattr(tracer_module, "_default_setup", None)
+
+        barrier = threading.Barrier(8)
+        tracers = []
+
+        def call_get_tracer():
+            barrier.wait()
+            tracers.append(tracer_module.get_tracer())
+
+        threads = [threading.Thread(target=call_get_tracer) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(created) == 1
+        assert len({id(t) for t in tracers}) == 1
 
     def test_record_feedback(self, tmp_path):
         from opentelemetry.sdk.trace import TracerProvider

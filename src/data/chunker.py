@@ -1,4 +1,5 @@
 import json
+import threading
 from pathlib import Path
 
 # Token estimation: ~4 chars per token (rough approximation for English text)
@@ -14,19 +15,22 @@ ARTWORK_URL = (
 
 _POKEDEX_PATH = Path(__file__).parent.parent.parent / 'data' / 'raw' / 'complete_pokedex.json'
 _POKEDEX = None
+_POKEDEX_LOCK = threading.Lock()
 
 
 def _get_pokedex():
     global _POKEDEX
     if _POKEDEX is None:
-        try:
-            with open(_POKEDEX_PATH, 'r', encoding='utf-8') as f:
-                _POKEDEX = {record['id']: record for record in json.load(f)}
-        except FileNotFoundError as exc:
-            raise FileNotFoundError(
-                f'Missing raw pokedex cache at {_POKEDEX_PATH}. '
-                'Run `uv run python -m src.data.ingest` first.'
-            ) from exc
+        with _POKEDEX_LOCK:
+            if _POKEDEX is None:
+                try:
+                    with open(_POKEDEX_PATH, 'r', encoding='utf-8') as f:
+                        _POKEDEX = {record['id']: record for record in json.load(f)}
+                except FileNotFoundError as exc:
+                    raise FileNotFoundError(
+                        f'Missing raw pokedex cache at {_POKEDEX_PATH}. '
+                        'Run `uv run python -m src.data.ingest` first.'
+                    ) from exc
     return _POKEDEX
 
 
