@@ -23,7 +23,7 @@ from opentelemetry.sdk.trace.export import (
 # Database path
 # ---------------------------------------------------------------------------
 
-_DB_DIR = Path(__file__).resolve().parents[2] / "data"
+_DB_DIR = Path(__file__).resolve().parents[1] / "monitoring"
 _DB_PATH = _DB_DIR / "traces.db"
 
 
@@ -97,7 +97,7 @@ class SQLiteSpanExporter(SpanExporter):
                 )
             """)
             # Migrate databases created before the span_id column existed (e.g.
-            # docker/entrypoint.sh): SQLite has no ADD COLUMN IF NOT EXISTS.
+            # deployment/entrypoint.sh): SQLite has no ADD COLUMN IF NOT EXISTS.
             columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(spans)")
             }

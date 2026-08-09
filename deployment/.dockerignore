@@ -16,6 +16,7 @@ Dockerfile
 data/
 models/
 evaluation/
+monitoring/traces.db
 notebooks/
 grafana/
 dashboards/

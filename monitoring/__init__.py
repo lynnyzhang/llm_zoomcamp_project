@@ -1,4 +1,4 @@
-from src.monitoring.tracer import (
+from .tracer import (
     SQLiteSpanExporter,
     TracedRAGAgent,
     TracerSetup,

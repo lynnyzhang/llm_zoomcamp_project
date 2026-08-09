@@ -134,7 +134,7 @@ docker-compose up -d postgres grafana
 # then open http://localhost:3000
 
 # Or the Streamlit dashboard (reads the SQLite store directly)
-uv run streamlit run src/monitoring/dashboard.py
+uv run streamlit run monitoring/dashboard.py
 ```
 
 ## Manual Full-Data Runs

@@ -54,7 +54,7 @@ Docker alternative: `docker-compose up --build` (app + Postgres + Grafana).
   used by `src/data/ingest.py`)
 
 All LLM calls use the OpenAI Responses API (`client.responses.create`), not
-Chat Completions. In Docker, `docker/entrypoint.sh` rewrites a
+Chat Completions. In Docker, `deployment/entrypoint.sh` rewrites a
 `localhost`/`127.0.0.1` base URL to `host.docker.internal` so the container
 can reach a locally hosted LLM on the host (cloud URLs pass through
 unchanged).
@@ -67,8 +67,8 @@ unchanged).
   no torch) via `src/search/embedder.py`
 - **openai** — LLM calls (Responses API)
 - **streamlit** — chat UI (`src/interface/app.py`) + monitoring dashboards
-- **opentelemetry** — tracing with SQLite/Postgres storage (`src/monitoring/`)
-- **grafana** — dashboards on top of the Postgres span store (`dashboards/`)
+- **opentelemetry** — tracing with SQLite/Postgres storage (`monitoring/`)
+- **grafana** — dashboards on top of the Postgres span store (`monitoring/dashboards/`)
 
 ## Structure
 
@@ -80,12 +80,12 @@ unchanged).
 | `src/rag/` | `pipeline.py` (RAGBase), `agent.py` (agentic loop + guardrails) |
 | `src/interface/app.py` | Streamlit chat UI (Pokémon cards, feedback) |
 | `evaluation/` | offline eval (pre-deployment): `generate_qa.py` (QA set), `retrieval_eval.py`, `llm_eval.py`, `agent_eval.py`; `data/` (qa.jsonl), `results/` |
-| `src/monitoring/` | `tracer.py` (SQLiteSpanExporter + PostgresSpanExporter), `dashboard.py` (Streamlit) |
+| `monitoring/` | `tracer.py` (SQLiteSpanExporter + PostgresSpanExporter), `dashboard.py` (Streamlit); runtime `traces.db`; `grafana/` + `dashboards/` configs |
 | `tests/` | pytest suite (`conftest.py`, `test_integration.py`) |
 | `docs/` | `setup.md`, `usage.md`, `evaluation.md`, `code_overview.md` |
-| `docker/` | `entrypoint.sh` (pipeline orchestration + URL rewrite) |
-| root config | `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `project.md`, `README.md` |
-| `grafana/` + `dashboards/` | Grafana provisioning + dashboard JSON on the Postgres span store |
+| `deployment/` | `Dockerfile`, `.dockerignore`, `entrypoint.sh` (pipeline orchestration + URL rewrite) |
+| root config | `docker-compose.yml` (entry point; stays at root), `project.md`, `README.md` |
+| `monitoring/grafana` + `monitoring/dashboards` | Grafana provisioning + dashboard JSON on the Postgres span store |
 
 ## Testing
 
@@ -99,6 +99,6 @@ set -a; source .env; set +a; uv run pytest -q   # 118 tests
   `MODEL_ID`; there is no default model. LLM calls fail lazily at first use.
 - **`.env` must never be committed** — it holds the LLM API key (ignored via a global gitignore rule; no repo `.gitignore` exists — add one).
 - `uv.lock` and `.python-version` are committed in this repo; `evaluation/results/` eval outputs are committed too.
-- `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/corpus.jsonl`, `data/chunks/documents.jsonl`, `data/raw/`, `data/traces.db`, ONNX embedder under `models/`); `evaluation/data/qa.jsonl` is an LLM-generated eval artifact.
+- `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/corpus.jsonl`, `data/chunks/documents.jsonl`, `data/raw/`, ONNX embedder under `models/`); `evaluation/data/qa.jsonl` is an LLM-generated eval artifact; the span store lives at `monitoring/traces.db`.
 - Keep the project self-contained: no imports from external reference
   material (docstring attributions are comments only, never dependencies).

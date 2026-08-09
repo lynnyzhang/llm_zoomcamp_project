@@ -19,7 +19,7 @@ chunker ─────────► data/documents.jsonl ──► HybridSear
                                            │
                       ┌────────────────────┤
                       ▼                    ▼
-              src/monitoring/        evaluation/
+              monitoring/            evaluation/
               tracer + dashboard     generate_qa + evals
 ```
 
@@ -75,8 +75,8 @@ feedback goes to `record_feedback` (monitoring).
 
 | Module | Function | Job |
 |---|---|---|
-| `src/monitoring/tracer.py` | `TracerSetup`, `SQLiteSpanExporter`, `PostgresSpanExporter`, `TracedRAGAgent.run()`, `.run_with_feedback()`, `record_feedback()`, `get_trace_stats()` | OpenTelemetry spans for every agent run/search/LLM call; SQLite always-on, Postgres dual-write when configured; feedback attaches to the exact `span_id` |
-| `src/monitoring/dashboard.py` | `load_dataframe()`, `main()` | Streamlit dashboard over `traces.db` (fresh SQLite connection per query — thread-bound) |
+| `monitoring/tracer.py` | `TracerSetup`, `SQLiteSpanExporter`, `PostgresSpanExporter`, `TracedRAGAgent.run()`, `.run_with_feedback()`, `record_feedback()`, `get_trace_stats()` | OpenTelemetry spans for every agent run/search/LLM call; SQLite always-on, Postgres dual-write when configured; feedback attaches to the exact `span_id` |
+| `monitoring/dashboard.py` | `load_dataframe()`, `main()` | Streamlit dashboard over `monitoring/traces.db` (fresh SQLite connection per query — thread-bound) |
 
 **Call chain:** `app` wraps the agent in `TracedRAGAgent` → every `run()` emits
 spans → exporters persist → `dashboard.py` reads back via `get_traces_db_path`.

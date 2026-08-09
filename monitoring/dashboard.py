@@ -10,7 +10,7 @@ if str(project_root) not in sys.path:
 import pandas as pd
 import streamlit as st
 
-from src.monitoring.tracer import get_traces_db_path
+from .tracer import get_traces_db_path
 
 # ---------------------------------------------------------------------------
 # Page config

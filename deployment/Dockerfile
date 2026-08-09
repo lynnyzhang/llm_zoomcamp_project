@@ -17,12 +17,13 @@ COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 
 # Copy application code and configuration only.
-# src/ is the production tree; evaluation/ (offline, pre-deployment),
-# data/, models/ and results/ are excluded.
+# src/ and monitoring/ ship with the production tree; evaluation/ (offline,
+# pre-deployment), data/, models/ and results/ are excluded.
 COPY src/ ./src/
+COPY monitoring/ ./monitoring/
 COPY .env.example ./.env.example
 
-COPY docker/entrypoint.sh /entrypoint.sh
+COPY deployment/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Expose Streamlit port

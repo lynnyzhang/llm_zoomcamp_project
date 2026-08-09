@@ -962,7 +962,7 @@ class TestMonitoring:
     """Test OpenTelemetry tracing with SQLite storage."""
 
     def test_tracer_setup_creates_db(self, tmp_path):
-        from src.monitoring.tracer import SQLiteSpanExporter
+        from monitoring.tracer import SQLiteSpanExporter
 
         db_path = tmp_path / "test_traces.db"
         exporter = SQLiteSpanExporter(db_path=db_path)
@@ -970,7 +970,7 @@ class TestMonitoring:
         exporter.shutdown()
 
     def test_tracer_schema_has_required_columns(self, tmp_path):
-        from src.monitoring.tracer import SQLiteSpanExporter
+        from monitoring.tracer import SQLiteSpanExporter
 
         db_path = tmp_path / "test_traces.db"
         exporter = SQLiteSpanExporter(db_path=db_path)
@@ -992,7 +992,7 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from src.monitoring.tracer import SQLiteSpanExporter
+        from monitoring.tracer import SQLiteSpanExporter
 
         db_path = tmp_path / "test_traces.db"
         exporter = SQLiteSpanExporter(db_path=db_path)
@@ -1024,7 +1024,7 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from src.monitoring.tracer import SQLiteSpanExporter
+        from monitoring.tracer import SQLiteSpanExporter
 
         db_path = tmp_path / "cross_thread.db"
         exporter = SQLiteSpanExporter(db_path=db_path)
@@ -1059,7 +1059,7 @@ class TestMonitoring:
     def test_get_tracer_single_setup_under_concurrency(self, monkeypatch):
         # Streamlit runs multiple sessions concurrently, so the lazy
         # TracerSetup singleton must initialize exactly once under a race.
-        import src.monitoring.tracer as tracer_module
+        import monitoring.tracer as tracer_module
 
         created = []
 
@@ -1092,7 +1092,7 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from src.monitoring.tracer import SQLiteSpanExporter, record_feedback
+        from monitoring.tracer import SQLiteSpanExporter, record_feedback
 
         db_path = tmp_path / "test_traces.db"
         exporter = SQLiteSpanExporter(db_path=db_path)
@@ -1126,7 +1126,7 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from src.monitoring.tracer import (
+        from monitoring.tracer import (
             SQLiteSpanExporter,
             TracedRAGAgent,
             record_feedback,
@@ -1166,7 +1166,7 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from src.monitoring.tracer import SQLiteSpanExporter, record_feedback
+        from monitoring.tracer import SQLiteSpanExporter, record_feedback
 
         db_path = tmp_path / "test_feedback_none.db"
         exporter = SQLiteSpanExporter(db_path=db_path)
@@ -1191,7 +1191,7 @@ class TestMonitoring:
         assert rows == [("first", "negative"), ("second", None)]
 
     def test_tracing_enabled_gate(self, monkeypatch):
-        from src.monitoring.tracer import tracing_enabled
+        from monitoring.tracer import tracing_enabled
 
         monkeypatch.delenv("TRACING_ENABLED", raising=False)
         assert tracing_enabled() is True
@@ -1205,7 +1205,7 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from src.monitoring.tracer import SQLiteSpanExporter, get_trace_stats
+        from monitoring.tracer import SQLiteSpanExporter, get_trace_stats
 
         db_path = tmp_path / "test_traces.db"
         exporter = SQLiteSpanExporter(db_path=db_path)
@@ -1232,7 +1232,7 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from src.monitoring.tracer import (
+        from monitoring.tracer import (
             SQLiteSpanExporter,
             TracedRAGAgent,
             get_trace_stats,
@@ -1265,7 +1265,7 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from src.monitoring.tracer import SQLiteSpanExporter, TracedRAGAgent
+        from monitoring.tracer import SQLiteSpanExporter, TracedRAGAgent
 
         db_path = tmp_path / "test_traced_agent_feedback.db"
         exporter = SQLiteSpanExporter(db_path=db_path)
@@ -1560,26 +1560,26 @@ class TestDockerConfiguration:
     """Verify Docker files are valid and deployment-ready."""
 
     def test_dockerfile_exists(self):
-        assert (PROJECT_ROOT / "Dockerfile").exists()
+        assert (PROJECT_ROOT / "deployment" / "Dockerfile").exists()
 
     def test_dockerfile_uses_official_python(self):
-        dockerfile = (PROJECT_ROOT / "Dockerfile").read_text()
+        dockerfile = (PROJECT_ROOT / "deployment" / "Dockerfile").read_text()
         assert "FROM python:" in dockerfile
 
     def test_dockerfile_installs_uv(self):
-        dockerfile = (PROJECT_ROOT / "Dockerfile").read_text()
+        dockerfile = (PROJECT_ROOT / "deployment" / "Dockerfile").read_text()
         assert "uv" in dockerfile.lower()
 
     def test_dockerfile_has_healthcheck(self):
-        dockerfile = (PROJECT_ROOT / "Dockerfile").read_text()
+        dockerfile = (PROJECT_ROOT / "deployment" / "Dockerfile").read_text()
         assert "HEALTHCHECK" in dockerfile
 
     def test_dockerfile_exposes_8501(self):
-        dockerfile = (PROJECT_ROOT / "Dockerfile").read_text()
+        dockerfile = (PROJECT_ROOT / "deployment" / "Dockerfile").read_text()
         assert "EXPOSE 8501" in dockerfile
 
     def test_dockerfile_sets_pythonpath(self):
-        dockerfile = (PROJECT_ROOT / "Dockerfile").read_text()
+        dockerfile = (PROJECT_ROOT / "deployment" / "Dockerfile").read_text()
         assert "PYTHONPATH" in dockerfile
 
     def test_docker_compose_exists(self):
@@ -1601,15 +1601,15 @@ class TestDockerConfiguration:
         assert "healthcheck:" in compose
 
     def test_entrypoint_script_exists(self):
-        assert (PROJECT_ROOT / "docker" / "entrypoint.sh").exists()
+        assert (PROJECT_ROOT / "deployment" / "entrypoint.sh").exists()
 
     def test_entrypoint_script_is_executable_bash(self):
-        entrypoint = (PROJECT_ROOT / "docker" / "entrypoint.sh").read_text()
+        entrypoint = (PROJECT_ROOT / "deployment" / "entrypoint.sh").read_text()
         assert "#!/bin/bash" in entrypoint
         assert "set -" in entrypoint  # strict mode
 
     def test_entrypoint_has_pipeline_steps(self):
-        entrypoint = (PROJECT_ROOT / "docker" / "entrypoint.sh").read_text()
+        entrypoint = (PROJECT_ROOT / "deployment" / "entrypoint.sh").read_text()
         assert "ingest" in entrypoint or "download" in entrypoint.lower()
         assert "chunker" in entrypoint or "chunk" in entrypoint.lower()
         assert "HybridSearch" in entrypoint or "hybrid" in entrypoint.lower()
@@ -1727,7 +1727,7 @@ class TestFullPipeline:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from src.monitoring.tracer import (
+        from monitoring.tracer import (
             SQLiteSpanExporter,
             TracedRAGAgent,
             get_trace_stats,
@@ -1762,7 +1762,7 @@ class TestFullPipeline:
             assert stats["total_traces"] >= 1
 
     def test_postgres_export_opt_in_via_env(self, monkeypatch, tmp_path):
-        from src.monitoring.tracer import TracerSetup, _postgres_config
+        from monitoring.tracer import TracerSetup, _postgres_config
 
         monkeypatch.delenv("POSTGRES_HOST", raising=False)
         for var in ("POSTGRES_PORT", "POSTGRES_DB", "POSTGRES_USER",
@@ -1775,7 +1775,7 @@ class TestFullPipeline:
         setup.shutdown()
 
     def test_postgres_down_does_not_break_tracer(self, monkeypatch):
-        from src.monitoring.tracer import TracerSetup, _postgres_config
+        from monitoring.tracer import TracerSetup, _postgres_config
 
         monkeypatch.setenv("POSTGRES_HOST", "127.0.0.1")
         monkeypatch.setenv("POSTGRES_PORT", "59999")

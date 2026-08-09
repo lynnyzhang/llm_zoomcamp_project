@@ -177,7 +177,7 @@ Both pipelines sit at a ~98% retrieval ceiling on the 50-doc dev subset, so the 
 
 Tracing runs through OpenTelemetry. Every agent run, search, and LLM call produces spans with query, tokens, latency, and feedback:
 
-- **SQLite** (`data/traces.db`) — always on, default store.
+- **SQLite** (`monitoring/traces.db`) — always on, default store.
 - **PostgreSQL** — optional span export when `POSTGRES_HOST` is set (Docker Compose starts Postgres by default).
 - **Grafana** at `http://localhost:3000` — dashboard "Pokemon RAG Monitoring" with 10 panels: total traces, cost, average latency, token usage, queries over time, feedback distribution, latency and token trends, top queries, and agent iteration distribution.
 
@@ -187,20 +187,24 @@ Tracing runs through OpenTelemetry. Every agent run, search, and LLM call produc
 project/
 ├── README.md
 ├── docker-compose.yml      # Docker orchestration (app + Postgres + Grafana)
-├── Dockerfile              # App container (Python 3.13 + uv)
 ├── pyproject.toml          # Dependencies
 ├── .env.example            # Environment template
 ├── data/
 │   ├── raw/complete_pokedex.json  # Full 1,025-record Pokédex (cached)
 │   ├── corpus.jsonl        # One structured passage per Pokémon (dev: 50)
-│   ├── chunks/documents.jsonl     # Chunked documents (indexed)
-│   └── traces.db           # Monitoring data (SQLite)
+│   └── chunks/documents.jsonl     # Chunked documents (indexed)
 ├── models/
 │   └── Xenova/all-MiniLM-L6-v2/   # ONNX embedder (tokenizer.json + model.onnx)
-├── dashboards/
-│   └── pokemon_rag.json    # Grafana dashboard "Pokemon RAG Monitoring"
-├── grafana/provisioning/   # Grafana datasource + dashboard provisioning
-├── docker/
+├── monitoring/
+│   ├── tracer.py           # OpenTelemetry tracing (SQLite + Postgres exporters)
+│   ├── dashboard.py        # Streamlit monitoring dashboard
+│   ├── traces.db           # Monitoring data (SQLite)
+│   ├── grafana/provisioning/   # Grafana datasource + dashboard provisioning
+│   └── dashboards/
+│       └── pokemon_rag.json    # Grafana dashboard "Pokemon RAG Monitoring"
+├── deployment/
+│   ├── Dockerfile          # App container (Python 3.13 + uv)
+│   ├── .dockerignore       # Build exclusions (context: repo root)
 │   └── entrypoint.sh       # Pipeline orchestration
 ├── evaluation/
 │   ├── generate_qa.py      # LLM-generated Pokémon QA set
@@ -226,11 +230,8 @@ project/
 │   ├── rag/
 │   │   ├── pipeline.py     # Base RAG pipeline
 │   │   └── agent.py        # Agentic RAG + guardrails + reformulation
-│   ├── interface/
-│   │   └── app.py          # Streamlit chat UI
-│   └── monitoring/
-│       ├── tracer.py       # OpenTelemetry tracing (SQLite + Postgres exporters)
-│       └── dashboard.py    # Streamlit monitoring dashboard
+│   └── interface/
+│       └── app.py          # Streamlit chat UI
 ├── tests/                  # Test suite (116 tests)
 └── notebooks/              # Exploration notebooks
 ```

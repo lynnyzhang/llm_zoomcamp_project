@@ -99,7 +99,7 @@ def _maybe_trace(agent):
     # Fall back to the plain agent when tracing is disabled or the tracer
     # cannot be initialized (an unwritable data/ must never break the app).
     try:
-        from src.monitoring.tracer import TracedRAGAgent, tracing_enabled
+        from monitoring.tracer import TracedRAGAgent, tracing_enabled
 
         if tracing_enabled():
             return TracedRAGAgent(agent)
@@ -277,7 +277,7 @@ def _record_feedback(span_id, feedback):
     if not span_id:
         return
     try:
-        from src.monitoring.tracer import record_feedback
+        from monitoring.tracer import record_feedback
 
         record_feedback(span_id, feedback)
     except Exception:

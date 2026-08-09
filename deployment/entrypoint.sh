@@ -11,7 +11,7 @@ DATA_DIR="${PROJECT_ROOT}/data"
 CHUNKS_DIR="${DATA_DIR}/chunks"
 CORPUS_FILE="${DATA_DIR}/corpus.jsonl"
 DOCUMENTS_FILE="${CHUNKS_DIR}/documents.jsonl"
-TRACES_DB="${DATA_DIR}/traces.db"
+TRACES_DB="${PROJECT_ROOT}/monitoring/traces.db"
 MODELS_DIR="${DATA_DIR}/models"
 EMBEDDER_MODEL_PATH="${MODELS_DIR}/Xenova/all-MiniLM-L6-v2"
 export EMBEDDER_MODEL_PATH

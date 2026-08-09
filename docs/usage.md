@@ -120,7 +120,7 @@ vec_results = hs.vector_search("electric pokemon stats", num_results=5)
 ### Agent Loop with Feedback Tracking
 
 ```python
-from src.monitoring.tracer import TracedRAGAgent, record_feedback, get_trace_stats
+from monitoring.tracer import TracedRAGAgent, record_feedback, get_trace_stats
 
 # Wrap agent with tracing
 agent = RAGAgent()
@@ -140,7 +140,7 @@ print(f"Feedback: {stats['feedback']}")
 
 ## Monitoring
 
-Tracing runs through OpenTelemetry. Every agent run, search, and LLM call produces a span. Spans go to SQLite (`data/traces.db`, always on) and optionally to Postgres when `POSTGRES_HOST` is set. Tracing can be disabled entirely with `TRACING_ENABLED=0`.
+Tracing runs through OpenTelemetry. Every agent run, search, and LLM call produces a span. Spans go to SQLite (`monitoring/traces.db`, always on) and optionally to Postgres when `POSTGRES_HOST` is set. Tracing can be disabled entirely with `TRACING_ENABLED=0`.
 
 ### Grafana Dashboard (recommended)
 
@@ -166,14 +166,14 @@ The dashboard **"Pokemon RAG Monitoring"** is provisioned automatically. Panels:
 For a lightweight dashboard over the local SQLite store:
 
 ```bash
-uv run streamlit run src/monitoring/dashboard.py
+uv run streamlit run monitoring/dashboard.py
 ```
 
 Sections: summary metrics, queries over time, feedback distribution, latency distribution, token usage, popular topics, agent search patterns, raw trace data.
 
 ### Trace Schema
 
-The `spans` table in `data/traces.db` (mirrored in Postgres) stores:
+The `spans` table in `monitoring/traces.db` (mirrored in Postgres) stores:
 
 | Column            | Type    | Description                                    |
 |-------------------|---------|------------------------------------------------|
