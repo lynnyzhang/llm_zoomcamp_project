@@ -26,7 +26,7 @@ from src.search.hybrid import HybridSearch
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="LLM Zoomcamp Assistant",
+    page_title="Pokémon Assistant",
     page_icon="🤖",
     layout="wide",
 )
@@ -147,44 +147,6 @@ def compute_confidence(searches):
     return min(confidence, 1.0)
 
 
-def display_search_iteration(idx, search):
-    with st.expander(f"🔍 Search Iteration {idx + 1}", expanded=(idx == 0)):
-        # Query used
-        st.markdown(f"**Query:** `{search.query}`")
-
-        # Results count
-        st.markdown(f"**Results found:** {len(search.results)}")
-
-        # Analysis (if available)
-        if search.analysis:
-            st.markdown("**Analysis:**")
-            col1, col2 = st.columns(2)
-            with col1:
-                sufficient = search.analysis.get("sufficient", False)
-                icon = "✅" if sufficient else "❌"
-                st.markdown(f"{icon} Sufficient: **{sufficient}**")
-            with col2:
-                reason = search.analysis.get("reason", "N/A")
-                st.markdown(f"Reason: {reason}")
-
-            # Show reformulation if not sufficient
-            if not sufficient:
-                reformulated = search.analysis.get("reformulated_query", "")
-                if reformulated:
-                    st.info(f"🔄 Reformulated query: `{reformulated}`")
-
-        # Display top results
-        if search.results:
-            st.markdown("**Top Results:**")
-            for i, doc in enumerate(search.results[:3], 1):
-                title = doc.get("title", "Untitled")
-                section = doc.get("section", "")
-                score = doc.get("score", 0)
-                st.markdown(f"{i}. **{title}** (score: {score:.4f})")
-                if section:
-                    st.caption(f"Section: {section}")
-
-
 def _unique_docs(searches):
     seen_ids = set()
     unique_docs = []
@@ -199,31 +161,22 @@ def _unique_docs(searches):
     return unique_docs
 
 
-def display_source_documents(searches):
-    unique_docs = _unique_docs(searches)
+def _filter_docs_by_question(unique_docs, question):
+    """Return only docs whose Pokémon name appears in the question text."""
+    if not question:
+        return []
 
-    if not unique_docs:
-        st.info("No source documents found.")
-        return
+    question_lower = question.lower()
+    matched = []
 
-    st.subheader("📚 Source Documents")
+    for doc in unique_docs:
+        title = doc.get("title", "")
+        # Strip trailing " (#<id>)" to get the plain Pokémon name.
+        name = re.sub(r"\s*\(#[0-9]+\)\s*$", "", title).strip().lower()
+        if name and name in question_lower:
+            matched.append(doc)
 
-    for i, doc in enumerate(unique_docs, 1):
-        with st.expander(f"{i}. {doc.get('title', 'Untitled')[:80]}"):
-            st.markdown(f"**ID:** `{doc.get('id', 'N/A')}`")
-            st.markdown(f"**Section:** {doc.get('section', 'N/A')}")
-            st.markdown(f"**Score:** {doc.get('score', 0):.4f}")
-
-            content = doc.get("content", "")
-            if content:
-                st.markdown("**Content:**")
-                st.text_area(
-                    "Document content",
-                    value=content[:500] + ("..." if len(content) > 500 else ""),
-                    disabled=True,
-                    height=150,
-                    key=f"doc_content_{i}",
-                )
+    return matched
 
 
 def _doc_artwork_url(doc):
@@ -286,72 +239,71 @@ def _record_feedback(span_id, feedback):
         )
 
 
-def render_message(msg):
-    # Single path for history and live replies.
-    with st.chat_message(msg["role"]):
-        if msg["role"] != "assistant" or "agent_result" not in msg:
-            st.markdown(msg["content"])
-            return
+# ---------------------------------------------------------------------------
+# Render helpers — separated so the live path can render inside one bubble
+# ---------------------------------------------------------------------------
 
-        result = msg["agent_result"]
-        answer = result.get("answer", msg.get("content", ""))
-        searches = result.get("searches", [])
-        msg_id = msg.get("msg_id", "")
+def render_message_body(msg):
+    """Render the *inner* content of an assistant message (no outer bubble)."""
+    if msg["role"] != "assistant" or "agent_result" not in msg:
+        st.markdown(msg["content"])
+        return
 
-        if result.get("rejected", False):
-            st.warning(answer)
+    result = msg["agent_result"]
+    answer = result.get("answer", msg.get("content", ""))
+    searches = result.get("searches", [])
+    msg_id = msg.get("msg_id", "")
+
+    if result.get("rejected", False):
+        st.warning(answer)
+    else:
+        st.markdown(answer)
+
+        unique_docs = _unique_docs(searches)
+        question = msg.get("question", "")
+        matched_docs = _filter_docs_by_question(unique_docs, question) if question else []
+        if matched_docs:
+            _pokemon_card_grid(matched_docs)
+
+        # Confidence score
+        confidence = compute_confidence(searches)
+        st.progress(confidence, text=f"Confidence: {confidence:.0%}")
+
+    # Feedback buttons
+    st.divider()
+    col1, col2, _ = st.columns([1, 1, 8])
+    with col1:
+        if st.button("👍", key=f"up_{msg_id}"):
+            st.session_state.feedback[msg_id] = "positive"
+            _record_feedback(msg.get("span_id"), "positive")
+            st.toast("Thanks for the feedback!")
+    with col2:
+        if st.button("👎", key=f"down_{msg_id}"):
+            st.session_state.feedback[msg_id] = "negative"
+            _record_feedback(msg.get("span_id"), "negative")
+            st.toast("Thanks for the feedback!")
+
+    # Show feedback status
+    if msg_id in st.session_state.feedback:
+        feedback = st.session_state.feedback[msg_id]
+        if feedback == "positive":
+            st.success("👍 Positive feedback recorded")
         else:
-            st.markdown(answer)
+            st.warning("👎 Negative feedback recorded")
 
-            unique_docs = _unique_docs(searches)
-            if unique_docs:
-                _pokemon_card_grid(unique_docs)
 
-            # Confidence score
-            confidence = compute_confidence(searches)
-            st.progress(confidence, text=f"Confidence: {confidence:.0%}")
-
-            # Agent process visualization
-            st.divider()
-            st.subheader("🔄 Agent Process")
-
-            iterations = result.get("iterations", 0)
-            st.markdown(f"**Total iterations:** {iterations}")
-
-            for idx, search in enumerate(searches):
-                display_search_iteration(idx, search)
-
-            display_source_documents(searches)
-
-        # Feedback buttons
-        st.divider()
-        col1, col2, _ = st.columns([1, 1, 8])
-        with col1:
-            if st.button("👍", key=f"up_{msg_id}"):
-                st.session_state.feedback[msg_id] = "positive"
-                _record_feedback(msg.get("span_id"), "positive")
-                st.toast("Thanks for the feedback!")
-        with col2:
-            if st.button("👎", key=f"down_{msg_id}"):
-                st.session_state.feedback[msg_id] = "negative"
-                _record_feedback(msg.get("span_id"), "negative")
-                st.toast("Thanks for the feedback!")
-
-        # Show feedback status
-        if msg_id in st.session_state.feedback:
-            feedback = st.session_state.feedback[msg_id]
-            if feedback == "positive":
-                st.success("👍 Positive feedback recorded")
-            else:
-                st.warning("👎 Negative feedback recorded")
+def render_message(msg):
+    """Thin wrapper: opens one chat bubble and delegates to the body helper."""
+    with st.chat_message(msg["role"]):
+        render_message_body(msg)
 
 
 # ---------------------------------------------------------------------------
 # Main UI
 # ---------------------------------------------------------------------------
 
-st.title("🤖 LLM Zoomcamp Assistant")
-st.caption("Agentic RAG with full transparency into search and reasoning")
+st.title("🤖 Pokémon Assistant")
+st.caption("Agentic RAG assistant for Pokémon knowledge")
 
 # Chat history
 for message in st.session_state.messages:
@@ -369,33 +321,41 @@ if prompt := st.chat_input("Ask a question about Pokémon..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Get agent response
-    with st.chat_message("assistant"), st.spinner("Thinking..."):
-        try:
-            agent = get_agent()
-            if hasattr(agent, "run_with_feedback"):
-                result, span_id = agent.run_with_feedback(prompt)
-            else:
-                result = agent.run(prompt)
-                span_id = None
+    # Get agent response — single bubble for spinner + answer
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            try:
+                agent = get_agent()
+                if hasattr(agent, "run_with_feedback"):
+                    result, span_id = agent.run_with_feedback(prompt)
+                else:
+                    result = agent.run(prompt)
+                    span_id = None
 
-            answer = result.get("answer", "No answer generated.")
+                answer = result.get("answer", "No answer generated.")
 
-            msg_id = f"msg_{len(st.session_state.messages)}"
-            message = {
-                "role": "assistant",
-                "content": answer,
-                "msg_id": msg_id,
-                "agent_result": result,
-                "span_id": span_id,
-            }
-            render_message(message)
+                msg_id = f"msg_{len(st.session_state.messages)}"
+                message = {
+                    "role": "assistant",
+                    "content": answer,
+                    "msg_id": msg_id,
+                    "agent_result": result,
+                    "span_id": span_id,
+                    "question": prompt,
+                }
+
+            except Exception as e:  # noqa: BLE001 — UI error boundary: any failure surfaces as a chat error
+                error_msg = f"Error: {e!s}"
+                st.error(error_msg)
+                message = {
+                    "role": "assistant",
+                    "content": error_msg,
+                }
+
+        # Render inside the SAME bubble — after spinner finishes
+        if "agent_result" in message:
+            render_message_body(message)
             st.session_state.messages.append(message)
-
-        except Exception as e:  # noqa: BLE001 — UI error boundary: any failure surfaces as a chat error
-            error_msg = f"Error: {e!s}"
-            st.error(error_msg)
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": error_msg,
-            })
+        elif message.get("content", "").startswith("Error:"):
+            # Error was already shown via st.error() above; still record in history.
+            st.session_state.messages.append(message)

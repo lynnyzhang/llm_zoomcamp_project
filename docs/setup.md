@@ -9,7 +9,7 @@
 
 ## Development Subset (Default)
 
-All automated runs use the **dev subset**: the first 50 Pokémon by id (50 Pokédex passages, 250 QA pairs). This is a user directive (2026-08-07): the dev subset is the default for every test and evaluation run, and full-data runs are manual only. This keeps CI fast and cheap; see [Manual full-data runs](#manual-full-data-runs) below.
+All automated runs use the **dev subset**: a deterministic coverage-sampled 50 Pokémon (all 18 types, all generations, legendary/mythical representation) → 50 Pokédex passages, 250 QA pairs. This is a user directive (2026-08-09): `src/data/ingest.py` builds the full 1,025-record corpus by default (no LLM cost, seconds), and the dev-subset limit is applied in `evaluation/generate_qa.py` so automated eval runs stay cheap; full-data QA runs are manual only. See [Manual full-data runs](#manual-full-data-runs) below.
 
 ## Docker Setup (Recommended)
 
@@ -46,7 +46,7 @@ This starts three services:
 
 On first run, the entrypoint script:
 1. Downloads the Pokémon dataset from the Kaggle API endpoint
-2. Builds `data/corpus.jsonl` (dev subset: 50 passages)
+2. Builds `data/corpus.jsonl` (full dataset: 1,025 passages)
 3. Chunks documents and builds hybrid search indices (keyword + vector)
 4. Initializes the monitoring SQLite database (and Postgres schema)
 5. Launches Streamlit
@@ -93,7 +93,7 @@ cp .env.example .env
 # Download ONNX embedding model (tokenizer.json + model.onnx)
 uv run python -m src.data.download_model
 
-# Download the Pokémon dataset and build corpus.jsonl (dev subset: 50)
+# Download the Pokémon dataset and build corpus.jsonl (full dataset: 1,025)
 uv run python -m src.data.ingest
 
 # Chunk documents into data/chunks/documents.jsonl
@@ -103,7 +103,7 @@ uv run python -m src.data.chunker
 uv run python -m evaluation.generate_qa
 ```
 
-`ingest.py` supports `--limit N` (any N) and `--full` (all 1,025 records); `generate_qa.py` supports the same flags. Defaults always produce the dev subset.
+`ingest.py` defaults to the full 1,025-record corpus; pass `--limit N` for a smaller corpus (e.g. `--limit 50`). `generate_qa.py` defaults to the deterministic coverage-sampled dev subset (50 records × 5 pairs = 250) and supports `--full` (all 1,025 records), `--limit N`, `--pairs N` (pairs per record), `--seed N`, and `--resume` (skip ids already in qa.jsonl).
 
 ### 4. Start the app
 
@@ -145,11 +145,11 @@ The full dataset is 1,025 Pokémon; the full QA set would be 5,125 pairs (5 per 
 
 | Step | Command | What it does |
 |------|---------|--------------|
-| Ingest | `uv run python -m src.data.ingest --full` | All 1,025 records → `data/corpus.jsonl` |
+| Ingest | `uv run python -m src.data.ingest` | All 1,025 records → `data/corpus.jsonl` (default) |
 | Chunk  | `uv run python -m src.data.chunker` | Re-chunks whatever corpus exists (no flags) |
 | QA     | `uv run python -m evaluation.generate_qa --full` | 1,025 records × 5 = 5,125 pairs (flagged MANUAL — slow/costly) |
 
-`--limit N` works the same way on both scripts (first N records by id).
+`--limit N` on `generate_qa.py` selects a coverage-sampled N records (deterministic, `--seed`); on `ingest.py` it takes the first N by id.
 
 The eval scripts take no CLI flags: `retrieval_eval.py` reads the full `evaluation/data/qa.jsonl`, while `llm_eval.py` and `agent_eval.py` use in-script `sample_size` constants (10 for the LLM judge, 20 judge / 50 agent-full in `agent_eval.py`). For a full judge pass, edit those constants to `0` (all pairs) before running.
 
@@ -158,7 +158,7 @@ The eval scripts take no CLI flags: `retrieval_eval.py` reads the full `evaluati
 The pipeline is strictly ordered — each step reads the previous step's output:
 
 ```bash
-uv run python -m src.data.ingest --full      # 1. corpus.jsonl (1025)
+uv run python -m src.data.ingest            # 1. corpus.jsonl (1025, default)
 uv run python -m src.data.chunker            # 2. documents.jsonl
 uv run python -m evaluation.generate_qa --full   # 3. qa.jsonl (5125) — LLM cost
 uv run python -m evaluation.retrieval_eval       # 4. retrieval metrics (no LLM)
@@ -168,7 +168,7 @@ uv run python -m evaluation.agent_eval           # 6. agent vs simple (~27 min o
 
 ### Cost / time note
 
-Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took ≈ 1,120s (~19 min) and the agent eval ≈ 27 min. The full 1,025-Pokémon / 5,125-pair run will be substantially longer (ingest + chunk scale linearly, QA generation scales with records, and the evals scale with QA pairs) and consumes meaningful LLM tokens — the QA generator alone issues one multi-pair prompt per record. Budget accordingly, and switch back to the dev subset afterwards (`uv run python -m src.data.ingest` with no flags).
+Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took ≈ 1,120s (~19 min) and the agent eval ≈ 27 min. The full 1,025-Pokémon / 5,125-pair run will be substantially longer (ingest + chunk scale linearly, QA generation scales with records, and the evals scale with QA pairs) and consumes meaningful LLM tokens — the QA generator alone issues one multi-pair prompt per record. Budget accordingly, and switch back to the dev subset afterwards (a plain `uv run python -m evaluation.generate_qa` run regenerates the coverage-sampled 250-pair set).
 
 ## Configuration Reference
 

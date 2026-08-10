@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import random
 import re
 import sys
 import time
@@ -18,7 +19,6 @@ from src.llm import create_client, get_model
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
-CORPUS_FILE = DATA_DIR / "corpus.jsonl"
 RAW_POKEDEX = DATA_DIR / "raw" / "complete_pokedex.json"
 QA_FILE = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
 
@@ -46,6 +46,8 @@ extra text):
 # valid but short array) — top-up shortfalls with follow-up generations.
 TARGET_PAIRS_PER_RECORD = 5
 FILL_ATTEMPTS = 3
+DEV_SUBSET_SIZE = 50
+DEV_SUBSET_SEED = 42
 
 FILL_INSTRUCTIONS = """
 You emulate a Pokémon fan asking questions on the internet.
@@ -190,7 +192,7 @@ def llm_structured_retry(
             time.sleep(2**attempt)
 
 
-def generate_for_record(pokemon_id, record, client, model, use_parse):
+def generate_for_record(pokemon_id, record, client, model, use_parse, target_pairs):
     seen = set()
     rows = []
 
@@ -204,9 +206,9 @@ def generate_for_record(pokemon_id, record, client, model, use_parse):
 
     add(llm_structured_retry(client, model, record, use_parse))
     for _ in range(FILL_ATTEMPTS):
-        if len(rows) >= TARGET_PAIRS_PER_RECORD:
+        if len(rows) >= target_pairs:
             break
-        needed = TARGET_PAIRS_PER_RECORD - len(rows)
+        needed = target_pairs - len(rows)
         add(
             llm_structured_retry(
                 client,
@@ -216,7 +218,7 @@ def generate_for_record(pokemon_id, record, client, model, use_parse):
                 instructions=FILL_INSTRUCTIONS.replace("{needed}", str(needed)),
             )
         )
-    return rows[:TARGET_PAIRS_PER_RECORD]
+    return rows[:target_pairs]
 
 
 def load_raw_records():
@@ -230,58 +232,108 @@ def load_raw_records():
     return {int(record["id"]): record for record in records}
 
 
-def load_corpus_ids():
-    if not CORPUS_FILE.exists():
-        raise SystemExit(
-            f"FATAL: corpus missing at {CORPUS_FILE}. "
-            "Run `uv run python -m src.data.ingest` first."
-        )
-    ids = []
-    with open(CORPUS_FILE, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                ids.append(json.loads(line)["id"])
-    if not ids:
-        raise SystemExit(
-            f"FATAL: {CORPUS_FILE} contains no records — "
-            "run `uv run python -m src.data.ingest` first."
-        )
-    return sorted(ids)
+def select_dev_subset(records, size=DEV_SUBSET_SIZE, seed=DEV_SUBSET_SEED):
+    """Deterministic coverage-sampled subset: all 18 types, every generation,
+    and legendary/mythical representation, then a generation-balanced fill.
+    Same input + seed → same output."""
+    records = sorted(records, key=lambda r: int(r["id"]))
+    rng = random.Random(seed)
+
+    def attrs(r):
+        a = set(r.get("types") or [])
+        a.add(("gen", str(r.get("generation") or "unknown")))
+        if r.get("is_legendary"):
+            a.add("legendary")
+        if r.get("is_mythical"):
+            a.add("mythical")
+        return a
+
+    selected, covered, remaining = [], set(), records[:]
+    # Greedy set cover: repeatedly take the record adding the most new
+    # coverage attributes (types/generation/rarity); seeded-random tie-break.
+    while len(selected) < size and remaining:
+        scored = [(len(attrs(r) - covered), r) for r in remaining]
+        best = max(g for g, _ in scored)
+        if best == 0:
+            break
+        candidates = [r for g, r in scored if g == best]
+        pick = rng.choice(candidates)
+        selected.append(pick)
+        covered |= attrs(pick)
+        remaining.remove(pick)
+    # Stratified fill: round-robin across generations for balance.
+    if len(selected) < size and remaining:
+        by_gen = {}
+        for r in remaining:
+            by_gen.setdefault(str(r.get("generation") or "unknown"), []).append(r)
+        i = 0
+        while len(selected) < size and any(i < len(by_gen[g]) for g in by_gen):
+            for g in sorted(by_gen):
+                if i < len(by_gen[g]) and len(selected) < size:
+                    selected.append(by_gen[g][i])
+            i += 1
+        if len(selected) < size:  # defensive; cannot happen with 1,025 records
+            selected.extend(remaining[: size - len(selected)])
+    return selected
 
 
-def resolve_ids(records, limit, full, corpus_ids):
+def coverage_summary(records):
+    """Coverage stats for a selected subset: (types, generations, legendary, mythical)."""
+    types, gens = set(), set()
+    legendary = mythical = 0
+    for r in records:
+        types.update(r.get("types") or [])
+        gens.add(str(r.get("generation") or "unknown"))
+        legendary += 1 if r.get("is_legendary") else 0
+        mythical += 1 if r.get("is_mythical") else 0
+    return types, gens, legendary, mythical
+
+
+def resolve_ids(records, limit, full, seed):
     if full:
         return sorted(records)
-    if limit is not None:
-        return sorted(records)[:limit]
-    return corpus_ids
+    return sorted(int(r["id"]) for r in select_dev_subset(list(records.values()), size=(limit if limit is not None else DEV_SUBSET_SIZE), seed=seed))
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Generate LLM Pokémon Q&A pairs into evaluation/data/qa.jsonl "
-        "(default: the exact id set in data/corpus.jsonl = 50 records × 5 pairs)."
+        "(default: deterministic coverage-sampled dev subset — 50 records × 5 pairs)."
     )
     group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--full",
-        action="store_true",
-        help="All 1,025 records × 5 = 5,125 pairs (MANUAL only — slow/costly)",
-    )
-    group.add_argument(
-        "--limit",
-        type=int,
-        help="First N records by id from the raw cache (default: corpus.jsonl ids)",
-    )
+    group.add_argument("--full", action="store_true", help="All 1,025 records × N pairs (MANUAL only — slow/costly)")
+    group.add_argument("--limit", type=int, default=DEV_SUBSET_SIZE,
+                       help=f"Coverage-sampled N records from the raw pokedex (default: {DEV_SUBSET_SIZE})")
+    parser.add_argument("--pairs", type=int, default=TARGET_PAIRS_PER_RECORD,
+                        help="Target Q&A pairs per record (default: 5; fewer = cheaper but weaker stats)")
+    parser.add_argument("--seed", type=int, default=DEV_SUBSET_SEED,
+                        help=f"Seed for the deterministic coverage sampler (default: {DEV_SUBSET_SEED})")
+    parser.add_argument("--resume", action="store_true",
+                        help="Skip record ids already present in evaluation/data/qa.jsonl (safe re-run after a crash)")
     args = parser.parse_args(argv)
 
     load_dotenv(PROJECT_ROOT / ".env")
 
     records = load_raw_records()
-    corpus_ids = load_corpus_ids() if not (args.full or args.limit is not None) else []
-    ids = resolve_ids(records, args.limit, args.full, corpus_ids)
-    print(f"Records to generate for: {len(ids)} (ids {ids[0]}..{ids[-1]})")
+    ids = resolve_ids(records, args.limit, args.full, args.seed)
+
+    if args.resume and QA_FILE.exists():
+        existing = set()
+        with open(QA_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    existing.add(json.loads(line)["id"])
+        before = len(ids)
+        ids = [i for i in ids if i not in existing]
+        print(f"Resume: skipped {before - len(ids)} ids already in {QA_FILE}")
+
+    print(f"Records to generate for: {len(ids)}")
+    if ids:
+        sel_records = [records[i] for i in ids]
+        types, gens, legendary, mythical = coverage_summary(sel_records)
+        print(f"  coverage: {len(types)}/18 types, {len(gens)} generations, "
+              f"{legendary} legendary, {mythical} mythical (seed={args.seed})")
 
     client = patch_openai_client(create_client())
     # Bound the SDK's default 600s per-request timeout and disable its built-in
@@ -292,14 +344,14 @@ def main(argv=None):
     model = get_model()
     use_parse = supports_structured_output(client, model)
     mode = "parse" if use_parse else "create + json.loads (JSON fallback)"
-    print(f"Model: {model} | structured mode: {mode} | expected pairs: {len(ids) * 5}")
+    print(f"Model: {model} | structured mode: {mode} | expected pairs: {len(ids) * args.pairs}")
 
     all_rows = []
     try:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             futures = [
                 pool.submit(
-                    generate_for_record, pokemon_id, records[pokemon_id], client, model, use_parse
+                    generate_for_record, pokemon_id, records[pokemon_id], client, model, use_parse, args.pairs
                 )
                 for pokemon_id in ids
             ]

@@ -4,7 +4,7 @@ An agentic RAG assistant for Pokémon knowledge, built for the DataTalksClub LLM
 
 ## Project Goal
 
-Given a corpus of Pokédex passages (dev subset: 50 Pokémon, 250 Q&A pairs) from the [Kaggle Pokémon dataset](https://www.kaggle.com/datasets/elroytan/pokemondata), build a question-answering system that:
+Given a corpus of Pokédex passages (dev subset: coverage-sampled 50 Pokémon, 250 Q&A pairs) from the [Kaggle Pokémon dataset](https://www.kaggle.com/datasets/elroytan/pokemondata), build a question-answering system that:
 
 1. Retrieves relevant Pokémon entries using hybrid search
 2. Uses an agentic loop to reformulate queries when results are insufficient
@@ -17,7 +17,7 @@ Given a corpus of Pokédex passages (dev subset: 50 Pokémon, 250 Q&A pairs) fro
 
 The system is built on the **Complete Pokémon Dataset** from Kaggle ([`elroytan/pokemondata`](https://www.kaggle.com/datasets/elroytan/pokemondata), download endpoint `https://www.kaggle.com/api/v1/datasets/download/elroytan/pokemondata`). `src/data/ingest.py` fetches the archive (GET request to the Kaggle API endpoint, which redirects to a signed GCS URL), persists the full 1,025-record Pokédex to `data/raw/complete_pokedex.json`, and builds `data/corpus.jsonl` with one structured passage per Pokémon.
 
-**Development subset:** automated runs default to the first 50 Pokémon by id (250 QA pairs). This is a user directive: dev subset for all automated test/eval runs, full data reserved for manual runs. See [docs/setup.md](docs/setup.md) for the manual full-data procedure.
+**Development subset:** `src/data/ingest.py` builds the full 1,025-record corpus by default; `evaluation/generate_qa.py` defaults to a deterministic coverage-sampled dev subset of 50 Pokémon (250 QA pairs). This is a user directive: dev subset for all automated test/eval runs, full-data QA runs manual only. See [docs/setup.md](docs/setup.md).
 
 ## Architecture
 
@@ -65,7 +65,7 @@ The system is built on the **Complete Pokémon Dataset** from Kaggle ([`elroytan
 │                                                             │
 │ Kaggle API ──► raw/complete_pokedex.json ──► corpus.jsonl   │
 │  (elroytan/     (1,025 records,          (one passage per   │
-│   pokemondata)   cached, idempotent)      Pokémon, dev 50)  │
+│   pokemondata)   cached, idempotent)      Pokémon, 1,025)    │
 │                         │                                   │
 │                         ▼                                   │
 │              chunker ──► documents.jsonl (indexed)          │
@@ -95,7 +95,7 @@ cp .env.example .env
 docker-compose up --build
 ```
 
-The app runs at `http://localhost:8501`, Postgres on port 5433, and Grafana at `http://localhost:3000`. The entrypoint ingests the dev subset, chunks it, and starts the app.
+The app runs at `http://localhost:8501`, Postgres on port 5433, and Grafana at `http://localhost:3000`. The entrypoint ingests the full corpus, chunks it, and starts the app.
 
 ### Local Development
 
@@ -103,7 +103,7 @@ The app runs at `http://localhost:8501`, Postgres on port 5433, and Grafana at `
 uv sync
 cp .env.example .env              # then edit the LLM vars
 uv run python -m src.data.download_model   # fetches ONNX embedder (tokenizer.json + model.onnx)
-uv run python -m src.data.ingest           # downloads Kaggle dataset, builds data/corpus.jsonl (dev subset, 50)
+uv run python -m src.data.ingest           # downloads Kaggle dataset, builds data/corpus.jsonl (full dataset, 1,025)
 uv run python -m src.data.chunker          # builds data/chunks/documents.jsonl
 uv run streamlit run src/interface/app.py  # chat UI at :8501
 ```
@@ -191,7 +191,7 @@ project/
 ├── .env.example            # Environment template
 ├── data/
 │   ├── raw/complete_pokedex.json  # Full 1,025-record Pokédex (cached)
-│   ├── corpus.jsonl        # One structured passage per Pokémon (dev: 50)
+│   ├── corpus.jsonl        # One structured passage per Pokémon (full: 1,025; --limit for subset)
 │   └── chunks/documents.jsonl     # Chunked documents (indexed)
 ├── models/
 │   └── Xenova/all-MiniLM-L6-v2/   # ONNX embedder (tokenizer.json + model.onnx)

@@ -42,23 +42,11 @@ Each response includes:
 - Proportion of search iterations that found sufficient results (70%)
 - Efficiency bonus for finding results in fewer iterations (30%)
 
-**Pokémon Cards** — Retrieved documents render as cards with official artwork (PokeAPI sprites), the Pokémon's name and types, and a stats excerpt. Artwork that fails to load degrades gracefully — the card still shows the title.
-
-**Agent Process** — Expandable sections showing each search iteration:
-- The query used (original or reformulated)
-- Number of results found
-- LLM analysis of result sufficiency
-- Reformulation suggestion (if results were insufficient)
-- Top search results with scores
-
-**Source Documents** — Deduplicated list of all documents used across iterations, with:
-- Document ID, title, section
-- Relevance score
-- Content preview
+**Pokémon Cards** — Retrieved documents render as cards with official artwork (PokeAPI sprites), the Pokémon's name and types, and a stats excerpt. Only Pokémon named in the question are shown — questions that name no Pokémon get no cards. Artwork that fails to load degrades gracefully — the card still shows the title.
 
 **Feedback Buttons** — Thumbs up/down to record whether the answer was helpful. Feedback is attached to the exact tracing span for the message and shows up in monitoring.
 
-**Rejection banner** — For out-of-scope questions the answer renders as a warning banner with no cards, confidence, or agent process (the query never reached search).
+**Rejection banner** — For out-of-scope questions the answer renders as a warning banner with no cards or confidence (the query never reached search).
 
 ### Sidebar Settings
 

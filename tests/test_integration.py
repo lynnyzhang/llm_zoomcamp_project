@@ -106,7 +106,7 @@ class TestDataIngestion:
                 assert isinstance(record["passage"], str), f"Record {i} 'passage' not a string"
                 records.append(record)
         # Floor relaxed from >= 3000 (rag-mini-wikipedia) to >= 50: the default
-        # dev subset is the first 50 Pokémon by id (user directive 2026-08-07).
+        # dev subset is a coverage-sampled 50 Pokémon (user directive 2026-08-09).
         assert len(records) >= 50, f"Expected >= 50 passages, got {len(records)}"
 
     def test_qa_records_are_valid(self):
@@ -123,7 +123,7 @@ class TestDataIngestion:
                 assert "id" in record, f"Record {i} missing 'id' field"
                 records.append(record)
         # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: the default
-        # dev subset generates 50 records × 5 pairs (user directive 2026-08-07).
+        # dev subset generates a coverage-sampled 50 records × 5 pairs (user directive 2026-08-09).
         assert len(records) >= 250, f"Expected >= 250 Q&A pairs, got {len(records)}"
 
     def test_chunker_output_exists(self):
@@ -1461,7 +1461,7 @@ class TestEvaluationResults:
 
         config = data["config"]
         # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: the default
-        # dev subset is 250 Pokémon QA pairs (user directive 2026-08-07) — 900
+        # dev subset is 250 Pokémon QA pairs (user directive 2026-08-09) — 900
         # can never hold on the dev subset.
         assert config["total_questions"] >= 250
         assert "model" in config
@@ -1545,7 +1545,7 @@ class TestEvaluationScripts:
         qa_path = EVAL_QA
         questions = load_ground_truth(str(qa_path))
         # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: default dev
-        # subset = 50 records × 5 LLM-generated pairs (user directive 2026-08-07).
+        # subset = a coverage-sampled 50 records × 5 LLM-generated pairs (user directive 2026-08-09).
         assert len(questions) >= 250
         assert "question" in questions[0]
         assert "id" in questions[0]
@@ -1652,7 +1652,7 @@ class TestFullPipeline:
 
         # Verify search index loaded data
         # Floor relaxed from >= 3000 (rag-mini-wikipedia) to >= 50: the default
-        # dev subset is 50 Pokémon (user directive 2026-08-07) — 3000 can never
+        # dev subset is 50 Pokémon (user directive 2026-08-09) — 3000 can never
         # hold on the dev subset.
         assert len(full_pipeline.documents) >= 50
 

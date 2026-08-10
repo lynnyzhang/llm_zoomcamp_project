@@ -17,7 +17,7 @@ from .tracer import get_traces_db_path
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="LLM Zoomcamp Monitoring",
+    page_title="Pokémon Monitoring",
     page_icon="📊",
     layout="wide",
 )
@@ -54,7 +54,7 @@ if not db_path.exists():
 # Dashboard layout
 # ---------------------------------------------------------------------------
 
-st.title("📊 LLM Zoomcamp Monitoring Dashboard")
+st.title("📊 Pokémon Monitoring Dashboard")
 st.caption("Analytics from OpenTelemetry traces stored in SQLite")
 
 # Summary metrics

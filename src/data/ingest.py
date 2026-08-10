@@ -175,18 +175,12 @@ def build_corpus(records, limit):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Build data/corpus.jsonl from the Pokémon dataset (elroytan/pokemondata)."
+        description="Build data/corpus.jsonl from the Pokémon dataset (elroytan/pokemondata). Defaults to the FULL 1,025-record dataset."
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--full", action="store_true", help="Write all 1,025 records (default is the 50-record dev subset)"
-    )
-    group.add_argument(
-        "--limit", type=int, default=50, help="Number of records to write (default: 50, first N by id)"
-    )
+    parser.add_argument("--limit", type=int, default=None, help="Write only the first N records by id (default: all 1,025; dev runs typically use --limit 50)")
     args = parser.parse_args(argv)
 
-    limit = None if args.full else args.limit
+    limit = args.limit
 
     records = load_raw_pokedex()
     rows = build_corpus(records, limit)

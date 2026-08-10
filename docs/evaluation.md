@@ -8,7 +8,7 @@ Three evaluation dimensions were measured:
 2. **LLM Answer Quality** — Are generated answers faithful, relevant, and coherent?
 3. **Agent vs Simple RAG** — Does the agentic loop improve retrieval?
 
-All evaluations run on the **dev subset** by default: 50 Pokédex passages and 250 Q&A pairs (user directive 2026-08-07 — the default for every automated run; full-data runs are manual, see [docs/setup.md](setup.md)).
+All evaluations run on the **dev subset** by default: a coverage-sampled 50 Pokémon (250 Q&A pairs; user directive 2026-08-09 — the default for every automated run; full-data runs are manual, see [docs/setup.md](setup.md)).
 
 ## 1. Retrieval Evaluation
 
@@ -169,7 +169,7 @@ uv run python -m evaluation.agent_eval
 # → evaluation/results/agent_eval.json, evaluation/results/agent_eval_comparison.png
 ```
 
-Full-data runs are manual: regenerate ingest → chunk → QA with `--full` first (see [docs/setup.md](setup.md), Manual full-data runs).
+Full-data QA runs are manual: regenerate chunk → QA with `--full` first (see [docs/setup.md](setup.md), Manual full-data runs); ingest already builds the full corpus by default.
 
 ## Limitations
 

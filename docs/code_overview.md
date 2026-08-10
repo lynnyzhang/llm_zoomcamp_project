@@ -31,7 +31,7 @@ Three layers: **data** (build the index), **runtime** (answer questions),
 | Module | Function | Job |
 |---|---|---|
 | `src/data/download_model.py` | `download()` | Fetch ONNX tokenizer + model into `models/` |
-| `src/data/ingest.py` | `download_archive()`, `load_raw_pokedex()`, `parse_record()`, `main()` | Fetch Kaggle Pokémon dataset, cache the raw 1,025-record Pokédex, write one structured passage per Pokémon to `data/corpus.jsonl` (dev subset: first 50 by id) |
+| `src/data/ingest.py` | `download_archive()`, `load_raw_pokedex()`, `parse_record()`, `main()` | Fetch Kaggle Pokémon dataset, cache the raw 1,025-record Pokédex, write one structured passage per Pokémon to `data/corpus.jsonl` (full dataset: all 1,025 by default; `--limit N` for a subset) |
 | `src/data/chunker.py` | `estimate_tokens()`, `split_passage()`, `generate_metadata()`, `process_corpus()`, `main()` | Split each corpus passage into documents with exact `id` linkage (`{pokemon_id}_{n}` never used — eval depends on pure ids), write `data/documents.jsonl` |
 
 **Call chain:** `ingest.main()` writes `corpus.jsonl` → `chunker.main()` reads it
@@ -65,11 +65,11 @@ evaluation for comparison.
 
 | Module | Function | Job |
 |---|---|---|
-| `src/interface/app.py` | `_make_agent()`, `_maybe_trace()`, `render_message()`, `display_source_documents()`, `_pokemon_card_grid()`, `_record_feedback()`, `compute_confidence()` | Streamlit chat: agent answers + Pokémon cards with artwork, rejection banners for out-of-scope, thumbs up/down feedback |
+| `src/interface/app.py` | `_make_agent()`, `_maybe_trace()`, `render_message()`, `render_message_body()`, `_filter_docs_by_question()`, `_pokemon_card_grid()`, `_record_feedback()`, `compute_confidence()` | Streamlit chat: agent answers + Pokémon cards (only Pokémon named in the question) with artwork, rejection banners for out-of-scope, thumbs up/down feedback |
 
 **Call chain:** `render_message` is the single path for both history and live
-replies; `display_source_documents` → `_unique_docs` → `_pokemon_card_grid`;
-feedback goes to `record_feedback` (monitoring).
+replies; `render_message_body` → `_unique_docs` → `_filter_docs_by_question` →
+`_pokemon_card_grid`; feedback goes to `record_feedback` (monitoring).
 
 ## 5. Monitoring layer
 
@@ -87,7 +87,7 @@ spans → exporters persist → `dashboard.py` reads back via `get_traces_db_pat
 
 | Module | Function | Job |
 |---|---|---|
-| `evaluation/generate_qa.py` | `generate_for_record()`, `_generate_qa_pairs()`, `llm_structured_retry()`, `supports_structured_output()`, `main()` | LLM-generate 5 Q&A pairs per dev Pokémon (250 total) into `evaluation/data/qa.jsonl`; llama.cpp-compatible structured output via `patch_openai_client` |
+| `evaluation/generate_qa.py` | `generate_for_record()`, `_generate_qa_pairs()`, `llm_structured_retry()`, `supports_structured_output()`, `main()` | LLM-generate 5 Q&A pairs per Pokémon (default dev subset: coverage-sampled 50 → 250 total; `--full` for all) into `evaluation/data/qa.jsonl`; llama.cpp-compatible structured output via `patch_openai_client` |
 | `evaluation/retrieval_eval.py` | `evaluate_search()`, `precision_at_k()`, `recall_at_k()`, `mrr()`, `main()` | Rank search quality per mode on the 250 questions |
 | `evaluation/llm_eval.py` | `llm_judge()`, `llm_judge_retry()`, `evaluate_with_prompt()`, `main()` | LLM-as-judge (faithfulness/relevance/coherence, 1-5) across Simple / Detailed / With-Examples prompts |
 | `evaluation/agent_eval.py` | `retrieval_accuracy()`, `llm_judge_score()`, `evaluate_answer_quality()`, `create_comparison_chart()`, `main()` | Simple RAG vs Agentic RAG: hit rate, searches/query, latency, judge scores, comparison chart |
@@ -106,9 +106,7 @@ spans → exporters persist → `dashboard.py` reads back via `get_traces_db_pat
 3. **Feedback round-trip:** UI → `record_feedback(span_id)` → span store →
    dashboard "feedback distribution" panel — the only user input that flows
    back into monitoring.
-4. **Dev subset discipline:** `ingest --limit 50` and `generate_qa`'s corpus-id
-   filtering keep every automated run on 50 docs / 250 QA; full-data runs are
-   manual (`--full`), per user directive.
+4. **Dev subset discipline:** `ingest.py` builds the full 1,025-record corpus by default; `generate_qa.py`'s coverage-sampled dev subset (50 records → 250 QA) keeps every automated run cheap; full-data QA runs are manual (`--full`), per user directive.
 5. **Guardrail contract:** `RAGAgent` returns `rejected:true` with zero
    searches for out-of-scope queries (verified by tests asserting
    `searches == []`), and the app renders a warning banner instead of cards —

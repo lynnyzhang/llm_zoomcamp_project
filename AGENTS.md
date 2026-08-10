@@ -9,9 +9,11 @@ out-of-scope guardrails, evaluation scripts, monitoring, and Docker
 deployment.
 
 The knowledge base is the Kaggle Complete Pokémon Dataset
-(`elroytan/pokemondata`, 1,025 records) fetched by `src/data/ingest.py`. The
-**dev subset** (first 50 Pokémon by id, 250 QA pairs) is the default for all
-automated runs; full-data runs are manual (see `docs/setup.md`).
+(`elroytan/pokemondata`, 1,025 records) fetched by `src/data/ingest.py`, which
+builds the full 1,025-record corpus by default. The **dev subset** — a
+deterministic coverage-sampled 50 Pokémon (250 QA pairs) — is the default for
+ground-truth generation (`evaluation/generate_qa.py`) and all automated eval
+runs; full-data QA runs are manual (see `docs/setup.md`).
 
 **Self-contained:** this project depends only on its own `src/` — never import
 from external course content or reference material.
