@@ -47,27 +47,100 @@ class StubSearchIndex:
     def __init__(self, documents=None):
         self._documents = documents if documents is not None else [
             {
-                "id": "25",
-                "title": "Pikachu (#25)",
-                "content": (
-                    "Pikachu is an Electric-type Pokémon. Stats: HP 35, "
-                    "Attack 55, Defense 40, Special Attack 50, Special "
-                    "Defense 50, Speed 90."
+                "id": 25,
+                "name": "Pikachu",
+                "types": ["Electric"],
+                "generation": "gen-i",
+                "stats": {
+                    "hp": 35, "attack": 55, "defense": 40,
+                    "sp_attack": 50, "sp_defense": 50, "speed": 90,
+                    "base_stat_total": 320,
+                },
+                "height_m": 0.4,
+                "weight_kg": 6.0,
+                "abilities": ["static"],
+                "hidden_ability": "lightning-rod",
+                "egg_groups": ["field", "fairy"],
+                "color": "yellow",
+                "shape": "quadruped",
+                "habitat": "forest",
+                "growth_rate": "medium",
+                "capture_rate": 190,
+                "base_happiness": 70,
+                "base_experience": 112,
+                "genus": "Mouse Pokémon",
+                "is_legendary": False,
+                "is_mythical": False,
+                "is_baby": False,
+                "evolution_chain_id": 10,
+                "flavor_text": (
+                    "When several of these POKéMON gather, their electricity "
+                    "could build and cause lightning storms."
                 ),
-                "section": "Electric",
-                "url": "",
+                "sprite_url": (
+                    "https://raw.githubusercontent.com/PokeAPI/sprites/"
+                    "master/sprites/pokemon/25.png"
+                ),
+                "evolves_from": None,
+                "evolves_into": ["Raichu"],
+                "type_effectiveness": {"electric": 0.5},
+                "search_text": (
+                    "Pokémon: Pikachu (#25)\n"
+                    "Types: Electric\n"
+                    "Stats: hp 35, attack 55, defense 40, sp. attack 50, "
+                    "sp. defense 50, speed 90, total 320\n"
+                    "Type effectiveness: electric 0.5\n"
+                    "Flavor text: When several of these POKéMON gather, their "
+                    "electricity could build and cause lightning storms."
+                ),
                 "score": 1.0,
             },
             {
-                "id": "6",
-                "title": "Charizard (#6)",
-                "content": (
-                    "Charizard is a Fire/Flying-type Pokémon. It takes 2x "
-                    "damage from Water and Electric, 4x from Rock, and is "
-                    "immune to Ground."
+                "id": 6,
+                "name": "Charizard",
+                "types": ["Fire", "Flying"],
+                "generation": "gen-i",
+                "stats": {
+                    "hp": 78, "attack": 84, "defense": 78,
+                    "sp_attack": 109, "sp_defense": 85, "speed": 100,
+                    "base_stat_total": 534,
+                },
+                "height_m": 1.7,
+                "weight_kg": 90.5,
+                "abilities": ["blaze"],
+                "hidden_ability": "solar-power",
+                "egg_groups": ["monster", "dragon"],
+                "color": "red",
+                "shape": "upright",
+                "habitat": "mountain",
+                "growth_rate": "medium-slow",
+                "capture_rate": 45,
+                "base_happiness": 70,
+                "base_experience": 240,
+                "genus": "Flame Pokémon",
+                "is_legendary": False,
+                "is_mythical": False,
+                "is_baby": False,
+                "evolution_chain_id": 2,
+                "flavor_text": (
+                    "It spits fire that is hot enough to melt boulders."
                 ),
-                "section": "Fire/Flying",
-                "url": "",
+                "sprite_url": (
+                    "https://raw.githubusercontent.com/PokeAPI/sprites/"
+                    "master/sprites/pokemon/6.png"
+                ),
+                "evolves_from": "Charmeleon",
+                "evolves_into": [],
+                "type_effectiveness": {"rock": 4.0, "ground": 0.0},
+                "search_text": (
+                    "Pokémon: Charizard (#6)\n"
+                    "Types: Fire, Flying\n"
+                    "Stats: hp 78, attack 84, defense 78, sp. attack 109, "
+                    "sp. defense 85, speed 100, total 534\n"
+                    "Type effectiveness: rock 4.0, ground 0.0\n"
+                    "Flavor text: It spits fire that is hot enough to melt "
+                    "boulders."
+                ),
                 "score": 1.0,
             },
         ]
@@ -101,13 +174,17 @@ class TestDataIngestion:
                 if not line:
                     continue
                 record = json.loads(line)
-                assert "passage" in record, f"Record {i} missing 'passage' field"
+                # New corpus schema: full native record (no 'passage' wrapper).
                 assert "id" in record, f"Record {i} missing 'id' field"
-                assert isinstance(record["passage"], str), f"Record {i} 'passage' not a string"
+                assert "name" in record, f"Record {i} missing 'name' field"
+                assert "types" in record, f"Record {i} missing 'types' field"
+                assert "stats" in record, f"Record {i} missing 'stats' field"
+                assert isinstance(record["id"], int), f"Record {i} id not an int"
+                assert isinstance(record["types"], list)
+                assert isinstance(record["stats"], dict)
                 records.append(record)
-        # Floor relaxed from >= 3000 (rag-mini-wikipedia) to >= 50: the default
-        # dev subset is a coverage-sampled 50 Pokémon (user directive 2026-08-09).
-        assert len(records) >= 50, f"Expected >= 50 passages, got {len(records)}"
+        # Full dataset now (CSV swap): all 1,350 records.
+        assert len(records) == 1350, f"Expected 1350 records, got {len(records)}"
 
     def test_qa_records_are_valid(self):
         qa_path = EVAL_QA
@@ -133,6 +210,7 @@ class TestDataIngestion:
     def test_chunked_documents_are_valid(self):
         docs_path = CHUNKS_DIR / "documents.jsonl"
         count = 0
+        chart_count = 0
         with open(docs_path) as f:
             for i, line in enumerate(f):
                 line = line.strip()
@@ -140,17 +218,23 @@ class TestDataIngestion:
                     continue
                 doc = json.loads(line)
                 assert "id" in doc, f"Doc {i} missing 'id'"
-                assert "content" in doc, f"Doc {i} missing 'content'"
-                assert "title" in doc, f"Doc {i} missing 'title'"
-                assert "section" in doc, f"Doc {i} missing 'section'"
-                assert isinstance(doc["content"], str), f"Doc {i} content not a string"
-                assert len(doc["content"]) > 0, f"Doc {i} has empty content"
+                assert "search_text" in doc, f"Doc {i} missing 'search_text'"
+                assert isinstance(doc["search_text"], str), f"Doc {i} search_text not a string"
+                assert len(doc["search_text"]) > 0, f"Doc {i} has empty search_text"
+                if isinstance(doc["id"], str):
+                    # Part B type-chart doc.
+                    assert doc.get("kind") == "type_chart", f"Chart doc {i} missing kind"
+                    chart_count += 1
+                else:
+                    # Part A Pokémon doc keeps a JSON-int id and the derived keys.
+                    assert "name" in doc, f"Doc {i} missing 'name'"
+                    assert "evolves_from" in doc, f"Doc {i} missing 'evolves_from'"
+                    assert "evolves_into" in doc, f"Doc {i} missing 'evolves_into'"
+                    assert "type_effectiveness" in doc, f"Doc {i} missing 'type_effectiveness'"
                 count += 1
-        # Floor relaxed from >= 3000 (rag-mini-wikipedia) to >= 50: the default
-        # dev subset is 50 Pokémon, one document per Pokémon (user directive
-        # 2026-08-07; review M4 keeps exactly one doc per Pokémon so every id
-        # stays a pure integer).
-        assert count >= 50, f"Expected >= 50 chunked docs, got {count}"
+        # 1,350 Pokémon docs + 18 type-chart docs.
+        assert count == 1368, f"Expected 1368 chunked docs, got {count}"
+        assert chart_count == 18, f"Expected 18 chart docs, got {chart_count}"
 
 
 # ===========================================================================
@@ -159,65 +243,82 @@ class TestDataIngestion:
 
 
 class TestChunkingPipeline:
-    """Test the chunking logic directly."""
+    """Test the new Pokémon-native chunking derivation logic."""
 
-    def test_estimate_tokens(self):
-        from src.data.chunker import estimate_tokens
+    @staticmethod
+    def _corpus_records():
+        with open(DATA_DIR / "corpus.jsonl", encoding="utf-8") as f:
+            return [json.loads(line) for line in f if line.strip()]
 
-        assert estimate_tokens("abcd") == 1
-        assert estimate_tokens("abcdefgh") == 2
-        assert estimate_tokens("") == 0
+    @staticmethod
+    def _record_by_id(records, id_):
+        return next(r for r in records if r["id"] == id_)
 
-    def test_re_chunk_passage_short(self):
-        from src.data.chunker import re_chunk_passage
+    @staticmethod
+    def _chart():
+        from src.data.chunker import load_type_chart
 
-        short_text = "This is a short passage."
-        chunks = re_chunk_passage(short_text, max_tokens=1000)
-        assert len(chunks) == 1
-        assert chunks[0] == short_text
+        return load_type_chart(PROJECT_ROOT / "data" / "raw" / "pokemon_types.csv")
 
-    def test_re_chunk_passage_long(self):
-        from src.data.chunker import re_chunk_passage
+    def test_type_effectiveness_bulbasaur(self):
+        from src.data.chunker import type_effectiveness
 
-        # Create a passage longer than max_tokens
-        long_text = "This is sentence number X. " * 500  # ~3500 tokens
-        chunks = re_chunk_passage(long_text, min_tokens=500, max_tokens=1000)
-        assert len(chunks) > 1, "Long passage should be split into multiple chunks"
+        chart = self._chart()
+        bulbasaur = self._record_by_id(self._corpus_records(), 1)
+        eff = type_effectiveness(bulbasaur, chart)
+        assert eff["fire"] == 2.0
+        assert eff["grass"] == 0.25
+        assert eff["water"] == 0.5
 
-        # Each chunk should be within max_tokens limit (approximately)
-        from src.data.chunker import estimate_tokens
+    def test_evolution_linkage_ivysaur(self):
+        from src.data.chunker import build_evolution_map
 
-        for chunk in chunks:
-            tokens = estimate_tokens(chunk)
-            # Allow some tolerance due to sentence-boundary splitting
-            assert tokens <= 1200, f"Chunk too large: {tokens} tokens"
+        records = self._corpus_records()
+        chains = build_evolution_map(records)
+        ivysaur = self._record_by_id(records, 2)
+        chain = chains[ivysaur["evolution_chain_id"]]
+        from src.data.chunker import _evolution_linkage
 
-    def test_generate_metadata(self):
-        from src.data.chunker import generate_metadata
+        evolves_from, evolves_into = _evolution_linkage(ivysaur, chain)
+        assert evolves_from == "Bulbasaur"
+        assert evolves_into == ["Venusaur"]
 
-        meta = generate_metadata(1, 0, 1)
-        assert meta["title"] == "Bulbasaur (#1)"
-        assert meta["section"] == "grass+poison"
-        assert meta["url"] == (
-            "https://raw.githubusercontent.com/PokeAPI/sprites/master/"
-            "sprites/pokemon/other/official-artwork/1.png"
+    def test_alt_form_has_no_evolution_linkage(self):
+        from src.data.chunker import _evolution_linkage
+
+        records = self._corpus_records()
+        alt = self._record_by_id(records, 10001)
+        evolves_from, evolves_into = _evolution_linkage(alt, None)
+        assert evolves_from is None
+        assert evolves_into == []
+
+    def test_build_pokemon_doc_derives_keys(self):
+        from src.data.chunker import build_evolution_map, build_pokemon_doc
+
+        records = self._corpus_records()
+        chart = self._chart()
+        chains = build_evolution_map(records)
+        ivysaur = self._record_by_id(records, 2)
+        doc = build_pokemon_doc(
+            ivysaur, chart, chains[ivysaur["evolution_chain_id"]]
         )
+        assert doc["id"] == 2  # int id preserved
+        assert doc["evolves_from"] == "Bulbasaur"
+        assert doc["evolves_into"] == ["Venusaur"]
+        assert doc["type_effectiveness"]["fire"] == 2.0
+        assert "Type effectiveness:" in doc["search_text"]
+        assert "Flavor text:" in doc["search_text"]
 
-    def test_process_corpus_yields_valid_docs(self):
-        from src.data.chunker import process_corpus
+    def test_type_chart_doc_shape(self):
+        from src.data.chunker import _type_chart_doc
 
-        corpus_path = DATA_DIR / "corpus.jsonl"
-        count = 0
-        for doc in process_corpus(corpus_path, CHUNKS_DIR / "documents.jsonl"):
-            assert "id" in doc
-            assert "content" in doc
-            assert "title" in doc
-            assert "section" in doc
-            assert len(doc["content"]) > 0
-            count += 1
-            if count >= 10:  # Just verify the first few
-                break
-        assert count >= 10
+        chart = self._chart()
+        fire = _type_chart_doc(chart, "fire")
+        assert fire["id"] == "type_fire"
+        assert fire["kind"] == "type_chart"
+        assert fire["type"] == "Fire"
+        assert "Fire moves deal 2x damage" in fire["search_text"]
+        assert "take 2x damage from" in fire["search_text"]
 
 
 # ===========================================================================
@@ -247,7 +348,7 @@ class TestHybridSearch:
         assert len(results) <= 5
         for doc in results:
             assert "id" in doc
-            assert "content" in doc
+            assert "search_text" in doc
 
     def test_vector_search_returns_results(self, search_index):
         results = search_index.vector_search("electric pokemon stats", num_results=5)
@@ -331,7 +432,7 @@ class TestRAGPipeline:
         rag = RAGBase(search_index=search_index)
         results = rag.search("Which Pokémon are weak to fire?")
         assert len(results) > 0
-        assert "content" in results[0]
+        assert "search_text" in results[0]
 
     def test_rag_build_context(self, search_index):
         from src.rag.pipeline import RAGBase
@@ -341,9 +442,9 @@ class TestRAGPipeline:
         context = rag.build_context(results)
         assert isinstance(context, str)
         assert len(context) > 0
-        # Context should contain content from the results
+        # Context is the docs' search_text blocks joined by blank lines.
         for doc in results:
-            assert doc["content"] in context or doc["title"] in context
+            assert doc["search_text"] in context
 
     def test_rag_build_prompt(self, search_index):
         from src.rag.pipeline import RAGBase
@@ -606,16 +707,31 @@ class TestAgentLoop:
 
         documents = [
             {
-                "id": "6",
-                "title": "Charizard (#6)",
-                "content": (
-                    "damage_taken: normal 1x, fire 0.5x, water 2x, electric 2x, "
-                    "grass 0.25x, ice 1x, fighting 1x, poison 1x, ground 0x, "
-                    "flying 1x, psychic 1x, bug 0.5x, rock 4x, ghost 1x, "
-                    "dragon 1x, steel 1x, dark 1x, fairy 0.5x."
+                "id": 6,
+                "name": "Charizard",
+                "types": ["Fire", "Flying"],
+                "stats": {
+                    "hp": 78, "attack": 84, "defense": 78,
+                    "sp_attack": 109, "sp_defense": 85, "speed": 100,
+                    "base_stat_total": 534,
+                },
+                "evolves_from": "Charmeleon",
+                "evolves_into": [],
+                "type_effectiveness": {
+                    "normal": 1.0, "fire": 0.5, "water": 2.0, "electric": 2.0,
+                    "grass": 0.25, "ice": 1.0, "fighting": 1.0, "poison": 1.0,
+                    "ground": 0.0, "flying": 1.0, "psychic": 1.0, "bug": 0.5,
+                    "rock": 4.0, "ghost": 1.0, "dragon": 1.0, "steel": 1.0,
+                    "dark": 1.0, "fairy": 0.5,
+                },
+                "search_text": (
+                    "Pokémon: Charizard (#6)\n"
+                    "Types: Fire, Flying\n"
+                    "Stats: hp 78, attack 84, defense 78, sp. attack 109, "
+                    "sp. defense 85, speed 100, total 534\n"
+                    "Type effectiveness: normal 1.0, fire 0.5, water 2.0, "
+                    "electric 2.0, grass 0.25, ground 0.0, rock 4.0, fairy 0.5"
                 ),
-                "section": "Fire/Flying",
-                "url": "",
                 "score": 1.0,
             }
         ]
@@ -1797,7 +1913,7 @@ class TestFullPipeline:
                     break
                 questions.append(json.loads(line))
 
-        valid_doc_ids = {str(d["id"]) for d in full_pipeline.documents}
+        valid_doc_ids = {d["id"] for d in full_pipeline.documents}
 
         for q in questions:
             results = full_pipeline.search(q["question"], num_results=5)

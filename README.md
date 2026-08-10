@@ -4,7 +4,7 @@ An agentic RAG assistant for Pokémon knowledge, built for the DataTalksClub LLM
 
 ## Project Goal
 
-Given a corpus of Pokédex passages (dev subset: coverage-sampled 50 Pokémon, 250 Q&A pairs) from the [Kaggle Pokémon dataset](https://www.kaggle.com/datasets/elroytan/pokemondata), build a question-answering system that:
+Given a corpus of Pokédex records (dev subset: coverage-sampled 50 Pokémon, 250 Q&A pairs) from the [Kaggle Pokémon dataset](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types), build a question-answering system that:
 
 1. Retrieves relevant Pokémon entries using hybrid search
 2. Uses an agentic loop to reformulate queries when results are insufficient
@@ -15,9 +15,9 @@ Given a corpus of Pokédex passages (dev subset: coverage-sampled 50 Pokémon, 2
 
 ## Data
 
-The system is built on the **Complete Pokémon Dataset** from Kaggle ([`elroytan/pokemondata`](https://www.kaggle.com/datasets/elroytan/pokemondata), download endpoint `https://www.kaggle.com/api/v1/datasets/download/elroytan/pokemondata`). `src/data/ingest.py` fetches the archive (GET request to the Kaggle API endpoint, which redirects to a signed GCS URL), persists the full 1,025-record Pokédex to `data/raw/complete_pokedex.json`, and builds `data/corpus.jsonl` with one structured passage per Pokémon.
+The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle ([`patelris/pokemon-dataset-with-stats-and-types`](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types), download endpoint `https://www.kaggle.com/api/v1/datasets/download/patelris/pokemon-dataset-with-stats-and-types`). The two raw CSVs (`pokemon_complete.csv`, `pokemon_types.csv`) ship bundled in `data/raw/` — Kaggle's anonymous download endpoint is bot-blocked, so the repo carries its own copy and no login is needed. `src/data/ingest.py` only attempts a download when they are missing, and builds `data/corpus.jsonl` with one structured record per Pokémon (full: 1,350 — 1,025 canonical + 325 alternate forms).
 
-**Development subset:** `src/data/ingest.py` builds the full 1,025-record corpus by default; `evaluation/generate_qa.py` defaults to a deterministic coverage-sampled dev subset of 50 Pokémon (250 QA pairs). This is a user directive: dev subset for all automated test/eval runs, full-data QA runs manual only. See [docs/setup.md](docs/setup.md).
+**Development subset:** `src/data/ingest.py` builds the full 1,350-record corpus by default; `evaluation/generate_qa.py` defaults to a deterministic coverage-sampled dev subset of 50 Pokémon (250 QA pairs). This is a user directive: dev subset for all automated test/eval runs, full-data QA runs manual only. See [docs/setup.md](docs/setup.md).
 
 ## Architecture
 
@@ -63,9 +63,10 @@ The system is built on the **Complete Pokémon Dataset** from Kaggle ([`elroytan
 ┌─────────────────────────────────────────────────────────────┐
 │              Data Pipeline                                  │
 │                                                             │
-│ Kaggle API ──► raw/complete_pokedex.json ──► corpus.jsonl   │
-│  (elroytan/     (1,025 records,          (one passage per   │
-│   pokemondata)   cached, idempotent)      Pokémon, 1,025)    │
+│ Kaggle API ──► raw CSVs ──► corpus.jsonl                   │
+│  (patelris/     (1,350 records,          (one record per    │
+│   pokemon-       cached, idempotent)      Pokémon, 1,350)   │
+│   dataset)                                                  │
 │                         │                                   │
 │                         ▼                                   │
 │              chunker ──► documents.jsonl (indexed)          │
@@ -103,7 +104,7 @@ The app runs at `http://localhost:8501`, Postgres on port 5433, and Grafana at `
 uv sync
 cp .env.example .env              # then edit the LLM vars
 uv run python -m src.data.download_model   # fetches ONNX embedder (tokenizer.json + model.onnx)
-uv run python -m src.data.ingest           # downloads Kaggle dataset, builds data/corpus.jsonl (full dataset, 1,025)
+uv run python -m src.data.ingest           # downloads Kaggle dataset, builds data/corpus.jsonl (full dataset, 1,350)
 uv run python -m src.data.chunker          # builds data/chunks/documents.jsonl
 uv run streamlit run src/interface/app.py  # chat UI at :8501
 ```
@@ -190,9 +191,9 @@ project/
 ├── pyproject.toml          # Dependencies
 ├── .env.example            # Environment template
 ├── data/
-│   ├── raw/complete_pokedex.json  # Full 1,025-record Pokédex (cached)
-│   ├── corpus.jsonl        # One structured passage per Pokémon (full: 1,025; --limit for subset)
-│   └── chunks/documents.jsonl     # Chunked documents (indexed)
+│   ├── raw/pokemon_complete.csv + pokemon_types.csv  # Cached raw CSVs
+│   ├── corpus.jsonl        # One structured record per Pokémon (full: 1,350; --limit for subset)
+│   └── chunks/documents.jsonl     # 1,350 Pokémon docs + 18 type-chart docs (indexed)
 ├── models/
 │   └── Xenova/all-MiniLM-L6-v2/   # ONNX embedder (tokenizer.json + model.onnx)
 ├── monitoring/
@@ -222,7 +223,7 @@ project/
 ├── src/
 │   ├── data/
 │   │   ├── ingest.py       # Kaggle dataset download → corpus.jsonl
-│   │   ├── chunker.py      # Pokémon-aware chunking (exact-id metadata)
+│   │   ├── chunker.py      # Pokémon-native docs (1 per Pokémon + 18 type-chart docs)
 │   │   └── download_model.py   # ONNX embedding model download
 │   ├── search/
 │   │   ├── embedder.py     # ONNX embedder (onnxruntime, no torch)

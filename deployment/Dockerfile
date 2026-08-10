@@ -23,6 +23,9 @@ COPY src/ ./src/
 COPY monitoring/ ./monitoring/
 COPY .env.example ./.env.example
 
+# Bundle the raw dataset CSVs (Kaggle anonymous downloads are bot-blocked).
+COPY data/raw/pokemon_complete.csv data/raw/pokemon_types.csv /app/data_seed/raw/
+
 COPY deployment/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

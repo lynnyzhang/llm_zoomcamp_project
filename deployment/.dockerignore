@@ -13,7 +13,10 @@ venv
 .DS_Store
 Dockerfile
 .dockerignore
-data/
+data/*
+!data/raw/
+!data/raw/pokemon_complete.csv
+!data/raw/pokemon_types.csv
 models/
 evaluation/
 monitoring/traces.db

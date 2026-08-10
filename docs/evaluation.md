@@ -32,9 +32,9 @@ All evaluations run on the **dev subset** by default: a coverage-sampled 50 Pok�
 
 ### Analysis
 
-- **Retrieval is near-perfect** on the dev subset. The exact Pokémon id is in the top-5 for 97.6-98.4% of questions across all methods — the id/section keyword fields and the type-tagged passage layout make the relevant document almost always reachable.
+- **Retrieval is near-perfect** on the dev subset. The exact Pokémon id is in the top-5 for 97.6-98.4% of questions across all methods — the id/types keyword fields and the `search_text` layout make the relevant document almost always reachable.
 - **Vector and hybrid top recall@5** at 0.984; keyword trails slightly (0.976) but is the fastest (0.1s vs 0.4-0.6s).
-- **Keyword has the best MRR (0.9548)** — id/section keyword fields surface the relevant doc at rank 1 more often than vector (0.8910); hybrid fuses both to 0.9520.
+- **Keyword has the best MRR (0.9548)** — id/types keyword fields surface the relevant doc at rank 1 more often than vector (0.8910); hybrid fuses both to 0.9520.
 - These numbers are roughly 180x better than the original wiki corpus (recall 0.0022-0.0054), where passage ids did not map cleanly to questions. The Pokémon dev subset is a much easier retrieval task: exact-id QA linkage.
 
 ### Key Numbers

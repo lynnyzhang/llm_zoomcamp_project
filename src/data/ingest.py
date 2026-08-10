@@ -1,30 +1,68 @@
 import argparse
+import csv
 import io
 import json
+import os
 import sys
 import zipfile
 from pathlib import Path
 
 import requests
 
-KAGGLE_DATASET_URL = "https://www.kaggle.com/api/v1/datasets/download/elroytan/pokemondata"
+KAGGLE_DATASET_URL = (
+    "https://www.kaggle.com/api/v1/datasets/download/"
+    "patelris/pokemon-dataset-with-stats-and-types"
+)
+
+# Browser-like UA so Kaggle's static file endpoint serves the zip (no auth).
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data"
+DATA_DIR = Path(os.environ.get("DATASET_PATH", PROJECT_ROOT / "data"))
 RAW_DIR = DATA_DIR / "raw"
-RAW_POKEDEX = RAW_DIR / "complete_pokedex.json"
-SCHEMA_INSPECTION = RAW_DIR / "schema_inspection.json"
+POKEMON_CSV = RAW_DIR / "pokemon_complete.csv"
+TYPES_CSV = RAW_DIR / "pokemon_types.csv"
 CORPUS_FILE = DATA_DIR / "corpus.jsonl"
 
-# Required minimum field set - anything else must be mapped via .get() fallbacks.
-REQUIRED_FIELDS = ("id", "name", "types", "stats", "damage_taken")
-
-STAT_KEYS = ["hp", "attack", "defense", "special_attack", "special_defense", "speed"]
-DAMAGE_TAKEN_KEYS = [
-    "normal", "fire", "water", "electric", "grass", "ice", "fighting", "poison",
-    "ground", "flying", "psychic", "bug", "rock", "ghost", "dragon", "steel",
-    "dark", "fairy",
+# The 18 canonical types, in the order used for the "Type effectiveness"
+# rendering (standard gen-1 ordering used across the reference material).
+TYPE_ORDER = [
+    "normal", "fire", "water", "electric", "grass", "ice", "fighting",
+    "poison", "ground", "flying", "psychic", "bug", "rock", "ghost",
+    "dragon", "steel", "dark", "fairy",
 ]
+
+STAT_KEYS = [
+    "hp", "attack", "defense", "sp_attack", "sp_defense", "speed",
+    "base_stat_total",
+]
+
+
+def _validate_archive_body(content, content_type=""):
+    """Validate a downloaded body is a ZIP archive before we try to open it.
+
+    Kaggle's anonymous download endpoint is now bot-blocked and returns an
+    HTTP 200 HTML page (Google reCAPTCHA) instead of the zip, which would
+    otherwise crash later with an unhelpful BadZipFile. Raise SystemExit with
+    a clear, actionable FATAL message instead. Returns None on success.
+    """
+    if not content.startswith(b"PK"):
+        lower = content.lower()
+        if b"recaptcha" in lower:
+            raise SystemExit(
+                "FATAL: anonymous Kaggle dataset downloads are currently blocked "
+                "by a bot check (reCAPTCHA page returned instead of the archive). "
+                "Use the bundled raw CSVs already present in data/raw/ (they ship "
+                "with the repo - see docs/setup.md), or set KAGGLE_USERNAME and "
+                "KAGGLE_KEY env vars and retry."
+            )
+        raise SystemExit(
+            f"FATAL: unexpected response type (got {content_type or 'unknown'}, "
+            f"{len(content)} bytes); expected a ZIP archive."
+        )
 
 
 def download_archive(url=KAGGLE_DATASET_URL):
@@ -32,163 +70,146 @@ def download_archive(url=KAGGLE_DATASET_URL):
     # requests, and the signed GCS URL is never hardcoded - always go through it.
     print(f"Downloading archive from {url} ...")
     try:
-        resp = requests.get(url, allow_redirects=True, timeout=120)
+        resp = requests.get(
+            url, headers={"User-Agent": USER_AGENT}, allow_redirects=True,
+            timeout=120,
+        )
         resp.raise_for_status()
     except requests.RequestException as exc:
         raise SystemExit(f"FATAL: archive download failed: {exc}") from exc
     print(f"  HTTP {resp.status_code}, {len(resp.content)} bytes")
+    _validate_archive_body(resp.content, resp.headers.get("content-type", ""))
     return zipfile.ZipFile(io.BytesIO(resp.content))
 
 
-def inspect_archive(zf):
+def extract_raw_csvs():
+    # Idempotent on the raw cache: corpus.jsonl is a derived slice of it and is
+    # never a re-download, so the raw CSVs are the deterministic source.
+    if POKEMON_CSV.exists() and TYPES_CSV.exists():
+        print(f"Using cached raw CSVs: {POKEMON_CSV}, {TYPES_CSV}")
+        return
+
+    zf = download_archive()
     names = zf.namelist()
     print("Archive contents:")
     for name in names:
         print(f"  {name} ({zf.getinfo(name).file_size} bytes)")
-    pokedex_name = next(
-        (n for n in names if n.endswith(".json") and "pokedex" in n), None
-    )
-    if not pokedex_name:
-        raise SystemExit(
-            f"FATAL: no pokedex JSON found in archive (found: {names})"
-        )
-    return pokedex_name
 
-
-def write_schema_inspection(source_file, records):
-    # Snapshot the detected schema before any parse decisions are made.
-    detected = sorted(set().union(*(set(r.keys()) for r in records)))
-    inspection = {
-        "source_file": source_file,
-        "record_count": len(records),
-        "detected_fields": detected,
-        "required_fields_present": {f: all(f in r for r in records) for f in REQUIRED_FIELDS},
+    wanted = {
+        "pokemon_complete.csv": POKEMON_CSV,
+        "pokemon_types.csv": TYPES_CSV,
     }
-    SCHEMA_INSPECTION.parent.mkdir(parents=True, exist_ok=True)
-    SCHEMA_INSPECTION.write_text(
-        json.dumps(inspection, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    print(f"Wrote {SCHEMA_INSPECTION}")
-    print(
-        f"  record_count={len(records)} "
-        f"required_fields_present={inspection['required_fields_present']}"
-    )
-
-
-def load_raw_pokedex():
-    # Idempotent on the raw cache: corpus.jsonl is a derived slice of it and is
-    # never a re-download, so the raw file is the deterministic source.
-    if RAW_POKEDEX.exists():
-        print(f"Using cached raw dataset: {RAW_POKEDEX}")
-        with open(RAW_POKEDEX, encoding="utf-8") as f:
-            records = json.load(f)
-        if not SCHEMA_INSPECTION.exists():
-            write_schema_inspection(RAW_POKEDEX.name, records)
-        return records
-
-    zf = download_archive()
-    pokedex_name = inspect_archive(zf)
-    records = json.loads(zf.read(pokedex_name))
-    if not isinstance(records, list):
-        raise SystemExit(f"FATAL: expected a JSON list of records, got {type(records)}")
-
-    write_schema_inspection(pokedex_name, records)
-
     RAW_DIR.mkdir(parents=True, exist_ok=True)
-    RAW_POKEDEX.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
-    print(f"Persisted FULL raw dataset ({len(records)} records) to {RAW_POKEDEX}")
-    return records
+    for name in names:
+        base = Path(name).name
+        if base in wanted:
+            RAW_DIR.joinpath(base).write_bytes(zf.read(name))
+            print(f"Extracted {name} -> {RAW_DIR / base}")
 
-
-def parse_record(record):
-    # Fail loudly on a missing required field, listing the found keys - never a
-    # silently wrong parse.
-    found = set(record.keys())
-    missing = [f for f in REQUIRED_FIELDS if f not in record]
+    missing = [base for base in wanted if not wanted[base].exists()]
     if missing:
         raise SystemExit(
-            "FATAL: record is missing required fields "
-            f"{missing}. Found keys: {sorted(found)}"
+            f"FATAL: archive missing expected CSVs: {missing} (found: {names})"
         )
 
-    stats = record.get("stats") or {}
-    damage_taken = record.get("damage_taken") or {}
+
+def _int(value):
+    value = (value or "").strip()
+    return int(value) if value else None
+
+
+def _float(value):
+    value = (value or "").strip()
+    return float(value) if value else None
+
+
+def _bool(value):
+    return (value or "").strip().lower() == "true"
+
+
+def _list(value):
+    value = (value or "").strip()
+    return [item.strip() for item in value.split("|") if item.strip()] if value else []
+
+
+def _str_or_none(value):
+    value = (value or "").strip()
+    return value if value else None
+
+
+def parse_row(row):
+    # CSV cells are all strings; empty cells -> null / empty list. Numeric
+    # fields are parsed to int/float and never left as strings.
+    types = [row["type_1"].strip()]
+    if row["type_2"].strip():
+        types.append(row["type_2"].strip())
 
     return {
-        "id": int(record["id"]),
-        "name": str(record["name"]),
-        "category": str(record.get("category") or ""),
-        "generation": str(record.get("generation") or ""),
-        "is_legendary": bool(record.get("is_legendary", False)),
-        "is_mythical": bool(record.get("is_mythical", False)),
-        "types": [str(t) for t in (record.get("types") or [])],
-        "height": record.get("height"),
-        "weight": record.get("weight"),
-        "habitat": str(record.get("habitat") or ""),
-        "evolves_from": str(record.get("evolves_from") or ""),
-        "abilities": [str(a) for a in (record.get("abilities") or [])],
-        "stats": {k: stats.get(k) for k in STAT_KEYS},
-        "damage_taken": {k: damage_taken.get(k) for k in DAMAGE_TAKEN_KEYS},
-        "description": str(record.get("description") or ""),
+        "id": int(row["pokedex_number"]),
+        "name": row["name"].strip(),
+        "types": types,
+        "generation": row["generation"].strip(),
+        "stats": {k: _int(row[k]) for k in STAT_KEYS},
+        "height_m": _float(row["height_m"]),
+        "weight_kg": _float(row["weight_kg"]),
+        "abilities": _list(row["abilities"]),
+        "hidden_ability": _str_or_none(row["hidden_ability"]),
+        "egg_groups": _list(row["egg_groups"]),
+        "color": _str_or_none(row["color"]),
+        "shape": _str_or_none(row["shape"]),
+        "habitat": _str_or_none(row["habitat"]),
+        "growth_rate": _str_or_none(row["growth_rate"]),
+        "capture_rate": _int(row["capture_rate"]),
+        "base_happiness": _int(row["base_happiness"]),
+        "base_experience": _int(row["base_experience"]),
+        "genus": _str_or_none(row["genus"]),
+        "is_legendary": _bool(row["is_legendary"]),
+        "is_mythical": _bool(row["is_mythical"]),
+        "is_baby": _bool(row["is_baby"]),
+        "evolution_chain_id": _int(row["evolution_chain_id"]),
+        "flavor_text": row["flavor_text"].strip(),
+        "sprite_url": _str_or_none(row["sprite_url"]),
     }
 
 
-def _fmt(value, suffix=""):
-    if value is None:
-        return "unknown"
-    return f"{value}{suffix}"
+def load_raw_rows():
+    extract_raw_csvs()
+    with open(POKEMON_CSV, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
 
 
-def build_passage(p):
-    lines = [
-        f"Name: {p['name']}",
-        f"Category: {p['category'] or 'unknown'}",
-        f"Generation: {p['generation'] or 'unknown'}",
-        f"Legendary: {'Yes' if p['is_legendary'] else 'No'}",
-        f"Mythical: {'Yes' if p['is_mythical'] else 'No'}",
-        f"Types: {', '.join(p['types']) or 'unknown'}",
-        f"Height: {_fmt(p['height'], ' m')}",
-        f"Weight: {_fmt(p['weight'], ' kg')}",
-        f"Habitat: {p['habitat'] or 'unknown'}",
-        f"Evolves from: {p['evolves_from'] or 'None'}",
-        f"Abilities: {', '.join(p['abilities']) if p['abilities'] else 'unknown'}",
-    ]
-    stats = p["stats"]
-    stats_str = ", ".join(
-        f"{k.replace('_', ' ')} {v}" for k, v in stats.items() if v is not None
-    )
-    lines.append(f"Stats: {stats_str or 'unknown'}")
-    dt = p["damage_taken"]
-    dt_str = ", ".join(f"{k} {v}" for k, v in dt.items() if v is not None)
-    lines.append(f"damage_taken: {dt_str or 'unknown'}")
-    if p["description"]:
-        lines.append(f"Description: {p['description']}")
-    return "\n".join(lines)
-
-
-def build_corpus(records, limit):
-    records = sorted(records, key=lambda r: r["id"])
-    selected = records if limit is None else records[:limit]
-    return [{"id": p["id"], "passage": build_passage(p)} for p in (parse_record(r) for r in selected)]
+def build_corpus(rows, limit):
+    parsed = [parse_row(r) for r in rows]
+    parsed.sort(key=lambda r: r["id"])
+    if limit is not None:
+        parsed = parsed[:limit]
+    return parsed
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Build data/corpus.jsonl from the Pokémon dataset (elroytan/pokemondata). Defaults to the FULL 1,025-record dataset."
+        description=(
+            "Build data/corpus.jsonl from the Pokémon CSV dataset "
+            "(patelris/pokemon-dataset-with-stats-and-types). "
+            "Defaults to the FULL 1,350-record dataset."
+        )
     )
-    parser.add_argument("--limit", type=int, default=None, help="Write only the first N records by id (default: all 1,025; dev runs typically use --limit 50)")
+    parser.add_argument(
+        "--limit", type=int, default=None,
+        help="Write only the first N records by id (default: all 1,350; "
+             "dev runs typically use --limit 50)",
+    )
     args = parser.parse_args(argv)
 
-    limit = args.limit
-
-    records = load_raw_pokedex()
-    rows = build_corpus(records, limit)
+    rows = load_raw_rows()
+    corpus = build_corpus(rows, args.limit)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with open(CORPUS_FILE, "w", encoding="utf-8") as f:
-        f.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
-    print(f"Wrote {len(rows)} passages to {CORPUS_FILE}")
+        f.writelines(
+            json.dumps(record, ensure_ascii=False) + "\n" for record in corpus
+        )
+    print(f"Wrote {len(corpus)} records to {CORPUS_FILE}")
     return 0
 
 

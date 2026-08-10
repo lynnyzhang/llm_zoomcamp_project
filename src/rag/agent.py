@@ -112,8 +112,9 @@ POKEMON_TYPE_NAMES = frozenset({
     "dragon", "steel", "dark", "fairy",
 })
 
-# Dex numbers 1..1025 (whole numbers only) and the "stat(s)" vocabulary term.
-_DEX_NUMBER_RE = re.compile(r"\b(?:[1-9][0-9]{0,2}|10[0-2][0-5])\b")
+# Dex numbers 1..99999 (whole numbers only, covering standard 1..1025 plus
+# alt-form ids 10001..10325) and the "stat(s)" vocabulary term.
+_DEX_NUMBER_RE = re.compile(r"\b(?:[1-9][0-9]{0,4})\b")
 _STAT_TERM_RE = re.compile(r"\bstat(?:s)?\b")
 
 

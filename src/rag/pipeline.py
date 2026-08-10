@@ -1,5 +1,5 @@
 # RAGBase: search → build context → prompt → LLM answer, using HybridSearch
-# (keyword + vector) over documents with 'content'/'title'/'section' fields.
+# (keyword + vector) over documents with 'search_text' fields.
 
 from src.llm import create_client, get_model
 
@@ -43,18 +43,10 @@ class RAGBase:
         return self.search_index.search(query, num_results=num_results)
 
     def build_context(self, search_results):
-        lines = []
+        blocks = []
         for doc in search_results:
-            section = doc.get("section", "")
-            title = doc.get("title", "")
-            content = doc.get("content", "")
-            if section:
-                lines.append(f"SECTION: {section}")
-            if title:
-                lines.append(f"TITLE: {title}")
-            lines.append(f"CONTENT: {content}")
-            lines.append("")
-        return "\n".join(lines).strip()
+            blocks.append(doc.get("search_text", ""))
+        return "\n\n".join(b for b in blocks if b).strip()
 
     def build_prompt(self, query, search_results):
         context = self.build_context(search_results)

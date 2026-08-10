@@ -42,7 +42,7 @@ Each response includes:
 - Proportion of search iterations that found sufficient results (70%)
 - Efficiency bonus for finding results in fewer iterations (30%)
 
-**Pokémon Cards** — Retrieved documents render as cards with official artwork (PokeAPI sprites), the Pokémon's name and types, and a stats excerpt. Only Pokémon named in the question are shown — questions that name no Pokémon get no cards. Artwork that fails to load degrades gracefully — the card still shows the title.
+**Pokémon Cards** — Retrieved documents render as cards with official artwork (sprite URLs from the dataset, PokeAPI fallback), the Pokémon's name and types, and a stats excerpt. Only Pokémon named in the question are shown — questions that name no Pokémon get no cards. Artwork that fails to load degrades gracefully — the card still shows the title.
 
 **Feedback Buttons** — Thumbs up/down to record whether the answer was helpful. Feedback is attached to the exact tracing span for the message and shows up in monitoring.
 

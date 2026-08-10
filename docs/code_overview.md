@@ -31,8 +31,8 @@ Three layers: **data** (build the index), **runtime** (answer questions),
 | Module | Function | Job |
 |---|---|---|
 | `src/data/download_model.py` | `download()` | Fetch ONNX tokenizer + model into `models/` |
-| `src/data/ingest.py` | `download_archive()`, `load_raw_pokedex()`, `parse_record()`, `main()` | Fetch Kaggle Pokémon dataset, cache the raw 1,025-record Pokédex, write one structured passage per Pokémon to `data/corpus.jsonl` (full dataset: all 1,025 by default; `--limit N` for a subset) |
-| `src/data/chunker.py` | `estimate_tokens()`, `split_passage()`, `generate_metadata()`, `process_corpus()`, `main()` | Split each corpus passage into documents with exact `id` linkage (`{pokemon_id}_{n}` never used — eval depends on pure ids), write `data/documents.jsonl` |
+| `src/data/ingest.py` | `download_archive()`, `extract_raw_csvs()`, `parse_row()`, `load_raw_rows()`, `build_corpus()`, `main()` | Fetch Kaggle Pokémon dataset (patelris/pokemon-dataset-with-stats-and-types), cache both raw CSVs (`pokemon_complete.csv`, `pokemon_types.csv`), write one structured record per Pokémon to `data/corpus.jsonl` (full dataset: all 1,350 by default; `--limit N` for a subset) |
+| `src/data/chunker.py` | `load_type_chart()`, `build_evolution_map()`, `type_effectiveness()`, `build_search_text()`, `build_pokemon_doc()`, `_type_chart_doc()`, `main()` | Build one Pokémon-native document per record with pure-int `id` linkage (eval depends on exact ids), derive `type_effectiveness` (18 multipliers from the type chart) and `evolves_from`/`evolves_into` (chain id + dex order), append 18 type-chart documents, write `data/chunks/documents.jsonl` |
 
 **Call chain:** `ingest.main()` writes `corpus.jsonl` → `chunker.main()` reads it
 and writes `documents.jsonl`. Both are one-shot CLI scripts (`python -m
@@ -106,7 +106,7 @@ spans → exporters persist → `dashboard.py` reads back via `get_traces_db_pat
 3. **Feedback round-trip:** UI → `record_feedback(span_id)` → span store →
    dashboard "feedback distribution" panel — the only user input that flows
    back into monitoring.
-4. **Dev subset discipline:** `ingest.py` builds the full 1,025-record corpus by default; `generate_qa.py`'s coverage-sampled dev subset (50 records → 250 QA) keeps every automated run cheap; full-data QA runs are manual (`--full`), per user directive.
+4. **Dev subset discipline:** `ingest.py` builds the full 1,350-record corpus by default; `generate_qa.py`'s coverage-sampled dev subset (50 records → 250 QA) keeps every automated run cheap; full-data QA runs are manual (`--full`), per user directive.
 5. **Guardrail contract:** `RAGAgent` returns `rejected:true` with zero
    searches for out-of-scope queries (verified by tests asserting
    `searches == []`), and the app renders a warning banner instead of cards —

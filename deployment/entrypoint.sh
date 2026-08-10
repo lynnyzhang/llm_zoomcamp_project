@@ -37,9 +37,29 @@ echo "============================================="
 echo " LLM Zoomcamp Capstone - Starting Pipeline"
 echo "============================================="
 
+# Step 0: Seed the mounted data volume from the bundled CSVs (Kaggle anonymous
+# downloads are bot-blocked). The compose mount (/app/data) is a named volume
+# that masks image contents, so the seed lives at /app/data_seed/raw/ and is
+# copied into the volume here.
+echo ""
+echo "[0/7] Seeding bundled Pokémon dataset..."
+if [ ! -f "$DATA_DIR/raw/pokemon_complete.csv" ]; then
+    if [ -f "/app/data_seed/raw/pokemon_complete.csv" ]; then
+        mkdir -p "$DATA_DIR/raw"
+        cp /app/data_seed/raw/pokemon_complete.csv "$DATA_DIR/raw/pokemon_complete.csv"
+        cp /app/data_seed/raw/pokemon_types.csv "$DATA_DIR/raw/pokemon_types.csv"
+        echo "  Seeded bundled CSVs into $DATA_DIR/raw/."
+    else
+        echo "  WARNING: bundled seed CSVs not found in /app/data_seed/raw/;"
+        echo "  will try to download the dataset in the next step."
+    fi
+else
+    echo "  Dataset already present, skipping seed."
+fi
+
 # Step 1: Download Pokémon dataset
 echo ""
-echo "[1/6] Downloading Pokémon dataset..."
+echo "[1/7] Downloading Pokémon dataset..."
 if [ -f "$CORPUS_FILE" ]; then
     echo "  Dataset already exists, skipping download."
 else
@@ -52,7 +72,7 @@ fi
 
 # Step 2: Process and chunk documents
 echo ""
-echo "[2/6] Processing and chunking documents..."
+echo "[2/7] Processing and chunking documents..."
 if [ -f "$DOCUMENTS_FILE" ]; then
     echo "  Chunks already exist, skipping processing."
 else
@@ -65,7 +85,7 @@ fi
 
 # Step 3: Download ONNX embedding model
 echo ""
-echo "[3/6] Downloading ONNX embedding model..."
+echo "[3/7] Downloading ONNX embedding model..."
 if [ -f "$EMBEDDER_MODEL_PATH/model.onnx" ] && [ -f "$EMBEDDER_MODEL_PATH/tokenizer.json" ]; then
     echo "  Model already exists, skipping download."
 else
@@ -78,7 +98,7 @@ fi
 
 # Step 4: Build search indices (pre-download model)
 echo ""
-echo "[4/6] Building search indices..."
+echo "[4/7] Building search indices..."
 uv run python -c "
 from src.search.hybrid import HybridSearch
 import os
@@ -96,7 +116,7 @@ else:
 
 # Step 5: Initialize monitoring database
 echo ""
-echo "[5/6] Initializing monitoring database..."
+echo "[5/7] Initializing monitoring database..."
 mkdir -p "$DATA_DIR"
 uv run python -c "
 import sqlite3
@@ -131,7 +151,7 @@ print('  Monitoring database initialized.')
 
 # Step 6: Launch Streamlit app
 echo ""
-echo "[6/6] Launching Streamlit app..."
+echo "[6/7] Launching Streamlit app..."
 echo "============================================="
 echo " Pipeline complete! Starting Streamlit..."
 echo "============================================="

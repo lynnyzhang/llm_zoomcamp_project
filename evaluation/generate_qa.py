@@ -2,6 +2,7 @@
 # questions with answers grounded in the record.
 
 import argparse
+import csv
 import json
 import random
 import re
@@ -19,8 +20,16 @@ from src.llm import create_client, get_model
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
-RAW_POKEDEX = DATA_DIR / "raw" / "complete_pokedex.json"
+RAW_POKEMON_CSV = DATA_DIR / "raw" / "pokemon_complete.csv"
+RAW_TYPES_CSV = DATA_DIR / "raw" / "pokemon_types.csv"
 QA_FILE = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
+
+# The 18 Pokémon types, used as keys for type_effectiveness.
+TYPE_KEYS = [
+    "normal", "fire", "water", "electric", "grass", "ice", "fighting", "poison",
+    "ground", "flying", "psychic", "bug", "rock", "ghost", "dragon", "steel",
+    "dark", "fairy",
+]
 
 # PLAN DEVIATION (documented, 2026-08-07): the plan calls for max_workers 6,
 # but the local llama-server degrades under concurrent load — measured: 6
@@ -33,8 +42,8 @@ MAX_WORKERS = 2
 DATA_GEN_INSTRUCTIONS = """
 You emulate a Pokémon fan asking questions on the internet.
 Formulate 5 natural questions this fan might ask based on this Pokémon record
-(stats, types, weaknesses, abilities, evolution). The record must contain the
-answer. Not too formal, not too short, not too long.
+(stats, types, type effectiveness, abilities, evolution). The record must
+contain the answer. Not too formal, not too short, not too long.
 For each question also provide the answer grounded in the record.
 
 Respond with a single JSON object in exactly this format (no markdown, no
@@ -52,8 +61,8 @@ DEV_SUBSET_SEED = 42
 FILL_INSTRUCTIONS = """
 You emulate a Pokémon fan asking questions on the internet.
 Formulate exactly {needed} additional natural questions this fan might ask
-based on this Pokémon record (stats, types, weaknesses, abilities, evolution),
-along with answers grounded in the record. Do not repeat questions already
+based on this Pokémon record (stats, types, type effectiveness, abilities,
+evolution), along with answers grounded in the record. Do not repeat questions already
 asked. Not too formal, not too short, not too long.
 
 Respond with a single JSON object in exactly this format (no markdown, no
@@ -221,15 +230,144 @@ def generate_for_record(pokemon_id, record, client, model, use_parse, target_pai
     return rows[:target_pairs]
 
 
-def load_raw_records():
-    if not RAW_POKEDEX.exists():
+def _csv_bool(value):
+    """Parse CSV boolean columns ("True"/"False" or 1/0/yes/no) to bool."""
+    return (value or "").strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _csv_int(value, default=None):
+    value = (value or "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _csv_float(value, default=None):
+    value = (value or "").strip()
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def _list_from_pipe(value):
+    """Split a pipe-separated CSV cell into a non-empty list of trimmed items."""
+    value = (value or "").strip()
+    if not value:
+        return []
+    return [item.strip() for item in value.split("|") if item.strip()]
+
+
+def _types_from_row(row):
+    types = []
+    for key in ("type_1", "type_2"):
+        t = (row.get(key) or "").strip()
+        if t and t not in types:
+            types.append(t)
+    return types
+
+
+def load_type_chart():
+    """Parse data/raw/pokemon_types.csv into {TypeName: {effect: [types]}}."""
+    if not RAW_TYPES_CSV.exists():
         raise SystemExit(
-            f"FATAL: raw pokedex cache missing at {RAW_POKEDEX}. "
+            f"FATAL: raw type chart CSV missing at {RAW_TYPES_CSV}. "
             "Run `uv run python -m src.data.ingest` first."
         )
-    with open(RAW_POKEDEX, encoding="utf-8") as f:
-        records = json.load(f)
-    return {int(record["id"]): record for record in records}
+    chart = {}
+    with open(RAW_TYPES_CSV, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            t = (row.get("type") or "").strip()
+            chart[t] = {
+                "double_damage_to": _list_from_pipe(row.get("double_damage_to")),
+                "half_damage_to": _list_from_pipe(row.get("half_damage_to")),
+                "no_damage_to": _list_from_pipe(row.get("no_damage_to")),
+                "double_damage_from": _list_from_pipe(row.get("double_damage_from")),
+                "half_damage_from": _list_from_pipe(row.get("half_damage_from")),
+                "no_damage_from": _list_from_pipe(row.get("no_damage_from")),
+            }
+    return chart
+
+
+def compute_type_effectiveness(types, chart):
+    """Type-chart damage taken per attacking type for a Pokémon's types.
+
+    For each defending type, an attacker type in its *_from lists multiplies the
+    damage (2x / 0.5x / 0x); a Pokémon's total effectiveness is the product over
+    its types. Returns a dict of 18 lowercase type keys -> float multiplier.
+    """
+    mult = {t: 1.0 for t in TYPE_KEYS}
+    for t in types:
+        entry = chart.get(t) or {}
+        for a in entry.get("double_damage_from") or []:
+            mult[a.lower()] *= 2.0
+        for a in entry.get("half_damage_from") or []:
+            mult[a.lower()] *= 0.5
+        for a in entry.get("no_damage_from") or []:
+            mult[a.lower()] *= 0.0
+    return {t: mult[t] for t in TYPE_KEYS}
+
+
+def _build_record(row, chart):
+    """Map a pokemon_complete.csv row onto the Pokémon-native record schema."""
+    types = _types_from_row(row)
+    return {
+        "id": int(row["pokedex_number"]),
+        "name": row.get("name") or "",
+        "types": types,
+        "generation": row.get("generation") or "",
+        "stats": {
+            "hp": _csv_int(row.get("hp")),
+            "attack": _csv_int(row.get("attack")),
+            "defense": _csv_int(row.get("defense")),
+            "sp_attack": _csv_int(row.get("sp_attack")),
+            "sp_defense": _csv_int(row.get("sp_defense")),
+            "speed": _csv_int(row.get("speed")),
+            "base_stat_total": _csv_int(row.get("base_stat_total")),
+        },
+        "height_m": _csv_float(row.get("height_m")),
+        "weight_kg": _csv_float(row.get("weight_kg")),
+        "base_experience": _csv_int(row.get("base_experience")),
+        "abilities": _list_from_pipe(row.get("abilities")),
+        "hidden_ability": row.get("hidden_ability") or "",
+        "egg_groups": _list_from_pipe(row.get("egg_groups")),
+        "color": row.get("color") or "",
+        "shape": row.get("shape") or "",
+        "habitat": row.get("habitat") or "",
+        "growth_rate": row.get("growth_rate") or "",
+        "capture_rate": _csv_int(row.get("capture_rate")),
+        "base_happiness": _csv_int(row.get("base_happiness")),
+        "genus": row.get("genus") or "",
+        "is_legendary": _csv_bool(row.get("is_legendary")),
+        "is_mythical": _csv_bool(row.get("is_mythical")),
+        "is_baby": _csv_bool(row.get("is_baby")),
+        "evolution_chain_id": _csv_int(row.get("evolution_chain_id")),
+        "flavor_text": row.get("flavor_text") or "",
+        "sprite_url": row.get("sprite_url") or "",
+        "type_effectiveness": compute_type_effectiveness(types, chart),
+    }
+
+
+def load_raw_records():
+    if not RAW_POKEMON_CSV.exists():
+        raise SystemExit(
+            f"FATAL: raw pokemon CSV missing at {RAW_POKEMON_CSV}. "
+            "Run `uv run python -m src.data.ingest` first."
+        )
+    chart = load_type_chart()
+    records = {}
+    with open(RAW_POKEMON_CSV, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            record = _build_record(row, chart)
+            records[int(record["id"])] = record
+    return records
 
 
 def select_dev_subset(records, size=DEV_SUBSET_SIZE, seed=DEV_SUBSET_SEED):

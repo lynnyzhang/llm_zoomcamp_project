@@ -170,16 +170,19 @@ def _filter_docs_by_question(unique_docs, question):
     matched = []
 
     for doc in unique_docs:
-        title = doc.get("title", "")
-        # Strip trailing " (#<id>)" to get the plain Pokémon name.
-        name = re.sub(r"\s*\(#[0-9]+\)\s*$", "", title).strip().lower()
-        if name and name in question_lower:
+        name = doc.get("name", "")
+        if name and name.lower() in question_lower:
             matched.append(doc)
 
     return matched
 
 
 def _doc_artwork_url(doc):
+    sprite_url = doc.get("sprite_url")
+    if sprite_url:
+        return sprite_url
+    # Fallback: build the PokeAPI official-artwork URL from the numeric part of
+    # the id (used when a doc has no sprite_url, e.g. type-chart docs).
     doc_id = str(doc.get("id", ""))
     pokemon_id = re.sub(r"\D", "", doc_id)
     if not pokemon_id:
@@ -190,13 +193,41 @@ def _doc_artwork_url(doc):
     )
 
 
-def _stats_excerpt(content, limit=200):
-    if not content:
+def _stats_excerpt(doc, limit=200):
+    # Type-chart docs carry no stats.
+    if doc.get("kind") == "type_chart":
         return ""
-    stats_idx = content.lower().find("stats:")
-    if stats_idx != -1:
-        return content[stats_idx:stats_idx + limit].strip()
-    return content.strip()[:limit]
+    stats = doc.get("stats") or {}
+    if not stats:
+        return ""
+    parts = [
+        f"hp {stats.get('hp', 0)}",
+        f"attack {stats.get('attack', 0)}",
+        f"defense {stats.get('defense', 0)}",
+        f"sp. attack {stats.get('sp_attack', 0)}",
+        f"sp. defense {stats.get('sp_defense', 0)}",
+        f"speed {stats.get('speed', 0)}",
+    ]
+    return ", ".join(parts)[:limit]
+
+
+def _card_title(doc):
+    if doc.get("kind") == "type_chart":
+        return f"{doc.get('type') or 'Unknown'} type chart"
+    name = doc.get("name", "Untitled")
+    doc_id = doc.get("id")
+    if isinstance(doc_id, int):
+        return f"{name} (#{doc_id})"
+    return name
+
+
+def _card_caption(doc):
+    if doc.get("kind") == "type_chart":
+        return "Type chart"
+    types = doc.get("types") or []
+    if types:
+        return " + ".join(types)
+    return "unknown"
 
 
 def _pokemon_card_grid(docs):
@@ -207,7 +238,7 @@ def _pokemon_card_grid(docs):
         columns = st.columns(4)
         for col, doc in zip(columns, row_docs):
             with col:
-                title = doc.get("title", "Untitled")
+                title = _card_title(doc)
                 artwork_url = _doc_artwork_url(doc)
                 if artwork_url:
                     # Broken/404 artwork must not break the card — the title
@@ -215,10 +246,10 @@ def _pokemon_card_grid(docs):
                     with contextlib.suppress(Exception):
                         st.image(artwork_url, width="stretch")
                 st.markdown(f"**{title}**")
-                section = doc.get("section", "")
-                if section:
-                    st.caption(f"Section: {section}")
-                excerpt = _stats_excerpt(doc.get("content", ""))
+                caption = _card_caption(doc)
+                if caption:
+                    st.caption(caption)
+                excerpt = _stats_excerpt(doc)
                 if excerpt:
                     st.caption(excerpt)
 

@@ -66,14 +66,14 @@ class HybridSearch:
 
         # keyword index
         self.keyword_index = Index(
-            text_fields=["content", "title"],
-            keyword_fields=["section", "id"],
+            text_fields=["search_text", "name"],
+            keyword_fields=["id", "types", "kind"],
         )
         self.keyword_index.fit(self.documents)
 
         # vector index
         self.embedder = Embedder(model_path)
-        texts = [doc["content"] for doc in self.documents]
+        texts = [doc["search_text"] for doc in self.documents]
         self.embeddings = self.embedder.encode_batch(texts, normalize=True)
         self.vector_index = VectorSearch()
         self.vector_index.fit(self.embeddings, self.documents)
@@ -137,6 +137,6 @@ if __name__ == "__main__":
         print(f"\n--- Query: {q} ---")
         results = hybrid.search(q, num_results=3)
         for i, r in enumerate(results, 1):
-            print(f"  {i}. [{r['id']}] {r['title'][:80]}  (score: {r.get('score', 'N/A'):.6f})")
+            print(f"  {i}. [{r['id']}] {r.get('name', r['search_text'])[:80]}  (score: {r.get('score', 'N/A'):.6f})")
 
     print("\nHybrid search index built and tested successfully.")

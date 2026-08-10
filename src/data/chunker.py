@@ -1,158 +1,249 @@
+import csv
 import json
-import threading
+from collections import defaultdict
 from pathlib import Path
 
-# Token estimation: ~4 chars per token (rough approximation for English text)
+# One Pokémon per document by design (content is short - a single labeled
+# record), so no real chunk splitting happens. This constant is kept only as
+# documentation of the intended token budget for the flat search_text rendering.
 CHARS_PER_TOKEN = 4
-MIN_TOKENS = 500
-MAX_TOKENS = 1000
 
-# Official artwork URL pattern (PokeAPI sprites; verified 200 for ids 1..1025).
-ARTWORK_URL = (
-    'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/'
-    'pokemon/other/official-artwork/{pokemon_id}.png'
-)
+# The 18 canonical attacker types, in the order used for the
+# "Type effectiveness" rendering (standard gen-1 ordering).
+TYPE_ORDER = [
+    "normal", "fire", "water", "electric", "grass", "ice", "fighting",
+    "poison", "ground", "flying", "psychic", "bug", "rock", "ghost",
+    "dragon", "steel", "dark", "fairy",
+]
 
-_POKEDEX_PATH = Path(__file__).parent.parent.parent / 'data' / 'raw' / 'complete_pokedex.json'
-_POKEDEX = None
-_POKEDEX_LOCK = threading.Lock()
+# Canonical Pokédex range; ids above this are alternate forms (Deoxys-Attack,
+# Rotom-Heat, ...) which never participate in evolution linkage.
+CANONICAL_MAX_ID = 1025
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_CORPUS_PATH = _PROJECT_ROOT / "data" / "corpus.jsonl"
+_TYPES_CSV_PATH = _PROJECT_ROOT / "data" / "raw" / "pokemon_types.csv"
+_OUTPUT_PATH = _PROJECT_ROOT / "data" / "chunks" / "documents.jsonl"
 
-def _get_pokedex():
-    global _POKEDEX
-    if _POKEDEX is None:
-        with _POKEDEX_LOCK:
-            if _POKEDEX is None:
-                try:
-                    with open(_POKEDEX_PATH, 'r', encoding='utf-8') as f:
-                        _POKEDEX = {record['id']: record for record in json.load(f)}
-                except FileNotFoundError as exc:
-                    raise FileNotFoundError(
-                        f'Missing raw pokedex cache at {_POKEDEX_PATH}. '
-                        'Run `uv run python -m src.data.ingest` first.'
-                    ) from exc
-    return _POKEDEX
+_TYPE_CHART_FIELDS = [
+    "double_damage_to",
+    "half_damage_to",
+    "no_damage_to",
+    "double_damage_from",
+    "half_damage_from",
+    "no_damage_from",
+]
 
 
-def estimate_tokens(text):
-    return len(text) // CHARS_PER_TOKEN
+def load_type_chart(path):
+    """Load pokemon_types.csv into {lowercase_type: {field: [lowercase, ...]}}."""
+    chart = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            t = row["type"].strip().lower()
+            chart[t] = {
+                field: [
+                    item.strip().lower()
+                    for item in row[field].split("|")
+                    if item.strip()
+                ]
+                for field in _TYPE_CHART_FIELDS
+            }
+    return chart
 
 
-def re_chunk_passage(passage, min_tokens=MIN_TOKENS, max_tokens=MAX_TOKENS):
-    tokens = estimate_tokens(passage)
+def _type_chart_doc(chart, t):
+    """Build one Part B type-chart document from a chart row key `t`."""
+    title = t.capitalize()
 
-    # If within limits, return as-is
-    if tokens <= max_tokens:
-        return [passage]
+    def render_list(value):
+        return ", ".join(v.capitalize() for v in value) if value else "[none]"
 
-    # Split on sentence boundaries
-    sentences = []
-    current = []
-    for char in passage:
-        current.append(char)
-        if char in '.!?' and len(current) > 10:
-            sentences.append(''.join(current).strip())
-            current = []
-    if current:
-        sentences.append(''.join(current).strip())
+    def render_dir(field):
+        return render_list(chart[t][field])
 
-    # Merge sentences into chunks
-    chunks = []
-    current_chunk = []
-    current_tokens = 0
+    search_text = (
+        f"Type chart: {title}. {title} moves deal 2x damage to "
+        f"{render_dir('double_damage_to')}; 0.5x damage to "
+        f"{render_dir('half_damage_to')}; no effect on "
+        f"{render_dir('no_damage_to')}. {title} Pokémon take 2x damage from "
+        f"{render_dir('double_damage_from')}; 0.5x from "
+        f"{render_dir('half_damage_from')}; no damage from "
+        f"{render_dir('no_damage_from')}."
+    )
 
-    for sentence in sentences:
-        sentence_tokens = estimate_tokens(sentence)
-
-        # If adding this sentence would exceed max, finalize current chunk
-        if current_tokens + sentence_tokens > max_tokens and current_chunk:
-            chunks.append(' '.join(current_chunk))
-            current_chunk = []
-            current_tokens = 0
-
-        current_chunk.append(sentence)
-        current_tokens += sentence_tokens
-
-    # Add final chunk
-    if current_chunk:
-        chunks.append(' '.join(current_chunk))
-
-    # Merge very small final chunks
-    if len(chunks) > 1 and estimate_tokens(chunks[-1]) < min_tokens:
-        chunks[-2] = chunks[-2] + ' ' + chunks[-1]
-        chunks.pop()
-
-    return chunks if chunks else [passage]
+    doc = {"id": f"type_{t}", "kind": "type_chart", "type": title}
+    for field in _TYPE_CHART_FIELDS:
+        doc[field] = [v.capitalize() for v in chart[t][field]]
+    doc["search_text"] = search_text
+    return doc
 
 
-def generate_metadata(passage_id, chunk_index, total_chunks):
-    record = _get_pokedex().get(passage_id)
-    if record is None:
-        return {
-            'title': f'Pokémon #{passage_id}',
-            'section': 'unknown',
-            'url': ARTWORK_URL.format(pokemon_id=passage_id),
-        }
-    types = '+'.join(record.get('types', []))
-    section = types if types else record.get('generation', 'unknown')
-    return {
-        'title': f"{record['name'].capitalize()} (#{passage_id})",
-        'section': section,
-        'url': ARTWORK_URL.format(pokemon_id=passage_id),
-    }
+def build_evolution_map(corpus):
+    """Map evolution_chain_id -> sorted list of canonical member records.
+
+    Only canonical dex ids (<= CANONICAL_MAX_ID) are considered members, and
+    members are ordered by dex id ascending.
+    """
+    chains = defaultdict(list)
+    for record in corpus:
+        if record["id"] > CANONICAL_MAX_ID:
+            continue
+        chains[record["evolution_chain_id"]].append(record)
+    for members in chains.values():
+        members.sort(key=lambda r: r["id"])
+    return chains
 
 
-def process_corpus(input_path, output_path):
-    with open(input_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            record = json.loads(line.strip())
-            passage = record['passage']
-            passage_id = record['id']
+def _evolution_linkage(record, chain):
+    """Return (evolves_from, evolves_into) for a record within its chain."""
+    if record["id"] > CANONICAL_MAX_ID or not chain:
+        return None, []
+    names = [r["name"] for r in chain]
+    idx = next(
+        (i for i, r in enumerate(chain) if r["id"] == record["id"]), None
+    )
+    if idx is None:
+        return None, []
+    evolves_from = names[idx - 1] if idx > 0 else None
+    evolves_into = names[idx + 1:]
+    return evolves_from, evolves_into
 
-            # A re-chunk split would yield suffixed ids "{id}_{n}" and break
-            # eval exact-id linkage (review M4) - never split: keep ONE doc
-            # per Pokémon (truncated to fit) so every id is a pure integer.
-            chunks = re_chunk_passage(passage)
-            if len(chunks) > 1:
-                chunks = [chunks[0]]
 
-            for chunk_index, chunk in enumerate(chunks):
-                metadata = generate_metadata(passage_id, chunk_index, len(chunks))
-                yield {
-                    'id': str(passage_id),
-                    'title': metadata['title'],
-                    'content': chunk,
-                    'section': metadata['section'],
-                    'url': metadata['url'],
-                }
+def _chain_render(record, chain):
+    """Render the 'Evolution chain' line of search_text for a record."""
+    if record["id"] > CANONICAL_MAX_ID or not chain:
+        return "Evolution chain: none"
+    names = [r["name"] for r in chain]
+    if len(names) < 2:
+        return f"Evolution chain: {record['evolution_chain_id']} (single member)"
+    path = " -> ".join(names)
+    return (
+        f"Evolution chain: {record['evolution_chain_id']} ({path}) [derived]"
+    )
+
+
+def type_effectiveness(record, chart):
+    """Multiplier each attacker type deals to this Pokémon.
+
+    For each of the 18 attacker types: product over the Pokémon's types t of
+    2.0 if attacker in chart[t].double_damage_from, 0.5 if in half_damage_from,
+    0.0 if in no_damage_from, else 1.0.
+    """
+    result = {}
+    for attacker in TYPE_ORDER:
+        mult = 1.0
+        for t in record["types"]:
+            row = chart[t.lower()]
+            if attacker in row["double_damage_from"]:
+                mult *= 2.0
+            elif attacker in row["half_damage_from"]:
+                mult *= 0.5
+            elif attacker in row["no_damage_from"]:
+                mult *= 0.0
+        result[attacker] = mult
+    return result
+
+
+def _yes_no(value):
+    return "yes" if value else "no"
+
+
+def build_search_text(record, chart, chain):
+    """The flat labeled rendering used for embedding + keyword search."""
+    stats = record["stats"]
+    abilities = ", ".join(record["abilities"]) if record["abilities"] else "none"
+    if record["hidden_ability"]:
+        abilities += f"; hidden: {record['hidden_ability']}"
+
+    eff = type_effectiveness(record, chart)
+    eff_str = ", ".join(f"{k} {v}" for k, v in eff.items())
+
+    lines = [
+        f"Pokémon: {record['name']} (#{record['id']})",
+        f"Genus: {record['genus']}",
+        f"Types: {', '.join(record['types'])}",
+        f"Generation: {record['generation']}",
+        f"Height: {record['height_m']} m",
+        f"Weight: {record['weight_kg']} kg",
+        f"Abilities: {abilities}",
+        f"Egg groups: {', '.join(record['egg_groups'])}",
+        f"Color: {record['color']}",
+        f"Shape: {record['shape']}",
+    ]
+    if record["habitat"]:
+        lines.append(f"Habitat: {record['habitat']}")
+    lines.append(f"Growth rate: {record['growth_rate']}")
+    lines.append(f"Capture rate: {record['capture_rate']}")
+    lines.append(f"Base happiness: {record['base_happiness']}")
+    if record["base_experience"] is not None:
+        lines.append(f"Base experience: {record['base_experience']}")
+    lines.append(
+        f"Stats: hp {stats['hp']}, attack {stats['attack']}, "
+        f"defense {stats['defense']}, sp. attack {stats['sp_attack']}, "
+        f"sp. defense {stats['sp_defense']}, speed {stats['speed']}, "
+        f"total {stats['base_stat_total']}"
+    )
+    lines.append(
+        f"Flags: legendary {_yes_no(record['is_legendary'])}, "
+        f"mythical {_yes_no(record['is_mythical'])}, "
+        f"baby {_yes_no(record['is_baby'])}"
+    )
+    lines.append(_chain_render(record, chain))
+    lines.append(f"Type effectiveness: {eff_str}")
+    lines.append(f"Flavor text: {record['flavor_text']}")
+    return "\n".join(lines)
+
+
+def build_pokemon_doc(record, chart, chain):
+    evolves_from, evolves_into = _evolution_linkage(record, chain)
+    doc = dict(record)
+    doc["evolves_from"] = evolves_from
+    doc["evolves_into"] = evolves_into
+    doc["type_effectiveness"] = type_effectiveness(record, chart)
+    doc["search_text"] = build_search_text(record, chart, chain)
+    return doc
 
 
 def main():
-    project_root = Path(__file__).parent.parent.parent
-    input_path = project_root / 'data' / 'corpus.jsonl'
-    output_path = project_root / 'data' / 'chunks' / 'documents.jsonl'
-
-    if not input_path.exists():
+    if not _CORPUS_PATH.exists():
         raise FileNotFoundError(
-            f'Missing corpus at {input_path}. Run `uv run python -m src.data.ingest` first.'
+            f"Missing corpus at {_CORPUS_PATH}. "
+            "Run `uv run python -m src.data.ingest` first."
+        )
+    if not _TYPES_CSV_PATH.exists():
+        raise FileNotFoundError(
+            f"Missing type chart at {_TYPES_CSV_PATH}. "
+            "Run `uv run python -m src.data.ingest` first."
         )
 
-    # Create output directory
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(_CORPUS_PATH, encoding="utf-8") as f:
+        corpus = [json.loads(line) for line in f if line.strip()]
 
-    # Process and save
-    docs = list(process_corpus(input_path, output_path))
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.writelines(json.dumps(doc, ensure_ascii=False) + '\n' for doc in docs)
+    chart = load_type_chart(_TYPES_CSV_PATH)
+    chains = build_evolution_map(corpus)
 
-    print(f'Processed {input_path}')
-    print(f'Saved {len(docs)} chunks to {output_path}')
+    docs = [
+        build_pokemon_doc(record, chart, chains.get(record["evolution_chain_id"]))
+        for record in corpus
+    ]
+    # Part B: 18 type-chart docs appended after the 1,350 Pokémon docs,
+    # in the order the rows appear in pokemon_types.csv (dict preserves order).
+    for t in chart:
+        docs.append(_type_chart_doc(chart, t))
+
+    _OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(_OUTPUT_PATH, "w", encoding="utf-8") as f:
+        f.writelines(json.dumps(doc, ensure_ascii=False) + "\n" for doc in docs)
+
+    print(f"Processed {_CORPUS_PATH}")
+    print(f"Saved {len(docs)} docs to {_OUTPUT_PATH}")
 
     # Quick validation
-    with open(output_path, 'r', encoding='utf-8') as f:
-        first_doc = json.loads(f.readline())
-        print(f'Sample document keys: {list(first_doc.keys())}')
+    with open(_OUTPUT_PATH, encoding="utf-8") as f:
+        first = json.loads(f.readline())
+    print(f"Sample document keys: {list(first.keys())}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
