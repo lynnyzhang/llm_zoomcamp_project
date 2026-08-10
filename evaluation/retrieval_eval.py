@@ -41,7 +41,7 @@ def evaluate_search(search_fn, questions, k=5):
 
     for item in questions:
         query = item["question"]
-        relevant_id = str(item["id"])
+        relevant_id = str(item["document"])
 
         results = search_fn(query, num_results=k)
         retrieved_ids = [str(doc.get("id", "")) for doc in results]

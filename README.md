@@ -4,7 +4,7 @@ An agentic RAG assistant for Pokémon knowledge, built for the DataTalksClub LLM
 
 ## Project Goal
 
-Given a corpus of Pokédex records (dev subset: coverage-sampled 50 Pokémon, 250 Q&A pairs) from the [Kaggle Pokémon dataset](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types), build a question-answering system that:
+Given a corpus of Pokédex records (dev subset: coverage-sampled 50 Pokémon, 250 ground-truth questions) from the [Kaggle Pokémon dataset](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types), build a question-answering system that:
 
 1. Retrieves relevant Pokémon entries using hybrid search
 2. Uses an agentic loop to reformulate queries when results are insufficient
@@ -17,7 +17,7 @@ Given a corpus of Pokédex records (dev subset: coverage-sampled 50 Pokémon, 25
 
 The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle ([`patelris/pokemon-dataset-with-stats-and-types`](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types), download endpoint `https://www.kaggle.com/api/v1/datasets/download/patelris/pokemon-dataset-with-stats-and-types`). The two raw CSVs (`pokemon_complete.csv`, `pokemon_types.csv`) ship bundled in `data/raw/` — Kaggle's anonymous download endpoint is bot-blocked, so the repo carries its own copy and no login is needed. `src/data/ingest.py` only attempts a download when they are missing, and builds `data/corpus.jsonl` with one structured record per Pokémon (full: 1,350 — 1,025 canonical + 325 alternate forms).
 
-**Development subset:** `src/data/ingest.py` builds the full 1,350-record corpus by default; `evaluation/generate_qa.py` defaults to a deterministic coverage-sampled dev subset of 50 Pokémon (250 QA pairs). This is a user directive: dev subset for all automated test/eval runs, full-data QA runs manual only. See [docs/setup.md](docs/setup.md).
+**Development subset:** `src/data/ingest.py` builds the full 1,350-record corpus by default; `evaluation/generate_qa.py` defaults to a deterministic coverage-sampled dev subset of 50 Pokémon (250 ground-truth questions). This is a user directive: dev subset for all automated test/eval runs, full-data QA runs manual only. See [docs/setup.md](docs/setup.md).
 
 ## Architecture
 
@@ -119,7 +119,7 @@ See [docs/setup.md](docs/setup.md) for detailed setup instructions.
 # Or run the agent from CLI:
 set -a; source .env; set +a; uv run python -c "from src.rag.agent import RAGAgent; a = RAGAgent(); r = a.run('What are Pikachu's stats?'); print(r['answer'][:200])"
 
-# Generate the QA set (dev subset, 250 pairs):
+# Generate the ground-truth set (dev subset, 250 questions):
 uv run python -m evaluation.generate_qa
 
 # Run evaluations:
@@ -143,7 +143,7 @@ See [docs/usage.md](docs/usage.md) for the complete usage guide.
 
 ## Evaluation Results
 
-Measured on the Pokémon dev subset (50 docs, 250 QA pairs) with a local qwen model. Full details in [docs/evaluation.md](docs/evaluation.md).
+Measured on the Pokémon dev subset (50 docs, 250 ground-truth questions) with a local qwen model. Full details in [docs/evaluation.md](docs/evaluation.md).
 
 ### Retrieval (250 questions, top-5)
 
@@ -208,12 +208,13 @@ project/
 │   ├── .dockerignore       # Build exclusions (context: repo root)
 │   └── entrypoint.sh       # Pipeline orchestration
 ├── evaluation/
-│   ├── generate_qa.py      # LLM-generated Pokémon QA set
-│   ├── retrieval_eval.py   # Retrieval evaluation
-│   ├── llm_eval.py         # LLM evaluation
-│   ├── agent_eval.py       # Agent evaluation
+│   ├── evaluation_utils.py  # Shared evaluation helpers
+│   ├── generate_qa.py       # LLM-generated ground-truth questions
+│   ├── retrieval_eval.py    # Retrieval evaluation
+│   ├── llm_eval.py          # LLM evaluation
+│   ├── agent_eval.py        # Agent evaluation
 │   ├── data/
-│   │   └── qa.jsonl        # Q&A pairs (dev: 250)
+│   │   └── qa.jsonl         # question → document (dev: 250)
 │   └── results/
 │       ├── retrieval_eval.json
 │       ├── llm_eval.json

@@ -181,7 +181,7 @@ The `spans` table in `monitoring/traces.db` (mirrored in Postgres) stores:
 
 ### Retrieval Evaluation
 
-Compares keyword, vector, and hybrid search on the dev-subset QA pairs (250).
+Compares keyword, vector, and hybrid search on the dev-subset ground-truth questions (250).
 
 ```bash
 uv run python -m evaluation.retrieval_eval

@@ -57,7 +57,7 @@
 
 ## 4. Integration Test Results
 
-**Total tests: 116 | Passed: 116 | Failed: 0**
+**Total tests: 106 | Passed: 106 | Failed: 0**
 
 | Test Category               | Tests | Status |
 |-----------------------------|-------|--------|
@@ -68,7 +68,6 @@
 | Agent Loop                  | 15    | PASS   |
 | Agent Guardrails            | 15    | PASS   |
 | Search Type Dispatch        | 6     | PASS   |
-| Monitoring & Tracing        | 10    | PASS   |
 | Evaluation Results          | 14    | PASS   |
 | Evaluation Scripts          | 10    | PASS   |
 | Docker Configuration        | 15    | PASS   |
@@ -80,10 +79,9 @@
 - Search functions (keyword, vector, hybrid, RRF fusion)
 - RAG pipeline (search → context → prompt → LLM)
 - Agent loop (single iteration, reformulation, max iterations, rejection guardrails)
-- Monitoring (SQLite spans, feedback, trace stats)
 - Evaluation metrics (precision, recall, MRR, hit rate)
 - Docker files (Dockerfile, docker-compose.yml, entrypoint.sh)
-- End-to-end pipeline (data → search → RAG → agent → monitoring)
+- End-to-end pipeline (data → search → RAG → agent)
 
 ---
 
@@ -110,8 +108,6 @@ Data Ingestion (PokeAPI/Kaggle) → Chunking → Hybrid Search (RRF)
                                               ↓
                                     Agent Loop (iterative reformulation)
                                               ↓
-                                    Monitoring (OpenTelemetry + SQLite/PG)
-                                              ↓
                                     Interface (Streamlit)
 ```
 
@@ -128,7 +124,6 @@ Data Ingestion (PokeAPI/Kaggle) → Chunking → Hybrid Search (RRF)
 2. **Faithfulness gap:** The judge rates faithfulness 3.0-3.9 because generated answers add details beyond the single retrieved doc — tighten the answer prompt to stay strictly within retrieved context, or retrieve top-3 docs to give the answer generator more support.
 3. **Production readiness:**
    - Docker configuration is complete and validated
-   - Monitoring with OpenTelemetry provides observability
    - Feedback collection enables continuous improvement
    - Streamlit interface provides user-friendly access
 

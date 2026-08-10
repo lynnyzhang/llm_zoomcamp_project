@@ -196,12 +196,14 @@ class TestDataIngestion:
                     continue
                 record = json.loads(line)
                 assert "question" in record, f"Record {i} missing 'question' field"
-                assert "answer" in record, f"Record {i} missing 'answer' field"
-                assert "id" in record, f"Record {i} missing 'id' field"
+                assert "document" in record, f"Record {i} missing 'document' field"
+                # Ground truth links a question to the document containing its
+                # answer; no LLM-written answer field.
+                assert "answer" not in record, f"Record {i} has unexpected 'answer' field"
                 records.append(record)
         # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: the default
-        # dev subset generates a coverage-sampled 50 records × 5 pairs (user directive 2026-08-09).
-        assert len(records) >= 250, f"Expected >= 250 Q&A pairs, got {len(records)}"
+        # dev subset generates a coverage-sampled 50 records × 5 questions (user directive 2026-08-09).
+        assert len(records) >= 250, f"Expected >= 250 ground-truth questions, got {len(records)}"
 
     def test_chunker_output_exists(self):
         docs_path = CHUNKS_DIR / "documents.jsonl"
@@ -1647,8 +1649,8 @@ class TestEvaluationScripts:
             return [{"id": "42", "content": "answer"}, {"id": "1", "content": "other"}]
 
         questions = [
-            {"question": "q1", "answer": "a1", "id": 42},
-            {"question": "q2", "answer": "a2", "id": 42},
+            {"question": "q1", "document": 42},
+            {"question": "q2", "document": 42},
         ]
         result = retrieval_accuracy(perfect_search, questions, k=5)
         assert result["hit_rate"] == 1.0
@@ -1661,10 +1663,10 @@ class TestEvaluationScripts:
         qa_path = EVAL_QA
         questions = load_ground_truth(str(qa_path))
         # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: default dev
-        # subset = a coverage-sampled 50 records × 5 LLM-generated pairs (user directive 2026-08-09).
+        # subset = a coverage-sampled 50 records × 5 LLM-generated questions (user directive 2026-08-09).
         assert len(questions) >= 250
         assert "question" in questions[0]
-        assert "id" in questions[0]
+        assert "document" in questions[0]
 
 
 # ===========================================================================

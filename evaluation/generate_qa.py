@@ -1,35 +1,31 @@
-# LLM-generated Pokémon Q&A set (evaluation/data/qa.jsonl): per-record natural-language
-# questions with answers grounded in the record.
+# LLM-generated Pokémon ground-truth set (evaluation/data/qa.jsonl): per-record
+# natural-language QUESTIONS linked to the Pokédex document that contains the
+# answer. Mirrors the course's data-generation pattern for grounded QA sets:
+# only questions are LLM-generated; the ground-truth answer is the document
+# itself, looked up by id at eval time — the LLM never writes answers.
+#
+# Records come from the INDEXED documents (data/chunks/documents.jsonl) — the
+# same corpus the retrievers index — so questions are grounded in exactly what
+# retrieval sees (search_text, type_effectiveness, evolution links), not in the
+# raw CSVs.
 
 import argparse
-import csv
 import json
 import random
-import re
 import sys
 import time
-import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from tqdm.auto import tqdm
 
+from evaluation.evaluation_utils import llm_structured, map_progress
 from src.llm import create_client, get_model
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "data"
-RAW_POKEMON_CSV = DATA_DIR / "raw" / "pokemon_complete.csv"
-RAW_TYPES_CSV = DATA_DIR / "raw" / "pokemon_types.csv"
+DOCUMENTS_FILE = PROJECT_ROOT / "data" / "chunks" / "documents.jsonl"
 QA_FILE = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
-
-# The 18 Pokémon types, used as keys for type_effectiveness.
-TYPE_KEYS = [
-    "normal", "fire", "water", "electric", "grass", "ice", "fighting", "poison",
-    "ground", "flying", "psychic", "bug", "rock", "ghost", "dragon", "steel",
-    "dark", "fairy",
-]
 
 # PLAN DEVIATION (documented, 2026-08-07): the plan calls for max_workers 6,
 # but the local llama-server degrades under concurrent load — measured: 6
@@ -39,335 +35,132 @@ TYPE_KEYS = [
 # faster/parallel servers.
 MAX_WORKERS = 2
 
+# Reference-style instructions: generate only questions; the record must
+# contain the answer; use as few record words as possible so retrieval is not
+# trivially exact-matchable.
 DATA_GEN_INSTRUCTIONS = """
 You emulate a Pokémon fan asking questions on the internet.
-Formulate 5 natural questions this fan might ask based on this Pokémon record
-(stats, types, type effectiveness, abilities, evolution). The record must
-contain the answer. Not too formal, not too short, not too long.
-For each question also provide the answer grounded in the record.
+You are given one Pokédex record for a Pokémon.
+Formulate 5 questions this fan might ask that are answered by this record
+(stats, types, type effectiveness, abilities, evolution).
+
+Rules:
+- The record must contain the answer to each question.
+- Make the questions complete and not too short.
+- Use as few words as possible from the record; don't copy its phrasing.
+- The questions should resemble how people actually ask things online:
+  not too formal, not too short, not too long.
+- Ask about the Pokémon, not about the record's formatting.
 
 Respond with a single JSON object in exactly this format (no markdown, no
 extra text):
-{"qa_pairs": [{"question": "the question", "answer": "the answer"}]}
+{"questions": ["question 1", "question 2", "question 3", "question 4", "question 5"]}
 """.strip()
 
-# The model sometimes truncates the JSON mid-list (salvaged by repair into a
-# valid but short array) — top-up shortfalls with follow-up generations.
-TARGET_PAIRS_PER_RECORD = 5
+# The model sometimes truncates the JSON mid-list — retries in
+# _generate_questions cover it; top up any shortfall with follow-up
+# generations.
+TARGET_QUESTIONS_PER_RECORD = 5
 FILL_ATTEMPTS = 3
 DEV_SUBSET_SIZE = 50
 DEV_SUBSET_SEED = 42
 
 FILL_INSTRUCTIONS = """
 You emulate a Pokémon fan asking questions on the internet.
+You are given one Pokédex record for a Pokémon.
 Formulate exactly {needed} additional natural questions this fan might ask
-based on this Pokémon record (stats, types, type effectiveness, abilities,
-evolution), along with answers grounded in the record. Do not repeat questions already
-asked. Not too formal, not too short, not too long.
+that are answered by this record (stats, types, type effectiveness, abilities,
+evolution). Do not repeat questions already asked.
+
+Rules:
+- The record must contain the answer to each question.
+- Use as few words as possible from the record; don't copy its phrasing.
+- The questions should resemble how people actually ask things online.
 
 Respond with a single JSON object in exactly this format (no markdown, no
 extra text):
-{"qa_pairs": [{"question": "the question", "answer": "the answer"}]}
+{"questions": ["question 1", "question 2", "..."]}
 """.strip()
 
 
-class QAPair(BaseModel):
-    question: str
-    answer: str
+class Questions(BaseModel):
+    questions: list[str]
 
 
-class QAResponse(BaseModel):
-    qa_pairs: list[QAPair]
-
-
-def patch_openai_client(client):
-    # responses.parse sends a "text" field in the request body that llama.cpp
-    # rejects; inject the pydantic json_schema via extra_body.response_format
-    # instead (falls back to native parse when no text_format is given).
-    _original_parse = client.responses.parse
-
-    def _patched_responses_parse(self, model, input, **kwargs):
-        pydantic_model = kwargs.pop("text_format", None)
-        if pydantic_model is None:
-            return _original_parse(model=model, input=input, **kwargs)
-
-        json_schema = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": pydantic_model.__name__,
-                "strict": True,
-                "schema": pydantic_model.model_json_schema(),
-            },
-        }
-        extra_body = kwargs.pop("extra_body", {})
-        extra_body["response_format"] = json_schema
-        return _original_parse(model=model, input=input, extra_body=extra_body, **kwargs)
-
-    client.responses.parse = types.MethodType(_patched_responses_parse, client.responses)
-    return client
-
-
-def _extract_json(text):
-    text = text.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text).strip()
-    start = text.find("{")
-    if start == -1:
-        raise ValueError("no JSON object found in model output")
-    body = text[start:]
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError:
-        data = _repair_json(body)
-    if not isinstance(data, dict):
-        raise TypeError(f"expected a JSON object, got {type(data).__name__}")
-    return data
-
-
-def _repair_json(text):
-    stripped = text.rstrip()
-    variants = [stripped]
-    if not stripped.endswith("}"):
-        variants.append(stripped + "}")
-    end = stripped.rfind("}")
-    if end > 0:
-        sliced = stripped[: end + 1]
-        variants.append(sliced)
-        if not sliced.endswith("}"):
-            variants.append(sliced + "}")
-    for variant in variants:
+def _generate_questions(client, model, record, instructions=DATA_GEN_INSTRUCTIONS):
+    user_prompt = json.dumps(record)
+    # Single path: structured output via responses.parse(text_format=Questions).
+    # llm_structured patches the client (patch_openai_client) so text_format
+    # works on OpenAI (native structured output) AND on llama.cpp
+    # (response_format via extra_body). There is deliberately NO create()/JSON
+    # extraction fallback: if the backend cannot honor the schema, the output
+    # is prose — not JSON — so there is nothing to salvage; fail loudly.
+    # Retry with backoff covers transient server failures.
+    for attempt in range(3):
         try:
-            data = json.loads(re.sub(r",\s*([\]}])", r"\1", variant))
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            return data
-    raise ValueError(f"could not repair model JSON output: {text[:80]}...")
-
-
-def _try_parse(client, model, messages):
-    try:
-        parsed = client.responses.parse(model=model, input=messages, text_format=QAResponse).output_parsed
-    except Exception:  # noqa: BLE001 — servers that reject parse fall back to create
-        return None
-    return parsed.qa_pairs if parsed is not None else None
-
-
-def _generate_qa_pairs(client, model, record, use_parse, instructions=DATA_GEN_INSTRUCTIONS):
-    messages = [
-        {"role": "developer", "content": instructions},
-        {"role": "user", "content": json.dumps(record)},
-    ]
-    if use_parse:
-        pairs = _try_parse(client, model, messages)
-        if pairs is not None:
-            return pairs
-    # Servers that ignore response_format return prose (output_parsed=None);
-    # the JSON contract in the instructions makes the completion parseable.
-    response = client.responses.create(model=model, input=messages)
-    return QAResponse.model_validate(_extract_json(response.output_text)).qa_pairs
-
-
-def supports_structured_output(client, model):
-    # Local servers (e.g. llama.cpp) accept the request but return plain text
-    # (output_parsed=None), silently wasting a generation — probe once and skip.
-    try:
-        probe = client.responses.parse(
-            model=model,
-            input=[{"role": "user", "content": 'Reply with JSON only: {"qa_pairs": []}'}],
-            text_format=QAResponse,
-            max_output_tokens=64,
-        )
-        return probe.output_parsed is not None
-    except Exception:  # noqa: BLE001 — any rejection means JSON fallback mode
-        return False
-
-
-def llm_structured_retry(
-    client,
-    model,
-    record,
-    use_parse,
-    max_retries=3,
-    instructions=DATA_GEN_INSTRUCTIONS,
-):
-    for attempt in range(max_retries):
-        try:
-            return _generate_qa_pairs(client, model, record, use_parse, instructions)
-        except Exception:
-            if attempt == max_retries - 1:
+            parsed, _ = llm_structured(client, instructions, user_prompt, Questions, model=model)
+            if parsed is None:
+                raise ValueError(
+                    "structured output unsupported: server returned output_parsed=None"
+                )
+            return parsed.questions
+        except Exception:  # noqa: BLE001 — retry covers any server/salvage failure
+            if attempt == 2:
                 raise
             time.sleep(2**attempt)
 
 
-def generate_for_record(pokemon_id, record, client, model, use_parse, target_pairs):
+def generate_questions_for_record(pokemon_id, record, client, model, target_questions):
     seen = set()
     rows = []
 
-    def add(pairs):
-        for pair in pairs:
-            question = (pair.question or "").strip()
-            answer = (pair.answer or "").strip()
-            if question and answer and question not in seen:
+    def add(questions):
+        for q in questions:
+            question = (q or "").strip()
+            if question and question not in seen:
                 seen.add(question)
-                rows.append({"question": question, "answer": answer, "id": pokemon_id})
+                rows.append({"question": question, "document": pokemon_id})
 
-    add(llm_structured_retry(client, model, record, use_parse))
+    add(_generate_questions(client, model, record))
     for _ in range(FILL_ATTEMPTS):
-        if len(rows) >= target_pairs:
+        if len(rows) >= target_questions:
             break
-        needed = target_pairs - len(rows)
+        needed = target_questions - len(rows)
         add(
-            llm_structured_retry(
+            _generate_questions(
                 client,
                 model,
                 record,
-                use_parse,
                 instructions=FILL_INSTRUCTIONS.replace("{needed}", str(needed)),
             )
         )
-    return rows[:target_pairs]
+    return rows[:target_questions]
 
 
-def _csv_bool(value):
-    """Parse CSV boolean columns ("True"/"False" or 1/0/yes/no) to bool."""
-    return (value or "").strip().lower() in {"1", "true", "yes", "y"}
+def load_pokemon_documents():
+    """data/chunks/documents.jsonl → {int id: Pokémon document}.
 
-
-def _csv_int(value, default=None):
-    value = (value or "").strip()
-    if not value:
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        return default
-
-
-def _csv_float(value, default=None):
-    value = (value or "").strip()
-    if not value:
-        return default
-    try:
-        return float(value)
-    except ValueError:
-        return default
-
-
-def _list_from_pipe(value):
-    """Split a pipe-separated CSV cell into a non-empty list of trimmed items."""
-    value = (value or "").strip()
-    if not value:
-        return []
-    return [item.strip() for item in value.split("|") if item.strip()]
-
-
-def _types_from_row(row):
-    types = []
-    for key in ("type_1", "type_2"):
-        t = (row.get(key) or "").strip()
-        if t and t not in types:
-            types.append(t)
-    return types
-
-
-def load_type_chart():
-    """Parse data/raw/pokemon_types.csv into {TypeName: {effect: [types]}}."""
-    if not RAW_TYPES_CSV.exists():
-        raise SystemExit(
-            f"FATAL: raw type chart CSV missing at {RAW_TYPES_CSV}. "
-            "Run `uv run python -m src.data.ingest` first."
-        )
-    chart = {}
-    with open(RAW_TYPES_CSV, encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            t = (row.get("type") or "").strip()
-            chart[t] = {
-                "double_damage_to": _list_from_pipe(row.get("double_damage_to")),
-                "half_damage_to": _list_from_pipe(row.get("half_damage_to")),
-                "no_damage_to": _list_from_pipe(row.get("no_damage_to")),
-                "double_damage_from": _list_from_pipe(row.get("double_damage_from")),
-                "half_damage_from": _list_from_pipe(row.get("half_damage_from")),
-                "no_damage_from": _list_from_pipe(row.get("no_damage_from")),
-            }
-    return chart
-
-
-def compute_type_effectiveness(types, chart):
-    """Type-chart damage taken per attacking type for a Pokémon's types.
-
-    For each defending type, an attacker type in its *_from lists multiplies the
-    damage (2x / 0.5x / 0x); a Pokémon's total effectiveness is the product over
-    its types. Returns a dict of 18 lowercase type keys -> float multiplier.
+    The indexed documents are the ground truth for question generation (the
+    course's pattern generates questions from the indexed corpus, not from raw
+    data). Type-chart docs (kind == "type_chart", string ids) are excluded —
+    QA is per Pokémon.
     """
-    mult = {t: 1.0 for t in TYPE_KEYS}
-    for t in types:
-        entry = chart.get(t) or {}
-        for a in entry.get("double_damage_from") or []:
-            mult[a.lower()] *= 2.0
-        for a in entry.get("half_damage_from") or []:
-            mult[a.lower()] *= 0.5
-        for a in entry.get("no_damage_from") or []:
-            mult[a.lower()] *= 0.0
-    return {t: mult[t] for t in TYPE_KEYS}
-
-
-def _build_record(row, chart):
-    """Map a pokemon_complete.csv row onto the Pokémon-native record schema."""
-    types = _types_from_row(row)
-    return {
-        "id": int(row["pokedex_number"]),
-        "name": row.get("name") or "",
-        "types": types,
-        "generation": row.get("generation") or "",
-        "stats": {
-            "hp": _csv_int(row.get("hp")),
-            "attack": _csv_int(row.get("attack")),
-            "defense": _csv_int(row.get("defense")),
-            "sp_attack": _csv_int(row.get("sp_attack")),
-            "sp_defense": _csv_int(row.get("sp_defense")),
-            "speed": _csv_int(row.get("speed")),
-            "base_stat_total": _csv_int(row.get("base_stat_total")),
-        },
-        "height_m": _csv_float(row.get("height_m")),
-        "weight_kg": _csv_float(row.get("weight_kg")),
-        "base_experience": _csv_int(row.get("base_experience")),
-        "abilities": _list_from_pipe(row.get("abilities")),
-        "hidden_ability": row.get("hidden_ability") or "",
-        "egg_groups": _list_from_pipe(row.get("egg_groups")),
-        "color": row.get("color") or "",
-        "shape": row.get("shape") or "",
-        "habitat": row.get("habitat") or "",
-        "growth_rate": row.get("growth_rate") or "",
-        "capture_rate": _csv_int(row.get("capture_rate")),
-        "base_happiness": _csv_int(row.get("base_happiness")),
-        "genus": row.get("genus") or "",
-        "is_legendary": _csv_bool(row.get("is_legendary")),
-        "is_mythical": _csv_bool(row.get("is_mythical")),
-        "is_baby": _csv_bool(row.get("is_baby")),
-        "evolution_chain_id": _csv_int(row.get("evolution_chain_id")),
-        "flavor_text": row.get("flavor_text") or "",
-        "sprite_url": row.get("sprite_url") or "",
-        "type_effectiveness": compute_type_effectiveness(types, chart),
-    }
-
-
-def load_raw_records():
-    if not RAW_POKEMON_CSV.exists():
+    if not DOCUMENTS_FILE.exists():
         raise SystemExit(
-            f"FATAL: raw pokemon CSV missing at {RAW_POKEMON_CSV}. "
-            "Run `uv run python -m src.data.ingest` first."
+            f"FATAL: indexed documents missing at {DOCUMENTS_FILE}. "
+            "Run `uv run python -m src.data.chunker` first."
         )
-    chart = load_type_chart()
-    records = {}
-    with open(RAW_POKEMON_CSV, encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            record = _build_record(row, chart)
-            records[int(record["id"])] = record
-    return records
+    docs = {}
+    with open(DOCUMENTS_FILE, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            doc = json.loads(line)
+            if doc.get("kind") == "type_chart":
+                continue
+            docs[doc["id"]] = doc
+    return docs
 
 
 def select_dev_subset(records, size=DEV_SUBSET_SIZE, seed=DEV_SUBSET_SEED):
@@ -410,7 +203,7 @@ def select_dev_subset(records, size=DEV_SUBSET_SIZE, seed=DEV_SUBSET_SEED):
                 if i < len(by_gen[g]) and len(selected) < size:
                     selected.append(by_gen[g][i])
             i += 1
-        if len(selected) < size:  # defensive; cannot happen with 1,025 records
+        if len(selected) < size:  # defensive; cannot happen with 1,350 documents
             selected.extend(remaining[: size - len(selected)])
     return selected
 
@@ -435,15 +228,16 @@ def resolve_ids(records, limit, full, seed):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Generate LLM Pokémon Q&A pairs into evaluation/data/qa.jsonl "
-        "(default: deterministic coverage-sampled dev subset — 50 records × 5 pairs)."
+        description="Generate LLM ground-truth questions into evaluation/data/qa.jsonl "
+        "(default: deterministic coverage-sampled dev subset — 50 Pokémon × 5 questions; "
+        "each row links a question to the indexed Pokédex document that contains its answer)."
     )
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--full", action="store_true", help="All 1,025 records × N pairs (MANUAL only — slow/costly)")
+    group.add_argument("--full", action="store_true", help="All 1,350 Pokémon documents × N questions (MANUAL only — slow/costly)")
     group.add_argument("--limit", type=int, default=DEV_SUBSET_SIZE,
-                       help=f"Coverage-sampled N records from the raw pokedex (default: {DEV_SUBSET_SIZE})")
-    parser.add_argument("--pairs", type=int, default=TARGET_PAIRS_PER_RECORD,
-                        help="Target Q&A pairs per record (default: 5; fewer = cheaper but weaker stats)")
+                       help=f"Coverage-sampled N Pokémon documents from the indexed corpus (default: {DEV_SUBSET_SIZE})")
+    parser.add_argument("--questions", type=int, default=TARGET_QUESTIONS_PER_RECORD,
+                        help="Target questions per record (default: 5; fewer = cheaper but weaker stats)")
     parser.add_argument("--seed", type=int, default=DEV_SUBSET_SEED,
                         help=f"Seed for the deterministic coverage sampler (default: {DEV_SUBSET_SEED})")
     parser.add_argument("--resume", action="store_true",
@@ -452,7 +246,7 @@ def main(argv=None):
 
     load_dotenv(PROJECT_ROOT / ".env")
 
-    records = load_raw_records()
+    records = load_pokemon_documents()
     ids = resolve_ids(records, args.limit, args.full, args.seed)
 
     if args.resume and QA_FILE.exists():
@@ -461,7 +255,7 @@ def main(argv=None):
             for line in f:
                 line = line.strip()
                 if line:
-                    existing.add(json.loads(line)["id"])
+                    existing.add(json.loads(line)["document"])
         before = len(ids)
         ids = [i for i in ids if i not in existing]
         print(f"Resume: skipped {before - len(ids)} ids already in {QA_FILE}")
@@ -473,30 +267,27 @@ def main(argv=None):
         print(f"  coverage: {len(types)}/18 types, {len(gens)} generations, "
               f"{legendary} legendary, {mythical} mythical (seed={args.seed})")
 
-    client = patch_openai_client(create_client())
+    client = create_client()
     # Bound the SDK's default 600s per-request timeout and disable its built-in
-    # retries (the llm_structured_retry loop below is the retry layer): a
+    # retries (the _generate_questions loop below is the retry layer): a
     # black-holing endpoint must fail fast, not hang for minutes per attempt.
     client.timeout = 120.0
     client.max_retries = 0
     model = get_model()
-    use_parse = supports_structured_output(client, model)
-    mode = "parse" if use_parse else "create + json.loads (JSON fallback)"
-    print(f"Model: {model} | structured mode: {mode} | expected pairs: {len(ids) * args.pairs}")
+    print(f"Model: {model} | expected questions: {len(ids) * args.questions}")
 
     all_rows = []
     try:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = [
-                pool.submit(
-                    generate_for_record, pokemon_id, records[pokemon_id], client, model, use_parse, args.pairs
-                )
-                for pokemon_id in ids
-            ]
-            with tqdm(total=len(futures), desc="Generating QA") as progress:
-                for future in futures:
-                    all_rows.extend(future.result())
-                    progress.update()
+            results = map_progress(
+                pool,
+                ids,
+                lambda pokemon_id: generate_questions_for_record(
+                    pokemon_id, records[pokemon_id], client, model, args.questions
+                ),
+            )
+        for rows in results:
+            all_rows.extend(rows)
     except Exception as exc:  # noqa: BLE001 — any worker/SDK failure → clean non-zero exit
         print(f"FATAL: QA generation failed: {exc}", file=sys.stderr)
         print(
@@ -505,12 +296,11 @@ def main(argv=None):
         )
         return 1
 
-    all_rows.sort(key=lambda row: row["id"])
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    all_rows.sort(key=lambda row: row["document"])
     QA_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(QA_FILE, "w", encoding="utf-8") as f:
         f.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in all_rows)
-    print(f"Wrote {len(all_rows)} Q&A pairs to {QA_FILE}")
+    print(f"Wrote {len(all_rows)} ground-truth questions to {QA_FILE}")
     return 0
 
 

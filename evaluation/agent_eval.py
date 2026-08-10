@@ -5,6 +5,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
 # Path setup
@@ -13,7 +14,22 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from evaluation.evaluation_utils import (
+    ground_truth_answer,
+    llm_structured,
+    load_document_index,
+)
 from src.llm import get_model
+
+
+# ---------------------------------------------------------------------------
+# Structured judge output
+# ---------------------------------------------------------------------------
+
+class JudgeScore(BaseModel):
+    """Structured judge output for answer quality (1-5)."""
+    score: int
+    explanation: str
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -37,14 +53,14 @@ def retrieval_accuracy(search_fn, questions, k=5):
 
     for item in questions:
         query = item["question"]
-        relevant_id = str(item["id"])
+        relevant_id = str(item["document"])
 
         results = search_fn(query, num_results=k)
         retrieved_ids = [str(doc.get("id", "")) for doc in results]
         hit = relevant_id in retrieved_ids
         hits += hit
         details.append({
-            "question_id": item["id"],
+            "question_id": item["document"],
             "hit": hit,
             "retrieved_ids": retrieved_ids[:k],
         })
@@ -91,29 +107,19 @@ Generated Answer: {generated_answer}
 Ground Truth Answer: {ground_truth}
 """
 
-    messages = [
-        {"role": "developer", "content": instructions},
-        {"role": "user", "content": prompt},
-    ]
-
+    # Single path: structured output via responses.parse(text_format=JudgeScore).
+    # llm_structured patches the client (patch_openai_client) so text_format
+    # works on OpenAI (native structured output) AND on llama.cpp
+    # (response_format via extra_body). There is deliberately NO create()/JSON
+    # extraction fallback: if the backend cannot honor the schema, the output
+    # is prose — not JSON — so there is nothing to salvage; fail loudly.
     try:
-        response = client.responses.create(
-            model=model,
-            input=messages,
-        )
-        text = response.output_text.strip()
-
-        # Extract JSON from response
-        if "```" in text:
-            text = text.split("```")[1]
-            text = text.removeprefix("json")
-            text = text.strip()
-
-        result = json.loads(text)
-        return {
-            "score": result.get("score", 0),
-            "explanation": result.get("explanation", ""),
-        }
+        parsed, _ = llm_structured(client, instructions, prompt, JudgeScore, model=model)
+        if parsed is None:
+            raise ValueError(
+                "structured output unsupported: server returned output_parsed=None"
+            )
+        return {"score": parsed.score, "explanation": parsed.explanation}
     except Exception as e:  # noqa: BLE001 — judge failure returns None for the caller to count
         print(f"  Judge error: {e}")
         return None
@@ -125,6 +131,7 @@ def evaluate_answer_quality(
     questions,
     sample_size=50,
     model=None,
+    doc_idx=None,
 ):
     model = model or get_model()
     pairs = questions[:sample_size] if sample_size > 0 else questions
@@ -133,7 +140,14 @@ def evaluate_answer_quality(
 
     for i, pair in enumerate(pairs):
         question = pair["question"]
-        ground_truth = pair["answer"]
+        # Ground truth is the linked document's own content (course RAG-eval
+        # pattern: answer_orig = doc_idx[doc_id]["answer"]) — never an
+        # LLM-written answer from generation time.
+        ground_truth = ground_truth_answer(doc_idx, pair["document"]) if doc_idx else None
+        if ground_truth is None:
+            print(f"  [{i+1}/{len(pairs)}] No ground-truth document for question {pair.get('document')}")
+            errors += 1
+            continue
 
         try:
             generated = rag_fn(question)
@@ -240,6 +254,11 @@ def main():
     qa_pairs = load_qa_pairs(str(qa_path))
     print(f"Loaded {len(qa_pairs)} pairs")
 
+    # Load document index — the source of ground-truth answers
+    print("Loading document index (ground-truth answers)...")
+    doc_idx = load_document_index()
+    print(f"Loaded {len(doc_idx)} documents")
+
     base_url = get_base_url()
     api_key = get_api_key()
 
@@ -296,7 +315,7 @@ def main():
         print("\nEvaluating answer quality (LLM judge)...")
         t0 = time.time()
         simple_quality = evaluate_answer_quality(
-            rag_base.rag, client, qa_pairs, sample_size=judge_sample,
+            rag_base.rag, client, qa_pairs, sample_size=judge_sample, doc_idx=doc_idx,
         )
         simple_latency = time.time() - t0
         print(f"  Mean score: {simple_quality['mean_score']}/5")
@@ -322,7 +341,7 @@ def main():
 
     for i, pair in enumerate(agent_sample):
         query = pair["question"]
-        relevant_id = str(pair["id"])
+        relevant_id = str(pair["document"])
 
         q_start = time.time()
         if llm_available:
@@ -370,7 +389,11 @@ def main():
 
         for i, pair in enumerate(agent_sample):
             question = pair["question"]
-            ground_truth = pair["answer"]
+            ground_truth = ground_truth_answer(doc_idx, pair["document"])
+            if ground_truth is None:
+                print(f"  [{i+1}/{len(agent_sample)}] No ground-truth document for question {pair.get('document')}")
+                agent_errors += 1
+                continue
 
             try:
                 result = agent.run(question)
@@ -414,7 +437,7 @@ def main():
 
     for i, pair in enumerate(full_sample):
         query = pair["question"]
-        relevant_id = str(pair["id"])
+        relevant_id = str(pair["document"])
 
         if llm_available:
             result = agent.run(query)

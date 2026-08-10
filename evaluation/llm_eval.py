@@ -1,7 +1,6 @@
 import json
 import sys
 import time
-import types
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -10,6 +9,11 @@ from pydantic import BaseModel
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from evaluation.evaluation_utils import (
+    ground_truth_answer,
+    load_document_index,
+    patch_openai_client,
+)
 from src.llm import get_model
 
 # ---------------------------------------------------------------------------
@@ -36,7 +40,9 @@ Context: {context}
 Answer: {answer}
 Ground Truth: {ground_truth}
 
-Rate faithfulness (context support), relevance (addresses question), coherence (clarity). 1-5 each.""",
+Rate faithfulness (context support), relevance (addresses question), coherence (clarity). 1-5 each.
+Respond with a single JSON object in exactly this format (no markdown, no extra text):
+{{"faithfulness": 1-5, "relevance": 1-5, "coherence": 1-5, "explanation": "brief reasoning"}}""",
     },
     "detailed": {
         "instructions": """\
@@ -57,7 +63,9 @@ Generated Answer: {answer}
 Ground Truth Answer: {ground_truth}
 
 Evaluate the generated answer against the context and ground truth.
-Provide scores (1-5) for faithfulness, relevance, and coherence.""",
+Provide scores (1-5) for faithfulness, relevance, and coherence.
+Respond with a single JSON object in exactly this format (no markdown, no extra text):
+{{"faithfulness": 1-5, "relevance": 1-5, "coherence": 1-5, "explanation": "brief reasoning"}}""",
     },
     "with_examples": {
         "instructions": """\
@@ -90,7 +98,9 @@ Generated Answer: {answer}
 
 Ground Truth Answer: {ground_truth}
 
-Rate faithfulness (1-5), relevance (1-5), coherence (1-5). Explain briefly.""",
+Rate faithfulness (1-5), relevance (1-5), coherence (1-5). Explain briefly.
+Respond with a single JSON object in exactly this format (no markdown, no extra text):
+{{"faithfulness": 1-5, "relevance": 1-5, "coherence": 1-5, "explanation": "brief reasoning"}}""",
     },
 }
 
@@ -99,33 +109,6 @@ Rate faithfulness (1-5), relevance (1-5), coherence (1-5). Explain briefly.""",
 # LLM interaction
 # ---------------------------------------------------------------------------
 
-def _patch_openai_client(client):
-    # responses.parse sends a "text" field llama.cpp rejects — inject the
-    # pydantic json_schema via extra_body.response_format instead.
-    _original_parse = client.responses.parse
-
-    def _patched_responses_parse(self, model, input, **kwargs):
-        pydantic_model = kwargs.get("text_format", None)
-        if not pydantic_model:
-            return _original_parse(model=model, input=input, **kwargs)
-
-        schema_name = getattr(pydantic_model, "__name__", "StructuredOutput")
-        llama_cpp_format = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": schema_name,
-                "strict": True,
-                "schema": pydantic_model.model_json_schema(),
-            },
-        }
-        extra_body = kwargs.pop("extra_body", {})
-        extra_body["response_format"] = llama_cpp_format
-        return _original_parse(model=model, input=input, extra_body=extra_body, **kwargs)
-
-    client.responses.parse = types.MethodType(_patched_responses_parse, client.responses)
-    return client
-
-
 def llm_judge(client, instructions, user_prompt, model=None):
     model = model or get_model()
     messages = [
@@ -133,28 +116,21 @@ def llm_judge(client, instructions, user_prompt, model=None):
         {"role": "user", "content": user_prompt},
     ]
 
-    # Try structured output first, fall back to text
-    try:
-        client = _patch_openai_client(client)
-        response = client.responses.parse(
-            model=model,
-            input=messages,
-            text_format=JudgeScores,
-        )
-        return response.output_parsed
-    except Exception:  # noqa: BLE001 — fall back to create-mode on any parse-mode failure
-        # Fallback: use responses.create and parse JSON from text
-        response = client.responses.create(
-            model=model,
-            input=messages,
-        )
-        text = response.output_text.strip()
-        # Extract JSON from response (handle markdown code blocks)
-        if "```" in text:
-            text = text.split("```")[1]
-            text = text.removeprefix("json")
-            text = text.strip()
-        return JudgeScores.model_validate_json(text)
+    # Single path: structured output via responses.parse(text_format=JudgeScores).
+    # patch_openai_client makes it work on llama.cpp (response_format via
+    # extra_body) and passes through to the native SDK on OpenAI. There is
+    # deliberately NO create()/JSON-extraction fallback: if the backend cannot
+    # honor the schema, the output is prose — not JSON — so there is nothing to
+    # salvage (llm_judge_retry retries transient failures).
+    client = patch_openai_client(client)
+    response = client.responses.parse(
+        model=model,
+        input=messages,
+        text_format=JudgeScores,
+    )
+    if response.output_parsed is None:
+        raise ValueError("structured output unsupported: server returned output_parsed=None")
+    return response.output_parsed
 
 
 def llm_judge_retry(client, instructions, user_prompt, model=None, max_retries=3):
@@ -215,6 +191,7 @@ def evaluate_with_prompt(
     judge_config,
     model=None,
     sample_size=50,
+    doc_idx=None,
 ):
     model = model or get_model()
     pairs = qa_pairs[:sample_size] if sample_size > 0 else qa_pairs
@@ -223,7 +200,14 @@ def evaluate_with_prompt(
 
     for i, pair in enumerate(pairs):
         question = pair["question"]
-        ground_truth = pair["answer"]
+        # Ground truth is the linked document's own content (course RAG-eval
+        # pattern: answer_orig = doc_idx[doc_id]["answer"]) — never an
+        # LLM-written answer from generation time.
+        ground_truth = ground_truth_answer(doc_idx, pair["document"]) if doc_idx else None
+        if ground_truth is None:
+            print(f"  [{i+1}/{len(pairs)}] No ground-truth document for question {pair.get('document')}")
+            errors += 1
+            continue
 
         # Generate answer via RAG pipeline
         try:
@@ -293,6 +277,11 @@ def main():
     qa_pairs = load_qa_pairs(str(qa_path))
     print(f"Loaded {len(qa_pairs)} pairs")
 
+    # Load document index — the source of ground-truth answers
+    print("Loading document index (ground-truth answers)...")
+    doc_idx = load_document_index()
+    print(f"Loaded {len(doc_idx)} documents")
+
     base_url = get_base_url()
     api_key = get_api_key()
 
@@ -325,6 +314,7 @@ def main():
         result = evaluate_with_prompt(
             rag, client, qa_pairs, config,
             sample_size=sample_size,
+            doc_idx=doc_idx,
         )
         elapsed = time.time() - t0
         result["time_seconds"] = round(elapsed, 2)

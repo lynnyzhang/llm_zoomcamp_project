@@ -9,7 +9,7 @@
 
 ## Development Subset (Default)
 
-All automated runs use the **dev subset**: a deterministic coverage-sampled 50 Pokémon (all 18 types, all generations, legendary/mythical representation) → 50 Pokédex records, 250 QA pairs. This is a user directive (2026-08-09): `src/data/ingest.py` builds the full 1,350-record corpus by default (no LLM cost, seconds), and the dev-subset limit is applied in `evaluation/generate_qa.py` so automated eval runs stay cheap; full-data QA runs are manual only. See [Manual full-data runs](#manual-full-data-runs) below.
+All automated runs use the **dev subset**: a deterministic coverage-sampled 50 Pokémon (all 18 types, all generations, legendary/mythical representation) → 50 Pokédex records, 250 ground-truth questions. This is a user directive (2026-08-09): `src/data/ingest.py` builds the full 1,350-record corpus by default (no LLM cost, seconds), and the dev-subset limit is applied in `evaluation/generate_qa.py` so automated eval runs stay cheap; full-data QA runs are manual only. See [Manual full-data runs](#manual-full-data-runs) below.
 
 ## Docker Setup (Recommended)
 
@@ -99,11 +99,11 @@ uv run python -m src.data.ingest
 # Chunk documents into data/chunks/documents.jsonl
 uv run python -m src.data.chunker
 
-# Generate the QA set (dev subset: 250 pairs; requires the LLM API)
+# Generate the ground-truth set (dev subset: 250 questions; requires the LLM API)
 uv run python -m evaluation.generate_qa
 ```
 
-`ingest.py` defaults to the full 1,025-record corpus; pass `--limit N` for a smaller corpus (e.g. `--limit 50`). `generate_qa.py` defaults to the deterministic coverage-sampled dev subset (50 records × 5 pairs = 250) and supports `--full` (all 1,025 records), `--limit N`, `--pairs N` (pairs per record), `--seed N`, and `--resume` (skip ids already in qa.jsonl).
+`ingest.py` defaults to the full 1,025-record corpus; pass `--limit N` for a smaller corpus (e.g. `--limit 50`). `generate_qa.py` defaults to the deterministic coverage-sampled dev subset (50 records × 5 questions = 250) and supports `--full` (all 1,025 records), `--limit N`, `--questions N` (questions per record), `--seed N`, and `--resume` (skip ids already in qa.jsonl). Each row is `{"question", "document"}` — questions only, linked to the Pokédex document that contains the answer; the LLM never writes answers.
 
 ### 4. Start the app
 
@@ -147,7 +147,7 @@ The full dataset is 1,025 Pokémon; the full QA set would be 5,125 pairs (5 per 
 |------|---------|--------------|
 | Ingest | `uv run python -m src.data.ingest` | All 1,350 records → `data/corpus.jsonl` (default) |
 | Chunk  | `uv run python -m src.data.chunker` | Re-chunks whatever corpus exists (no flags) |
-| QA     | `uv run python -m evaluation.generate_qa --full` | 1,350 records × 5 = 6,750 pairs (flagged MANUAL — slow/costly) |
+| QA     | `uv run python -m evaluation.generate_qa --full` | 1,350 records × 5 = 6,750 questions (flagged MANUAL — slow/costly) |
 
 `--limit N` on `generate_qa.py` selects a coverage-sampled N records (deterministic, `--seed`); on `ingest.py` it takes the first N by id.
 
@@ -168,7 +168,7 @@ uv run python -m evaluation.agent_eval           # 6. agent vs simple (~27 min o
 
 ### Cost / time note
 
-Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took ≈ 1,120s (~19 min) and the agent eval ≈ 27 min. The full 1,350-Pokémon / 6,750-pair run will be substantially longer (ingest + chunk scale linearly, QA generation scales with records, and the evals scale with QA pairs) and consumes meaningful LLM tokens — the QA generator alone issues one multi-pair prompt per record. Budget accordingly, and switch back to the dev subset afterwards (a plain `uv run python -m evaluation.generate_qa` run regenerates the coverage-sampled 250-pair set).
+Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took ≈ 1,120s (~19 min) and the agent eval ≈ 27 min. The full 1,350-Pokémon / 6,750-question run will be substantially longer (ingest + chunk scale linearly, QA generation scales with records, and the evals scale with ground-truth questions) and consumes meaningful LLM tokens — the QA generator alone issues one multi-pair prompt per record. Budget accordingly, and switch back to the dev subset afterwards (a plain `uv run python -m evaluation.generate_qa` run regenerates the coverage-sampled 250-question set).
 
 ## Configuration Reference
 

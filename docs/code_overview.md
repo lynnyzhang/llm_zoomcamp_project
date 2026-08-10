@@ -87,7 +87,8 @@ spans → exporters persist → `dashboard.py` reads back via `get_traces_db_pat
 
 | Module | Function | Job |
 |---|---|---|
-| `evaluation/generate_qa.py` | `generate_for_record()`, `_generate_qa_pairs()`, `llm_structured_retry()`, `supports_structured_output()`, `main()` | LLM-generate 5 Q&A pairs per Pokémon (default dev subset: coverage-sampled 50 → 250 total; `--full` for all) into `evaluation/data/qa.jsonl`; llama.cpp-compatible structured output via `patch_openai_client` |
+| `evaluation/evaluation_utils.py` | `calc_price()`, `calc_total_price()`, `patch_openai_client()`, `llm_structured()`, `llm_structured_retry()`, `map_progress()`, `load_document_index()`, `ground_truth_answer()` | Shared eval helpers mirroring the course's `evaluation_utils.py`; the document index provides ground-truth answers (`search_text`) at eval time |
+| `evaluation/generate_qa.py` | `generate_questions_for_record()`, `_generate_questions()`, `supports_structured_output()`, `main()` | LLM-generate 5 questions per Pokémon linked to the document containing the answer (default dev subset: coverage-sampled 50 → 250 rows of `{"question", "document"}`; `--full` for all) into `evaluation/data/qa.jsonl`; llama.cpp-compatible structured output via shared `patch_openai_client` |
 | `evaluation/retrieval_eval.py` | `evaluate_search()`, `precision_at_k()`, `recall_at_k()`, `mrr()`, `main()` | Rank search quality per mode on the 250 questions |
 | `evaluation/llm_eval.py` | `llm_judge()`, `llm_judge_retry()`, `evaluate_with_prompt()`, `main()` | LLM-as-judge (faithfulness/relevance/coherence, 1-5) across Simple / Detailed / With-Examples prompts |
 | `evaluation/agent_eval.py` | `retrieval_accuracy()`, `llm_judge_score()`, `evaluate_answer_quality()`, `create_comparison_chart()`, `main()` | Simple RAG vs Agentic RAG: hit rate, searches/query, latency, judge scores, comparison chart |
@@ -106,7 +107,8 @@ spans → exporters persist → `dashboard.py` reads back via `get_traces_db_pat
 3. **Feedback round-trip:** UI → `record_feedback(span_id)` → span store →
    dashboard "feedback distribution" panel — the only user input that flows
    back into monitoring.
-4. **Dev subset discipline:** `ingest.py` builds the full 1,350-record corpus by default; `generate_qa.py`'s coverage-sampled dev subset (50 records → 250 QA) keeps every automated run cheap; full-data QA runs are manual (`--full`), per user directive.
+4. **Dev subset discipline:** `ingest.py` builds the full 1,350-record corpus by default; `generate_qa.py`'s coverage-sampled dev subset (50 records → 250 questions) keeps every automated run cheap; full-data QA runs are manual (`--full`), per user directive.
+5. **Ground truth = question → document:** `generate_qa.py` writes only questions (`{"question", "document"}`); the LLM never writes answers — `llm_eval`/`agent_eval` resolve the ground-truth answer from the linked document's `search_text`, keeping the judge honest.
 5. **Guardrail contract:** `RAGAgent` returns `rejected:true` with zero
    searches for out-of-scope queries (verified by tests asserting
    `searches == []`), and the app renders a warning banner instead of cards —

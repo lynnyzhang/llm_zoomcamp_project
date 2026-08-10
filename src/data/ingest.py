@@ -28,7 +28,7 @@ TYPES_CSV = RAW_DIR / "pokemon_types.csv"
 CORPUS_FILE = DATA_DIR / "corpus.jsonl"
 
 # The 18 canonical types, in the order used for the "Type effectiveness"
-# rendering (standard gen-1 ordering used across the reference material).
+# rendering (standard gen-1 ordering).
 TYPE_ORDER = [
     "normal", "fire", "water", "electric", "grass", "ice", "fighting",
     "poison", "ground", "flying", "psychic", "bug", "rock", "ghost",

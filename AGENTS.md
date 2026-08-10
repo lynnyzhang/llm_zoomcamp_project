@@ -12,7 +12,7 @@ The knowledge base is the Kaggle Pokémon Dataset with Stats and Types
 (`patelris/pokemon-dataset-with-stats-and-types`, 1,350 records: 1,025
 canonical Pokémon + 325 alternate forms) fetched by `src/data/ingest.py`,
 which builds the full 1,350-record corpus by default. The **dev subset** — a
-deterministic coverage-sampled 50 Pokémon (250 QA pairs) — is the default for
+deterministic coverage-sampled 50 Pokémon (250 ground-truth questions) — is the default for
 ground-truth generation (`evaluation/generate_qa.py`) and all automated eval
 runs; full-data QA runs are manual (see `docs/setup.md`).
 
