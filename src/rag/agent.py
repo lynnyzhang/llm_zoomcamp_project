@@ -6,55 +6,10 @@ from typing import Any
 from src.llm import get_model
 from src.rag.pipeline import RAGBase
 from src.search.hybrid import HybridSearch
+from src.search.web import web_search
 
 # ---------------------------------------------------------------------------
 # Agent instructions
-# ---------------------------------------------------------------------------
-
-ANALYSIS_INSTRUCTIONS = """\
-You are evaluating search results for a Pokémon question-answering system.
-
-Given a question and a set of search results (documents), determine:
-1. Whether the question is about the Pokémon domain (stats, types,
-   weaknesses, abilities, evolutions, team building). If it is about anything
-   else — battle simulation, winner prediction, save files, cheating, or
-   unrelated topics (cooking, finance, medicine, software, etc.) — set
-   off_topic to true.
-2. Whether the results contain enough information to answer the question confidently.
-3. If not, suggest a reformulated query that might find better results.
-
-Respond with a JSON object:
-{
-  "sufficient": true/false,
-  "reason": "brief explanation",
-  "reformulated_query": "improved search query (only if sufficient=false)",
-  "off_topic": false,
-  "off_topic_reason": ""
-}
-
-If results are sufficient, set reformulated_query to an empty string.
-If the question is about Pokémon, set off_topic to false.
-"""
-
-ANSWER_INSTRUCTIONS = """\
-You are a Pokémon knowledge assistant.
-
-Use ONLY the information in the context to answer. Be concise and accurate.
-- For weakness or resistance questions, cite the damage_taken multipliers from
-  the retrieved documents (e.g. "Charizard is 4x weak to Rock, 2x weak to
-  Water/Electric, and immune to Ground").
-- For team-building questions, suggest Pokémon or types that cover the team's
-  weaknesses based on the retrieved type data. Never simulate battles, predict
-  winners, or claim that a team "will beat" another.
-If the answer is not found in the context, say "I don't know."
-If multiple searches were performed, synthesize information from all results.
-"""
-
-MAX_ITERATIONS = 3
-
-
-# ---------------------------------------------------------------------------
-# Guardrails
 # ---------------------------------------------------------------------------
 
 REJECTION_MESSAGE = (
@@ -69,6 +24,81 @@ UNCERTAINTY_NOTE = (
     "I couldn't find a confident answer to that in the Pokédex. "
     "Could you rephrase, or ask about a specific Pokémon?"
 )
+
+# Tool-use developer instructions (reference-style: "make multiple searches
+# with different keywords before answering") + the Pokémon persona and
+# guardrail clauses from the previous analysis-based loop.
+AGENT_INSTRUCTIONS = f"""\
+You are a Pokémon knowledge assistant. Use the search tool to find
+information in the local Pokédex index, and the web_search tool when the
+question needs information beyond the index (recent news, events, or topics
+not in the dataset). Make multiple searches with different keywords before
+answering.
+
+Rules:
+- Answer ONLY from the information returned by the tools.
+- For weakness or resistance questions, cite the damage_taken multipliers from
+  the retrieved documents (e.g. "Charizard is 4x weak to Rock, 2x weak to
+  Water/Electric, and immune to Ground").
+- For team-building questions, suggest Pokémon or types that cover the team's
+  weaknesses based on the retrieved type data. Never simulate battles, predict
+  winners, or claim that a team "will beat" another.
+- If the answer is not found in the tool results, say "I don't know."
+- If the question is outside the Pokémon domain (battle simulation, winner
+  prediction, save files, cheating, or unrelated topics such as cooking,
+  finance, medicine, software), do NOT call any tool. Instead, reply with
+  exactly: {REJECTION_MESSAGE}
+"""
+
+MAX_ITERATIONS = 3
+
+# ---------------------------------------------------------------------------
+# Tools (reference-style function tools, 1-Agentic RAG)
+# ---------------------------------------------------------------------------
+
+SEARCH_TOOL = {
+    "type": "function",
+    "name": "search",
+    "description": "Search the local Pokémon Pokédex index (hybrid keyword + "
+                   "vector search) for documents matching the given query.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Search query text to look up in the Pokédex index.",
+            }
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+}
+
+WEB_SEARCH_TOOL = {
+    "type": "function",
+    "name": "web_search",
+    "description": "Search the web (DuckDuckGo) for information not covered by "
+                   "the local Pokédex index — e.g. recent events, news, or "
+                   "topics outside the dataset.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Web search query text.",
+            }
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+}
+
+AGENT_TOOLS = [SEARCH_TOOL, WEB_SEARCH_TOOL]
+
+
+# ---------------------------------------------------------------------------
+# Guardrails
+# ---------------------------------------------------------------------------
 
 # Rule pre-gate: regex patterns matched against the lowercased query.
 # Deliberately phrase/word-based so bare "battle" (battle TEAM suggestions,
@@ -103,19 +133,10 @@ REJECT_PATTERNS = (
     re.compile(r"\bfever\b"),
 )
 
-# Deterministic fail-safe domain signals (static only, no data/ dependency):
-# the 18 Pokémon type names plus high-confidence Pokédex vocabulary. Type-name
-# substrings deliberately also catch compound Pokémon names (dragonite, darkrai).
-POKEMON_TYPE_NAMES = frozenset({
-    "normal", "fire", "water", "electric", "grass", "ice", "fighting",
-    "poison", "ground", "flying", "psychic", "bug", "rock", "ghost",
-    "dragon", "steel", "dark", "fairy",
-})
 
-# Dex numbers 1..99999 (whole numbers only, covering standard 1..1025 plus
-# alt-form ids 10001..10325) and the "stat(s)" vocabulary term.
-_DEX_NUMBER_RE = re.compile(r"\b(?:[1-9][0-9]{0,4})\b")
-_STAT_TERM_RE = re.compile(r"\bstat(?:s)?\b")
+def _is_out_of_scope(query):
+    normalized = query.lower()
+    return any(pattern.search(normalized) for pattern in REJECT_PATTERNS)
 
 
 def rejection_result():
@@ -125,22 +146,6 @@ def rejection_result():
         "iterations": 0,
         "rejected": True,
     }
-
-
-def _is_out_of_scope(query):
-    normalized = query.lower()
-    return any(pattern.search(normalized) for pattern in REJECT_PATTERNS)
-
-
-def _has_pokemon_signals(text):
-    normalized = text.lower()
-    if "pokemon" in normalized or "pokémon" in normalized:
-        return True
-    if _DEX_NUMBER_RE.search(normalized):
-        return True
-    if _STAT_TERM_RE.search(normalized):
-        return True
-    return any(t in normalized for t in POKEMON_TYPE_NAMES)
 
 
 # ---------------------------------------------------------------------------
@@ -190,183 +195,97 @@ class RAGAgent:
         self.search_type = search_type
 
     # ------------------------------------------------------------------
-    # Tool: perform_search
+    # Tool: search
     # ------------------------------------------------------------------
 
     def perform_search(self, query, num_results=5):
         return self.rag.search(query, num_results=num_results)
 
     # ------------------------------------------------------------------
-    # Tool: analyze_results
+    # Tool dispatch (reference make_call)
     # ------------------------------------------------------------------
 
-    def analyze_results(self, query, results):
-        context = self.rag.build_context(results)
-        prompt = (
-            f"Question: {query}\n\n"
-            f"Search Results:\n{context}\n\n"
-            "Evaluate whether these results are sufficient to answer the question."
-        )
-
-        messages = [
-            {"role": "developer", "content": ANALYSIS_INSTRUCTIONS},
-            {"role": "user", "content": prompt},
-        ]
-
-        response = self.llm_client.responses.create(
-            model=self.model,
-            input=messages,
-        )
-
-        text = response.output_text.strip()
-        # Extract JSON from response (handle markdown code blocks)
-        if "```" in text:
-            text = text.split("```")[1]
-            text = text.removeprefix("json")
-            text = text.strip()
-
+    def _make_call(self, call, searches):
+        """Execute a function_call item: dispatch on the tool name and return
+        the function_call_output message to feed back into the conversation
+        (reference pattern: execute → JSON result → append to messages)."""
         try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            # Deterministic fail-safe: never blindly treat unparseable analysis
-            # as sufficient. If the query carries static Pokémon-domain signals,
-            # keep the current fail-open behavior; otherwise reject the query as
-            # out-of-scope by default.
-            if _has_pokemon_signals(query):
-                return {
-                    "sufficient": True,
-                    "reason": "Could not parse analysis (fallback)",
-                    "reformulated_query": "",
-                    "off_topic": False,
-                    "off_topic_reason": "",
-                }
-            return rejection_result()
+            args = json.loads(call.arguments)
+        except (json.JSONDecodeError, TypeError):
+            args = {}
+        query = (args.get("query") or "").strip()
+
+        if not query:
+            # Fail-safe: never run a search on unparseable/empty arguments —
+            # feed the error back so the model can recover.
+            output = json.dumps({"error": f"Could not parse arguments for tool '{call.name}': missing 'query'."})
+        elif call.name == "search":
+            results = self.perform_search(query, num_results=5)
+            searches.append(
+                SearchRecord(query=query, results=results, analysis={"sufficient": len(results) > 0})
+            )
+            output = json.dumps(results, ensure_ascii=False)
+        elif call.name == "web_search":
+            results = web_search(query, num_results=5)
+            searches.append(
+                SearchRecord(query=query, results=results, analysis={"sufficient": len(results) > 0})
+            )
+            output = json.dumps(results, ensure_ascii=False)
+        else:
+            output = json.dumps({"error": f"Unknown tool: {call.name}"})
+
+        return {
+            "type": "function_call_output",
+            "call_id": call.call_id,
+            "output": output,
+        }
 
     # ------------------------------------------------------------------
-    # Tool: reformulate_query
-    # ------------------------------------------------------------------
-
-    def reformulate_query(self, original_query, analysis):
-        reformulated = analysis.get("reformulated_query", "").strip()
-        if reformulated:
-            return reformulated
-
-        # If analysis didn't provide a reformulation, ask the LLM directly
-        prompt = (
-            f"Original query: {original_query}\n"
-            f"Reason results were insufficient: {analysis.get('reason', 'unknown')}\n\n"
-            "Provide a reformulated search query that would find better results. "
-            "Return ONLY the new query, nothing else."
-        )
-
-        messages = [
-            {"role": "developer", "content": "You are a search query reformulation assistant. Return only the reformulated query."},
-            {"role": "user", "content": prompt},
-        ]
-
-        response = self.llm_client.responses.create(
-            model=self.model,
-            input=messages,
-        )
-
-        return response.output_text.strip()
-
-    # ------------------------------------------------------------------
-    # Tool: generate_answer
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _dedupe_results(all_results):
-        seen_ids = set()
-        unique_results = []
-        for doc in all_results:
-            doc_id = doc.get("id", "")
-            if doc_id not in seen_ids:
-                seen_ids.add(doc_id)
-                unique_results.append(doc)
-        return unique_results
-
-    def generate_answer(self, query, all_results):
-        unique_results = self._dedupe_results(all_results)
-
-        prompt = self.rag.build_prompt(query, unique_results)
-        messages = [
-            {"role": "developer", "content": ANSWER_INSTRUCTIONS},
-            {"role": "user", "content": prompt},
-        ]
-
-        response = self.llm_client.responses.create(
-            model=self.model,
-            input=messages,
-        )
-
-        return response.output_text
-
-    # ------------------------------------------------------------------
-    # Agent loop: run
+    # Agent loop: run (reference tool-use loop, bounded)
     # ------------------------------------------------------------------
 
     def run(self, query):
         # Guardrail (layer 1): rule pre-gate rejects out-of-scope queries
-        # before any search is performed.
+        # before any LLM call or search is performed.
         if _is_out_of_scope(query):
             return rejection_result()
 
+        messages = [
+            {"role": "developer", "content": AGENT_INSTRUCTIONS},
+            {"role": "user", "content": query},
+        ]
         searches = []
-        all_results = []
-        current_query = query
+        last_answer = UNCERTAINTY_NOTE
 
-        for i in range(self.max_iterations):
-            results = self.perform_search(current_query)
-            all_results.extend(results)
-
-            analysis = self.analyze_results(current_query, results)
-
-            # Guardrail (layer 3): the deterministic fail-safe returned a
-            # rejection dict when the analysis could not be parsed and the
-            # query carried no Pokémon-domain signals.
-            if analysis.get("rejected", False):
-                return analysis
-
-            # Guardrail (layer 2): the analyzer flagged the query as off-topic.
-            if analysis.get("off_topic", False):
-                return rejection_result()
-
-            record = SearchRecord(
-                query=current_query,
-                results=results,
-                analysis=analysis,
+        # Reference-style loop: the model decides when to search (function
+        # calls) and when to answer (a plain message — the loop stops when a
+        # response contains no function calls). Bounded by max_iterations so
+        # a looping model cannot hang the UI.
+        for _ in range(self.max_iterations):
+            response = self.llm_client.responses.create(
+                model=self.model,
+                input=messages,
+                tools=AGENT_TOOLS,
             )
-            searches.append(record)
-
-            if analysis.get("sufficient", True):
+            messages.extend(response.output)
+            called_tool = False
+            for item in response.output:
+                if item.type == "function_call":
+                    messages.append(self._make_call(item, searches))
+                    called_tool = True
+                elif item.type == "message":
+                    last_answer = item.content[0].text
+            if not called_tool:
                 break
 
-            current_query = self.reformulate_query(query, analysis)
-
-        # Low-confidence path — in-domain queries the loop could not answer
-        # confidently get the uncertainty note with rejected: false (never a
-        # rejection dict). Triggers: zero results across all searches (no LLM
-        # answer call at all), max_iterations reached with every analysis
-        # insufficient, or an empty final context.
-        unique_results = self._dedupe_results(all_results)
-        final_context = self.rag.build_context(unique_results)
-        exhausted = (
-            len(searches) >= self.max_iterations
-            and all(not s.analysis.get("sufficient", True) for s in searches)
-        )
-        if not all_results or not final_context.strip() or exhausted:
-            return {
-                "answer": UNCERTAINTY_NOTE,
-                "searches": searches,
-                "iterations": len(searches),
-                "rejected": False,
-            }
-
-        answer = self.generate_answer(query, all_results)
+        # Guardrail (layer 2): LLM-level off-topic — the model was instructed
+        # to refuse out-of-domain questions with the exact rejection message
+        # and no tool calls; surface it through the same rejection contract.
+        if not searches and last_answer == REJECTION_MESSAGE:
+            return rejection_result()
 
         return {
-            "answer": answer,
+            "answer": last_answer,
             "searches": searches,
             "iterations": len(searches),
             "rejected": False,
@@ -383,4 +302,4 @@ if __name__ == "__main__":
     print(f"Answer: {result['answer'][:200]}")
     print(f"Iterations: {result['iterations']}")
     for i, s in enumerate(result["searches"]):
-        print(f"  Search {i+1}: query='{s.query}', results={len(s.results)}, sufficient={s.analysis.get('sufficient') if s.analysis else 'N/A'}")
+        print(f"  Search {i+1}: query='{s.query}', results={len(s.results)}")

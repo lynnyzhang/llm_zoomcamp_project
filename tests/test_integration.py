@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -482,7 +483,8 @@ class TestRAGPipeline:
 
 
 class TestAgentLoop:
-    """Test the agentic RAG with iterative search and query reformulation."""
+    """Test the reference-style agentic loop: LLM tool use decides when to
+    search (search / web_search tools) and when to answer (plain message)."""
 
     @pytest.fixture(scope="class")
     def search_index(self):
@@ -490,59 +492,39 @@ class TestAgentLoop:
 
         return HybridSearch(documents_path=CHUNKS_DIR / "documents.jsonl")
 
-    @pytest.fixture
-    def mock_llm_client(self):
+    # --- mock helpers (tool-use contract) ---------------------------------
+
+    @staticmethod
+    def _tool_call(name, arguments, call_id="call_1"):
+        return SimpleNamespace(
+            type="function_call",
+            name=name,
+            arguments=json.dumps(arguments),
+            call_id=call_id,
+        )
+
+    @staticmethod
+    def _message(text):
+        return SimpleNamespace(type="message", content=[SimpleNamespace(text=text)])
+
+    @staticmethod
+    def _response(*items):
+        response = MagicMock()
+        response.output = list(items)
+        return response
+
+    @staticmethod
+    def _search_then_answer_client(answer_text, search_query="Pikachu stats"):
         mock_client = MagicMock()
-
-        # First call: analysis (sufficient=True → no reformulation needed)
-        analysis_response = MagicMock()
-        analysis_response.output_text = json.dumps({
-            "sufficient": True,
-            "reason": "Results contain relevant information",
-            "reformulated_query": "",
-            "off_topic": False,
-            "off_topic_reason": "",
-        })
-
-        # Second call: final answer
-        answer_response = MagicMock()
-        answer_response.output_text = "Python is a high-level programming language."
-
-        mock_client.responses.create.side_effect = [analysis_response, answer_response]
-        return mock_client
-
-    @pytest.fixture
-    def mock_llm_client_reformulate(self):
-        mock_client = MagicMock()
-
-        # Call 1: analysis (insufficient)
-        insufficient_response = MagicMock()
-        insufficient_response.output_text = json.dumps({
-            "sufficient": False,
-            "reason": "Results not specific enough",
-            "reformulated_query": "fire type pokemon weaknesses",
-            "off_topic": False,
-            "off_topic_reason": "",
-        })
-
-        # Call 2: analysis after reformulation (sufficient)
-        sufficient_response = MagicMock()
-        sufficient_response.output_text = json.dumps({
-            "sufficient": True,
-            "reason": "Found relevant information",
-            "reformulated_query": "",
-            "off_topic": False,
-            "off_topic_reason": "",
-        })
-
-        # Call 3: final answer
-        answer_response = MagicMock()
-        answer_response.output_text = "Python is a high-level programming language."
-
         mock_client.responses.create.side_effect = [
-            insufficient_response, sufficient_response, answer_response
+            TestAgentLoop._response(
+                TestAgentLoop._tool_call("search", {"query": search_query})
+            ),
+            TestAgentLoop._response(TestAgentLoop._message(answer_text)),
         ]
         return mock_client
+
+    # --- tests ------------------------------------------------------------
 
     def test_agent_dataclasses(self):
         from src.rag.agent import AgentResult, SearchRecord
@@ -564,147 +546,158 @@ class TestAgentLoop:
         assert len(results) > 0
         assert "id" in results[0]
 
-    def test_agent_analyze_results(self, search_index, mock_llm_client):
-        from src.rag.agent import RAGAgent
+    def test_tools_are_declared(self):
+        from src.rag.agent import AGENT_TOOLS, SEARCH_TOOL, WEB_SEARCH_TOOL
 
-        agent = RAGAgent(search_index=search_index, llm_client=mock_llm_client)
-        results = agent.perform_search("Which Pokémon are weak to fire?")
-        analysis = agent.analyze_results("Which Pokémon are weak to fire?", results)
+        names = [t["name"] for t in AGENT_TOOLS]
+        assert names == ["search", "web_search"]
+        assert all(t["type"] == "function" for t in AGENT_TOOLS)
+        assert SEARCH_TOOL["parameters"]["required"] == ["query"]
+        assert WEB_SEARCH_TOOL["parameters"]["required"] == ["query"]
 
-        assert isinstance(analysis, dict)
-        assert "sufficient" in analysis
-        assert "reason" in analysis
+    def test_agent_run_single_tool_call(self, search_index):
+        """Model calls search once, then answers with a plain message."""
+        from src.rag.agent import AGENT_TOOLS, RAGAgent
 
-    def test_agent_analyze_handles_markdown_json(self):
-        from src.rag.agent import RAGAgent
-
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.output_text = (
-            '```json\n{"sufficient": true, "reason": "ok", '
-            '"reformulated_query": "", "off_topic": false, '
-            '"off_topic_reason": ""}\n```'
-        )
-        mock_client.responses.create.return_value = mock_response
-
-        agent = RAGAgent(search_index=StubSearchIndex(), llm_client=mock_client)
-        results = agent.perform_search("test")
-        analysis = agent.analyze_results("test", results)
-
-        assert analysis["sufficient"] is True
-
-    def test_agent_analyze_handles_invalid_json(self):
-        """Agent.analyze_results deterministic fail-safe: unparseable JSON with
-        no Pokémon-domain signals → rejection dict (out-of-scope by default)."""
-        from src.rag.agent import RAGAgent
-
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.output_text = "This is not JSON at all"
-        mock_client.responses.create.return_value = mock_response
-
-        agent = RAGAgent(search_index=StubSearchIndex(), llm_client=mock_client)
-        results = agent.perform_search("test")
-        analysis = agent.analyze_results("test", results)
-
-        # No Pokémon-domain signals in "test" → deterministic fail-safe rejection
-        assert analysis["rejected"] is True
-
-    def test_agent_reformulate_query_from_analysis(self, search_index):
-        from src.rag.agent import RAGAgent
-
-        mock_client = MagicMock()
+        mock_client = self._search_then_answer_client("Pikachu's base Speed is 90.")
         agent = RAGAgent(search_index=search_index, llm_client=mock_client)
-        analysis = {"reformulated_query": "better query about Pikachu"}
-        reformulated = agent.reformulate_query("original query", analysis)
-        assert reformulated == "better query about Pikachu"
-        # Should not call LLM since reformulated_query was provided
-        mock_client.responses.create.assert_not_called()
-
-    def test_agent_reformulate_query_via_llm(self, search_index):
-        from src.rag.agent import RAGAgent
-
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.output_text = "reformulated query from LLM"
-        mock_client.responses.create.return_value = mock_response
-
-        agent = RAGAgent(search_index=search_index, llm_client=mock_client)
-        analysis = {"reformulated_query": "", "reason": "insufficient"}
-        reformulated = agent.reformulate_query("original", analysis)
-        assert reformulated == "reformulated query from LLM"
-        mock_client.responses.create.assert_called_once()
-
-    def test_agent_generate_answer_deduplicates(self, search_index, mock_llm_client):
-        from src.rag.agent import RAGAgent
-
-        agent = RAGAgent(search_index=search_index, llm_client=mock_llm_client)
-        all_results = [
-            {"id": "1", "content": "a", "title": "A", "section": "s"},
-            {"id": "1", "content": "a", "title": "A", "section": "s"},  # duplicate
-            {"id": "2", "content": "b", "title": "B", "section": "s"},
-        ]
-        answer = agent.generate_answer("test", all_results)
-        assert isinstance(answer, str)
-        # Should have been called with deduplicated results
-        call_args = mock_llm_client.responses.create.call_args
-        assert call_args is not None
-
-    def test_agent_run_single_iteration(self, search_index, mock_llm_client):
-        from src.rag.agent import RAGAgent
-
-        agent = RAGAgent(search_index=search_index, llm_client=mock_llm_client)
         result = agent.run("What are Pikachu's stats?")
 
-        assert "answer" in result
-        assert "searches" in result
-        assert "iterations" in result
-        assert result["iterations"] >= 1
-        assert len(result["searches"]) >= 1
-        assert result["searches"][0].analysis is not None
+        assert result["answer"] == "Pikachu's base Speed is 90."
+        assert result["iterations"] == 1
+        assert result["rejected"] is False
+        assert len(result["searches"]) == 1
+        assert result["searches"][0].analysis == {"sufficient": True}
+        # The LLM call must carry the tool declarations.
+        call = mock_client.responses.create.call_args_list[0]
+        assert call.kwargs["tools"] == AGENT_TOOLS
+        assert call.kwargs["input"][0]["role"] == "developer"
 
-    def test_agent_run_with_reformulation(self, search_index, mock_llm_client_reformulate):
+    def test_agent_run_multiple_searches(self, search_index):
+        """Model searches twice before answering; tool results are fed back
+        into the conversation as function_call_output messages."""
         from src.rag.agent import RAGAgent
 
-        agent = RAGAgent(search_index=search_index, llm_client=mock_llm_client_reformulate)
-        result = agent.run("vague query")
+        mock_client = MagicMock()
+        mock_client.responses.create.side_effect = [
+            self._response(self._tool_call("search", {"query": "fire types"}, "call_1")),
+            self._response(self._tool_call("search", {"query": "fire weaknesses"}, "call_2")),
+            self._response(self._message("Fire types are weak to Water.")),
+        ]
+        agent = RAGAgent(search_index=search_index, llm_client=mock_client)
+        result = agent.run("What are fire types weak to?")
 
-        assert result["iterations"] >= 2, "Should have done at least 2 iterations"
-        # First search should have been insufficient
-        assert result["searches"][0].analysis["sufficient"] is False
-        # Second search should have been sufficient
-        assert result["searches"][1].analysis["sufficient"] is True
+        assert result["iterations"] == 2
+        assert [s.query for s in result["searches"]] == ["fire types", "fire weaknesses"]
+        assert result["answer"] == "Fire types are weak to Water."
+        # Tool results are fed back as function_call_output messages, in order
+        # (the mock records the live messages list by reference, so inspect the
+        # accumulated list rather than a call-snapshot's last element).
+        final_input = mock_client.responses.create.call_args_list[-1].kwargs["input"]
+        call_outputs = [
+            m for m in final_input
+            if isinstance(m, dict) and m.get("type") == "function_call_output"
+        ]
+        assert [o["call_id"] for o in call_outputs] == ["call_1", "call_2"]
+
+    def test_agent_run_with_web_search(self, search_index):
+        """web_search tool dispatches and records results (web items carry no
+        'id' — they never surface as Pokémon cards in the UI)."""
+        from src.rag.agent import RAGAgent
+
+        mock_client = MagicMock()
+        mock_client.responses.create.side_effect = [
+            self._response(self._tool_call("web_search", {"query": "Pokemon world championship 2026"}, "call_1")),
+            self._response(self._message("The championship was held in August 2026.")),
+        ]
+        agent = RAGAgent(search_index=search_index, llm_client=mock_client)
+        result = agent.run("Any news about the Pokémon world championship?")
+
+        assert result["iterations"] == 1
+        assert result["searches"][0].query == "Pokemon world championship 2026"
+        assert result["answer"] == "The championship was held in August 2026."
+
+    def test_agent_answer_without_tools_stops_immediately(self, search_index):
+        """Model answers directly (no tool call) → single LLM call, no searches."""
+        from src.rag.agent import RAGAgent
+
+        mock_client = MagicMock()
+        mock_client.responses.create.return_value = self._response(self._message("I don't know."))
+        agent = RAGAgent(search_index=search_index, llm_client=mock_client)
+        result = agent.run("A question the model refuses")
+
+        assert result["answer"] == "I don't know."
+        assert result["iterations"] == 0
+        assert result["searches"] == []
+        mock_client.responses.create.assert_called_once()
 
     def test_agent_max_iterations(self, search_index):
-        """Agent should not exceed max_iterations; exhausted in-domain runs
-        return the uncertainty note (rejected: false), never a rejection dict
-        or an LLM-generated fallback."""
-        from src.rag.agent import RAGAgent
+        """A model that keeps calling tools is bounded: the loop stops at
+        max_iterations with the uncertainty note (no final message produced)."""
+        from src.rag.agent import UNCERTAINTY_NOTE, RAGAgent
 
-        # Always insufficient analysis
         mock_client = MagicMock()
-        insufficient = MagicMock()
-        insufficient.output_text = json.dumps({
-            "sufficient": False, "reason": "bad", "reformulated_query": "retry",
-            "off_topic": False, "off_topic_reason": "",
-        })
-        mock_client.responses.create.side_effect = [insufficient, insufficient]
-
+        mock_client.responses.create.return_value = self._response(
+            self._tool_call("search", {"query": "retry"}, "call_x")
+        )
         agent = RAGAgent(search_index=search_index, llm_client=mock_client, max_iterations=2)
         result = agent.run("test")
 
-        assert result["iterations"] <= 2
-        # Low-confidence contract (review B1): exhausted iterations with all
-        # analyses insufficient → uncertainty note, rejected: false, and no
-        # generate_answer LLM call (only the 2 analysis calls happen).
-        assert result["rejected"] is False
-        assert "couldn't find a confident answer" in result["answer"]
+        assert result["iterations"] == 2
         assert mock_client.responses.create.call_count == 2
+        assert result["rejected"] is False
+        assert result["answer"] == UNCERTAINTY_NOTE
+
+    def test_agent_unknown_tool_is_fed_back_as_error(self, search_index):
+        """Unknown tool name → error JSON fed back to the model; loop continues."""
+        from src.rag.agent import RAGAgent
+
+        mock_client = MagicMock()
+        mock_client.responses.create.side_effect = [
+            self._response(self._tool_call("bogus_tool", {"query": "x"}, "call_1")),
+            self._response(self._message("I can't do that.")),
+        ]
+        agent = RAGAgent(search_index=search_index, llm_client=mock_client)
+        result = agent.run("test")
+
+        final_input = mock_client.responses.create.call_args_list[-1].kwargs["input"]
+        error_outputs = [
+            m["output"] for m in final_input
+            if isinstance(m, dict) and m.get("type") == "function_call_output"
+        ]
+        assert any("Unknown tool" in out for out in error_outputs)
+        assert result["answer"] == "I can't do that."
+        assert result["searches"] == []  # no search was executed
+
+    def test_agent_invalid_tool_arguments_do_not_crash(self, search_index):
+        """Unparseable tool arguments → error output fed back, no crash, and
+        no search executed on garbage."""
+        from src.rag.agent import RAGAgent
+
+        mock_client = MagicMock()
+        bad_call = SimpleNamespace(
+            type="function_call", name="search", arguments="not json", call_id="call_1"
+        )
+        mock_client.responses.create.side_effect = [
+            self._response(bad_call),
+            self._response(self._message("Pikachu is an Electric type.")),
+        ]
+        agent = RAGAgent(search_index=search_index, llm_client=mock_client)
+        result = agent.run("test")
+
+        assert result["answer"] == "Pikachu is an Electric type."
+        assert result["searches"] == []
+        final_input = mock_client.responses.create.call_args_list[-1].kwargs["input"]
+        error_outputs = [
+            m["output"] for m in final_input
+            if isinstance(m, dict) and m.get("type") == "function_call_output"
+        ]
+        assert any("missing 'query'" in out for out in error_outputs)
 
     def test_agent_weakness_answer_grounded_in_multipliers(self):
-        """Weakness question with damage_taken in context → grounded answer
-        citing 'weak' + a multiplier, driven by the Pokémon persona
-        instructions (damage_taken citation contract)."""
+        """Weakness question: the agent instructions (single developer prompt
+        on every call) require citing damage_taken multipliers and forbid
+        battle simulation."""
         from src.rag.agent import RAGAgent
 
         documents = [
@@ -737,152 +730,109 @@ class TestAgentLoop:
                 "score": 1.0,
             }
         ]
-        mock_client = MagicMock()
-        analysis_response = MagicMock()
-        analysis_response.output_text = json.dumps({
-            "sufficient": True,
-            "reason": "damage_taken table present",
-            "reformulated_query": "",
-            "off_topic": False,
-            "off_topic_reason": "",
-        })
-        answer_response = MagicMock()
-        answer_response.output_text = (
+        mock_client = self._search_then_answer_client(
             "Charizard is 4x weak to Rock, 2x weak to Water and Electric, "
             "and immune to Ground."
         )
-        mock_client.responses.create.side_effect = [analysis_response, answer_response]
-
         agent = RAGAgent(search_index=StubSearchIndex(documents=documents), llm_client=mock_client)
         result = agent.run("What is Charizard weak to?")
 
         assert result.get("rejected", False) is False
         assert "weak" in result["answer"]
         assert any(mult in result["answer"] for mult in ("2x", "4x"))
-        # The answer call must carry the Pokémon persona instructions that
-        # require citing damage_taken multipliers.
-        answer_call = mock_client.responses.create.call_args_list[-1]
-        developer_content = answer_call.kwargs["input"][0]["content"]
+        # The developer instructions on every call carry the persona clauses.
+        call = mock_client.responses.create.call_args_list[0]
+        developer_content = call.kwargs["input"][0]["content"]
         assert "damage_taken" in developer_content
         assert "battles" in developer_content
 
     def test_agent_team_build_answer_suggests_type_coverage(self):
         """Team-build question → persona instructions ask for type-coverage
-        suggestions and the answer provides them, without battle claims."""
+        suggestions without battle claims."""
         from src.rag.agent import RAGAgent
 
-        mock_client = MagicMock()
-        analysis_response = MagicMock()
-        analysis_response.output_text = json.dumps({
-            "sufficient": True,
-            "reason": "type data present",
-            "reformulated_query": "",
-            "off_topic": False,
-            "off_topic_reason": "",
-        })
-        answer_response = MagicMock()
-        answer_response.output_text = (
+        mock_client = self._search_then_answer_client(
             "Water types are weak to Electric and Grass, so add a Jolteon or "
             "Venusaur to cover that weakness."
         )
-        mock_client.responses.create.side_effect = [analysis_response, answer_response]
-
         agent = RAGAgent(search_index=StubSearchIndex(), llm_client=mock_client)
         result = agent.run("Help me build a team that covers a water weakness")
 
         assert result.get("rejected", False) is False
         assert "weak" in result["answer"]
         assert "cover" in result["answer"]
-        answer_call = mock_client.responses.create.call_args_list[-1]
-        developer_content = answer_call.kwargs["input"][0]["content"]
+        call = mock_client.responses.create.call_args_list[0]
+        developer_content = call.kwargs["input"][0]["content"]
         assert "team-building" in developer_content
         assert "will beat" in developer_content
 
-    def test_agent_low_confidence_exhausted_iterations(self):
-        """In-domain query exhausting max iterations with all analyses
-        insufficient → uncertainty note, rejected: false (never a rejection
-        dict), and no generate_answer LLM call."""
-        from src.rag.agent import UNCERTAINTY_NOTE, RAGAgent
+    def test_agent_web_search_module_is_used(self, search_index):
+        """web_search tool calls src.search.web.web_search with the parsed
+        query argument (patched to avoid the network)."""
+        from unittest.mock import patch
+
+        from src.rag.agent import RAGAgent
 
         mock_client = MagicMock()
-        insufficient = MagicMock()
-        insufficient.output_text = json.dumps({
-            "sufficient": False, "reason": "bad", "reformulated_query": "retry",
-            "off_topic": False, "off_topic_reason": "",
-        })
-        mock_client.responses.create.side_effect = [insufficient, insufficient, insufficient]
+        mock_client.responses.create.side_effect = [
+            self._response(self._tool_call("web_search", {"query": "recent pokemon news"}, "call_1")),
+            self._response(self._message("Nothing new.")),
+        ]
+        agent = RAGAgent(search_index=search_index, llm_client=mock_client)
+        with patch("src.rag.agent.web_search", return_value=[{"title": "t", "url": "u", "snippet": "s"}]) as mock_web:
+            result = agent.run("Any recent Pokémon news?")
 
-        agent = RAGAgent(search_index=StubSearchIndex(), llm_client=mock_client, max_iterations=3)
-        result = agent.run("What are Gengar's stats?")
-
-        assert result["answer"] == UNCERTAINTY_NOTE
-        assert "couldn't find a confident answer" in result["answer"]
-        assert result["rejected"] is False
-        assert result["iterations"] == 3
-        # Only the 3 analysis calls; the answer mock was never invoked.
-        assert mock_client.responses.create.call_count == 3
-
-    def test_agent_empty_results_skips_answer_call(self):
-        """Empty search results → uncertainty note, rejected: false, and the
-        LLM answer call is never made (analysis calls only)."""
-        from src.rag.agent import UNCERTAINTY_NOTE, RAGAgent
-
-        mock_client = MagicMock()
-        insufficient = MagicMock()
-        insufficient.output_text = json.dumps({
-            "sufficient": False, "reason": "no results", "reformulated_query": "retry",
-            "off_topic": False, "off_topic_reason": "",
-        })
-        mock_client.responses.create.side_effect = [insufficient, insufficient, insufficient]
-
-        agent = RAGAgent(
-            search_index=StubSearchIndex(documents=[]), llm_client=mock_client,
-            max_iterations=3,
-        )
-        result = agent.run("What is the habitat of a rare Pokémon?")
-
-        assert result["answer"] == UNCERTAINTY_NOTE
-        assert "couldn't find a confident answer" in result["answer"]
-        assert result["rejected"] is False
-        # 3 analysis calls, zero answer calls.
-        assert mock_client.responses.create.call_count == 3
+        mock_web.assert_called_once_with("recent pokemon news", num_results=5)
+        assert result["iterations"] == 1
+        assert result["searches"][0].results[0]["title"] == "t"
 
 
 # ===========================================================================
-# PHASE 5b: Agent Guardrails (rule pre-gate + off-topic flag + fail-safe)
+# PHASE 5b: Agent Guardrails (rule pre-gate + LLM off-topic refusal)
 # ===========================================================================
 
 
 class TestAgentGuardrails:
-    """Guardrail rejection paths (todo 4): rule pre-gate, LLM off-topic flag,
-    and the deterministic fail-safe, all against a stub search index."""
+    """Guardrail rejection paths: rule pre-gate (layer 1, deterministic,
+    before any LLM call) and LLM-level off-topic refusal surfaced through the
+    rejection contract (layer 2), all against a stub search index."""
 
     @staticmethod
-    def _response(text):
+    def _tool_call(name, arguments, call_id="call_1"):
+        return SimpleNamespace(
+            type="function_call",
+            name=name,
+            arguments=json.dumps(arguments),
+            call_id=call_id,
+        )
+
+    @staticmethod
+    def _message(text):
+        return SimpleNamespace(type="message", content=[SimpleNamespace(text=text)])
+
+    @staticmethod
+    def _response(*items):
         response = MagicMock()
-        response.output_text = text
+        response.output = list(items)
         return response
 
     @staticmethod
     def _in_domain_client(answer_text="Pikachu is an Electric-type Pokémon."):
         mock_client = MagicMock()
-        analysis_response = MagicMock()
-        analysis_response.output_text = json.dumps({
-            "sufficient": True,
-            "reason": "Results contain relevant Pokémon information",
-            "reformulated_query": "",
-            "off_topic": False,
-            "off_topic_reason": "",
-        })
-        answer_response = MagicMock()
-        answer_response.output_text = answer_text
-        mock_client.responses.create.side_effect = [analysis_response, answer_response]
+        mock_client.responses.create.side_effect = [
+            TestAgentGuardrails._response(
+                TestAgentGuardrails._tool_call("search", {"query": "pikachu"})
+            ),
+            TestAgentGuardrails._response(TestAgentGuardrails._message(answer_text)),
+        ]
         return mock_client
 
     def _agent(self, llm_client, **kwargs):
         from src.rag.agent import RAGAgent
 
         return RAGAgent(search_index=StubSearchIndex(), llm_client=llm_client, **kwargs)
+
+    # --- rule pre-gate (layer 1) ------------------------------------------
 
     def test_rejects_battle_simulation(self):
         result = self._agent(MagicMock()).run("Who would win Charizard vs Blastoise?")
@@ -923,6 +873,11 @@ class TestAgentGuardrails:
         result = self._agent(MagicMock()).run("Who would win Charizard vs Blastoise?")
         assert result["answer"] == REJECTION_MESSAGE
 
+    def test_pre_gate_makes_no_llm_call(self):
+        mock_client = MagicMock()
+        self._agent(mock_client).run("What is Docker?")
+        mock_client.responses.create.assert_not_called()
+
     def test_team_building_is_not_rejected(self):
         agent = self._agent(self._in_domain_client("Water types are weak to Electric and Grass."))
         result = agent.run("Help me build a battle team against water types")
@@ -936,59 +891,50 @@ class TestAgentGuardrails:
         assert result.get("rejected", False) is False
         assert result["answer"] == "Pikachu is a strong special attacker."
 
-    def test_in_domain_question_with_off_topic_false_is_not_rejected(self):
+    def test_in_domain_question_with_search_is_not_rejected(self):
         agent = self._agent(self._in_domain_client("Pikachu has 90 base Speed."))
         result = agent.run("Tell me about Pikachu")
         assert result.get("rejected", False) is False
         assert result["iterations"] == 1
         assert result["answer"] == "Pikachu has 90 base Speed."
 
-    def test_off_topic_flag_is_rejected(self):
+    # --- LLM-level off-topic (layer 2) ------------------------------------
+
+    def test_llm_refusal_without_tools_is_surfaced_as_rejection(self):
+        """Model follows the instruction to refuse off-topic questions with the
+        exact rejection message and no tool calls → rejection contract."""
+        from src.rag.agent import REJECTION_MESSAGE
+
         mock_client = MagicMock()
-        mock_client.responses.create.return_value = self._response(json.dumps({
-            "sufficient": False,
-            "reason": "Not about Pokémon",
-            "reformulated_query": "",
-            "off_topic": True,
-            "off_topic_reason": "Asks about a non-Pokémon topic",
-        }))
+        mock_client.responses.create.return_value = self._response(
+            self._message(REJECTION_MESSAGE)
+        )
         result = self._agent(mock_client).run("Explain the theory of relativity")
         assert result["rejected"] is True
         assert result["searches"] == []
         assert result["iterations"] == 0
+        assert result["answer"] == REJECTION_MESSAGE
 
-    def test_fail_safe_rejects_query_without_domain_signals(self):
-        mock_client = MagicMock()
-        mock_client.responses.create.return_value = self._response("garbage not json")
-        result = self._agent(mock_client).run("How does gravity work?")
-        assert result["rejected"] is True
-        assert result["searches"] == []
-        assert result["iterations"] == 0
+    def test_off_topic_instruction_is_in_developer_prompt(self):
+        """The single developer prompt instructs the model to refuse
+        out-of-domain questions instead of calling tools."""
+        from src.rag.agent import AGENT_INSTRUCTIONS
 
-    def test_fail_safe_allows_query_with_domain_signals(self):
+        assert "do NOT call any tool" in AGENT_INSTRUCTIONS
+        assert "REJECTION_MESSAGE" not in AGENT_INSTRUCTIONS  # already formatted in
+
+    def test_plain_answer_without_rejection_is_not_rejected(self):
+        """A plain 'I don't know' answer without the rejection message is a
+        normal low-confidence answer, never a rejection dict."""
         mock_client = MagicMock()
-        mock_client.responses.create.side_effect = [
-            self._response("garbage not json"),
-            self._response("Pikachu's base Speed is 90."),
-        ]
-        result = self._agent(mock_client).run("pikachu stats")
+        mock_client.responses.create.return_value = self._response(
+            self._message("I don't know.")
+        )
+        result = self._agent(mock_client).run("A vague in-domain question")
         assert result.get("rejected", False) is False
-        assert result["iterations"] == 1
-        assert result["answer"] == "Pikachu's base Speed is 90."
+        assert result["answer"] == "I don't know."
+        assert result["searches"] == []
 
-    def test_fail_safe_analysis_keeps_sufficient_for_domain_signals(self):
-        from src.rag.agent import RAGAgent
-
-        mock_client = MagicMock()
-        mock_client.responses.create.return_value = self._response("not json")
-        agent = RAGAgent(search_index=StubSearchIndex(), llm_client=mock_client)
-        analysis = agent.analyze_results("pikachu stats", [])
-        assert analysis["sufficient"] is True
-
-
-# ===========================================================================
-# PHASE 5c: Search-type dispatch (todo 6)
-# ===========================================================================
 
 
 class RecordingSearchIndex(StubSearchIndex):
@@ -1806,25 +1752,25 @@ class TestFullPipeline:
         assert len(answer) > 0
 
     def test_full_agent_loop(self, full_pipeline):
+        from types import SimpleNamespace
+
         mock_client = MagicMock()
 
-        # Analysis response
-        analysis_response = MagicMock()
-        analysis_response.output_text = json.dumps({
-            "sufficient": True,
-            "reason": "Results contain information about water type pokemon",
-            "reformulated_query": "",
-            "off_topic": False,
-            "off_topic_reason": "",
-        })
-
-        # Answer response
-        answer_response = MagicMock()
-        answer_response.output_text = (
-            "Pikachu is an electric type Pokémon known for high speed."
+        # Tool-use contract: model calls search, then answers with a message.
+        search_call = SimpleNamespace(
+            type="function_call", name="search",
+            arguments='{"query": "Pikachu stats"}', call_id="call_1",
         )
+        search_response = MagicMock()
+        search_response.output = [search_call]
 
-        mock_client.responses.create.side_effect = [analysis_response, answer_response]
+        answer_message = SimpleNamespace(
+            type="message", content=[SimpleNamespace(text="Pikachu is an electric type Pokémon known for high speed.")]
+        )
+        answer_response = MagicMock()
+        answer_response.output = [answer_message]
+
+        mock_client.responses.create.side_effect = [search_response, answer_response]
 
         from src.rag.agent import RAGAgent
 
