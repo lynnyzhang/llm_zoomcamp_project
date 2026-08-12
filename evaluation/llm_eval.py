@@ -5,22 +5,20 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-# Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from evaluation.evaluation_utils import (
     ground_truth_answer,
     load_document_index,
-    patch_openai_client,
 )
-from src.llm import get_model
+from src.llm import LLMClient
 
 # ---------------------------------------------------------------------------
 # Pydantic model for structured judge output
 # ---------------------------------------------------------------------------
 
-class JudgeScores(BaseModel):
+class JudgeScore(BaseModel):
     faithfulness: int  # 1-5
     relevance: int     # 1-5
     coherence: int     # 1-5
@@ -110,23 +108,23 @@ Respond with a single JSON object in exactly this format (no markdown, no extra 
 # ---------------------------------------------------------------------------
 
 def llm_judge(client, instructions, user_prompt, model=None):
-    model = model or get_model()
+    model = model or LLMClient.get_model()
     messages = [
         {"role": "developer", "content": instructions},
         {"role": "user", "content": user_prompt},
     ]
 
-    # Single path: structured output via responses.parse(text_format=JudgeScores).
-    # patch_openai_client makes it work on llama.cpp (response_format via
-    # extra_body) and passes through to the native SDK on OpenAI. There is
-    # deliberately NO create()/JSON-extraction fallback: if the backend cannot
-    # honor the schema, the output is prose — not JSON — so there is nothing to
-    # salvage (llm_judge_retry retries transient failures).
-    client = patch_openai_client(client)
+    # Single path: structured output via responses.parse(text_format=JudgeScore).
+    # LLMClient (LLMClient.get) probes text_format support once and patches
+    # responses.parse for llama.cpp (response_format via extra_body), passing
+    # through to the native SDK on OpenAI. There is deliberately NO
+    # create()/JSON-extraction fallback: if the backend cannot honor the
+    # schema, the output is prose — not JSON — so there is nothing to salvage
+    # (llm_judge_retry retries transient failures).
     response = client.responses.parse(
         model=model,
         input=messages,
-        text_format=JudgeScores,
+        text_format=JudgeScore,
     )
     if response.output_parsed is None:
         raise ValueError("structured output unsupported: server returned output_parsed=None")
@@ -134,7 +132,7 @@ def llm_judge(client, instructions, user_prompt, model=None):
 
 
 def llm_judge_retry(client, instructions, user_prompt, model=None, max_retries=3):
-    model = model or get_model()
+    model = model or LLMClient.get_model()
     for attempt in range(max_retries):
         try:
             return llm_judge(client, instructions, user_prompt, model=model)
@@ -166,7 +164,7 @@ def evaluate_single(
     judge_config,
     model=None,
 ):
-    model = model or get_model()
+    model = model or LLMClient.get_model()
     user_prompt = judge_config["template"].format(
         question=question,
         context=context,
@@ -193,7 +191,7 @@ def evaluate_with_prompt(
     sample_size=50,
     doc_idx=None,
 ):
-    model = model or get_model()
+    model = model or LLMClient.get_model()
     pairs = qa_pairs[:sample_size] if sample_size > 0 else qa_pairs
     scores = []
     errors = 0
@@ -209,7 +207,6 @@ def evaluate_with_prompt(
             errors += 1
             continue
 
-        # Generate answer via RAG pipeline
         try:
             search_results = rag_pipeline.search(question)
             context = rag_pipeline.build_context(search_results)
@@ -219,7 +216,6 @@ def evaluate_with_prompt(
             errors += 1
             continue
 
-        # Judge the answer
         result = evaluate_single(
             client, question, context, generated, ground_truth, judge_config, model=model,
         )
@@ -238,7 +234,6 @@ def evaluate_with_prompt(
     if not scores:
         return {"mean": {"faithfulness": 0, "relevance": 0, "coherence": 0}, "samples": [], "errors": errors}
 
-    # Calculate means
     n = len(scores)
     mean = {
         "faithfulness": round(sum(s["faithfulness"] for s in scores) / n, 2),
@@ -260,35 +255,25 @@ def evaluate_with_prompt(
 
 def main():
     from dotenv import load_dotenv
-    from openai import OpenAI
 
-    from src.llm import get_api_key, get_base_url
+    from src.llm import LLMClient
 
     load_dotenv(PROJECT_ROOT / ".env")
 
-    # Paths
     qa_path = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
     results_dir = PROJECT_ROOT / "evaluation" / "results"
     results_dir.mkdir(exist_ok=True)
     output_path = results_dir / "llm_eval.json"
 
-    # Load Q&A pairs
     print("Loading Q&A pairs...")
     qa_pairs = load_qa_pairs(str(qa_path))
     print(f"Loaded {len(qa_pairs)} pairs")
 
-    # Load document index — the source of ground-truth answers
     print("Loading document index (ground-truth answers)...")
     doc_idx = load_document_index()
     print(f"Loaded {len(doc_idx)} documents")
 
-    base_url = get_base_url()
-    api_key = get_api_key()
-
-    client = OpenAI(
-        api_key=api_key,
-        base_url=base_url,
-    )
+    client = LLMClient.get()
 
     print("Initializing RAG pipeline...")
     t0 = time.time()
@@ -302,7 +287,6 @@ def main():
     # Sample for evaluation (use 50 for speed, set to 0 for full)
     sample_size = 10
 
-    # Evaluate with each judge prompt
     all_results = {}
 
     for name, config in JUDGE_PROMPTS.items():
@@ -327,7 +311,6 @@ def main():
         print(f"  Evaluated: {result.get('num_evaluated', 0)}, Errors: {result['errors']}")
         print(f"  Time: {elapsed:.1f}s")
 
-    # Summary comparison
     print(f"\n{'='*60}")
     print("PROMPT COMPARISON SUMMARY")
     print(f"{'='*60}")
@@ -341,7 +324,6 @@ def main():
         )
     print("=" * 60)
 
-    # Determine best prompt by average score
     best_name = max(
         all_results.keys(),
         key=lambda k: (
@@ -363,7 +345,6 @@ def main():
             "errors": result["errors"],
             "time_seconds": result["time_seconds"],
             "prompt_name": name,
-            # Keep first 5 samples as examples
             "sample_examples": result.get("samples", [])[:5],
         }
 

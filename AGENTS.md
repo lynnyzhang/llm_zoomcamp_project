@@ -29,6 +29,20 @@ documents. The user removes them; do not delete, move, or add them.
 possible — reuse their patterns unless a production limitation (scale,
 reliability, observability, maintainability) requires improvement.
 
+## Code Style
+
+- **No "what" comments** — code should be self-explanatory: keep functions
+  short and simple, and name variables to reflect their purpose. Do not add
+  comments describing what the code does.
+- **Most common word naming** — name variables and functions with the most
+  commonly used word for the meaning (e.g. `test` instead of `probe`).
+- **Comments only for "why"** — add comments solely for edge cases,
+  workarounds, and patches, explaining why they exist. Minimize comment
+  presence.
+- **Docstrings only when mandatory** — add a docstring only where it is
+  required for understanding (e.g. a function the LLM needs to understand
+  what it does).
+
 ## Setup
 
 ```bash
@@ -45,7 +59,7 @@ Docker alternative: `docker-compose up --build` (app + Postgres + Grafana).
 ## LLM Backend
 
 `.env` supplies the LLM config, read centrally by `src/llm.py`
-(`get_api_key()`, `get_base_url()`, `get_model()`, `create_client()`):
+(`LLMClient.get_api_key()`, `LLMClient.get_base_url()`, `LLMClient.get_model()`, `LLMClient.get()`):
 
 - `OPENAI_API_KEY` — API key (required; RuntimeError if missing)
 - `OPENAI_API_BASE_URL` (or legacy `OPENAI_BASE_URL`) — the OpenAI-compatible
@@ -98,7 +112,7 @@ set -a; source .env; set +a; uv run pytest -q   # 118 tests
 
 ## Gotchas
 
-- **`.env` is required for any LLM call** — `get_model()` raises without
+- **`.env` is required for any LLM call** — `LLMClient.get_model()` raises without
   `MODEL_ID`; there is no default model. LLM calls fail lazily at first use.
 - **`.env` must never be committed** — it holds the LLM API key (ignored via a global gitignore rule; no repo `.gitignore` exists — add one).
 - `uv.lock` and `.python-version` are committed in this repo; `evaluation/results/` eval outputs are committed too.

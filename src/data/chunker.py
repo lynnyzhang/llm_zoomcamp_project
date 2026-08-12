@@ -268,7 +268,6 @@ def _chain_render_order(chain):
 
 
 def _chain_render(record, chain):
-    """Render the 'Evolution chain' line of search_text for a record."""
     if record["id"] > CANONICAL_MAX_ID or not chain:
         return "Evolution chain: none"
     names = _chain_render_order(chain)
@@ -396,7 +395,6 @@ def main():
     print(f"Processed {_CORPUS_PATH}")
     print(f"Saved {len(docs)} docs to {_OUTPUT_PATH}")
 
-    # Quick validation
     with open(_OUTPUT_PATH, encoding="utf-8") as f:
         first = json.loads(f.readline())
     print(f"Sample document keys: {list(first.keys())}")

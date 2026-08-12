@@ -1,7 +1,7 @@
 # RAGBase: search → build context → prompt → LLM answer, using HybridSearch
 # (keyword + vector) over documents with 'search_text' fields.
 
-from src.llm import create_client, get_model
+from src.llm import LLMClient
 
 INSTRUCTIONS = """\
 You are a helpful assistant that answers questions based on provided context.
@@ -29,10 +29,10 @@ class RAGBase:
         search_type="hybrid",
     ):
         self.search_index = search_index
-        self.llm_client = llm_client or create_client()
+        self.llm_client = llm_client or LLMClient.get()
         self.instructions = instructions
         self.prompt_template = prompt_template
-        self.model = model or get_model()
+        self.model = model or LLMClient.get_model()
         self.search_type = search_type
 
     def search(self, query, num_results=5):

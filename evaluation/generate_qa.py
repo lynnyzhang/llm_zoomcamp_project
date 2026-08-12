@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from evaluation.evaluation_utils import llm_structured, map_progress
-from src.llm import create_client, get_model
+from src.llm import LLMClient
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DOCUMENTS_FILE = PROJECT_ROOT / "data" / "chunks" / "documents.jsonl"
@@ -90,12 +90,12 @@ class Questions(BaseModel):
 def _generate_questions(client, model, record, instructions=DATA_GEN_INSTRUCTIONS):
     user_prompt = json.dumps(record)
     # Single path: structured output via responses.parse(text_format=Questions).
-    # llm_structured patches the client (patch_openai_client) so text_format
-    # works on OpenAI (native structured output) AND on llama.cpp
-    # (response_format via extra_body). There is deliberately NO create()/JSON
-    # extraction fallback: if the backend cannot honor the schema, the output
-    # is prose — not JSON — so there is nothing to salvage; fail loudly.
-    # Retry with backoff covers transient server failures.
+    # LLMClient (LLMClient.get) probes text_format support once and patches
+    # responses.parse for llama.cpp (response_format via extra_body), passing
+    # through to the native SDK on OpenAI. There is deliberately NO
+    # create()/JSON extraction fallback: if the backend cannot honor the
+    # schema, the output is prose — not JSON — so there is nothing to
+    # salvage; fail loudly. Retry with backoff covers transient failures.
     for attempt in range(3):
         try:
             parsed, _ = llm_structured(client, instructions, user_prompt, Questions, model=model)
@@ -209,7 +209,6 @@ def select_dev_subset(records, size=DEV_SUBSET_SIZE, seed=DEV_SUBSET_SEED):
 
 
 def coverage_summary(records):
-    """Coverage stats for a selected subset: (types, generations, legendary, mythical)."""
     types, gens = set(), set()
     legendary = mythical = 0
     for r in records:
@@ -267,13 +266,15 @@ def main(argv=None):
         print(f"  coverage: {len(types)}/18 types, {len(gens)} generations, "
               f"{legendary} legendary, {mythical} mythical (seed={args.seed})")
 
-    client = create_client()
+    client = LLMClient.get()
     # Bound the SDK's default 600s per-request timeout and disable its built-in
     # retries (the _generate_questions loop below is the retry layer): a
     # black-holing endpoint must fail fast, not hang for minutes per attempt.
-    client.timeout = 120.0
-    client.max_retries = 0
-    model = get_model()
+    # LLMClient.get() returns the LLMClient wrapper — configure the underlying
+    # OpenAI client it lazily creates.
+    client.client.timeout = 120.0
+    client.client.max_retries = 0
+    model = LLMClient.get_model()
     print(f"Model: {model} | expected questions: {len(ids) * args.questions}")
 
     all_rows = []

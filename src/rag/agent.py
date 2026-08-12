@@ -3,7 +3,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from src.llm import get_model
+from src.llm import LLMClient
 from src.rag.pipeline import RAGBase
 from src.search.hybrid import HybridSearch
 from src.search.web import web_search
@@ -186,7 +186,7 @@ class RAGAgent:
     ):
         if search_index is None:
             search_index = HybridSearch()
-        model = model or get_model()
+        model = model or LLMClient.get_model()
         self.rag = RAGBase(
             search_index=search_index,
             llm_client=llm_client,

@@ -156,7 +156,6 @@ class StubSearchIndex:
 
 
 class TestDataIngestion:
-    """Verify that data ingestion produced valid output files."""
 
     def test_corpus_file_exists(self):
         corpus_path = DATA_DIR / "corpus.jsonl"
@@ -225,17 +224,14 @@ class TestDataIngestion:
                 assert isinstance(doc["search_text"], str), f"Doc {i} search_text not a string"
                 assert len(doc["search_text"]) > 0, f"Doc {i} has empty search_text"
                 if isinstance(doc["id"], str):
-                    # Part B type-chart doc.
                     assert doc.get("kind") == "type_chart", f"Chart doc {i} missing kind"
                     chart_count += 1
                 else:
-                    # Part A Pokémon doc keeps a JSON-int id and the derived keys.
                     assert "name" in doc, f"Doc {i} missing 'name'"
                     assert "evolves_from" in doc, f"Doc {i} missing 'evolves_from'"
                     assert "evolves_into" in doc, f"Doc {i} missing 'evolves_into'"
                     assert "type_effectiveness" in doc, f"Doc {i} missing 'type_effectiveness'"
                 count += 1
-        # 1,350 Pokémon docs + 18 type-chart docs.
         assert count == 1368, f"Expected 1368 chunked docs, got {count}"
         assert chart_count == 18, f"Expected 18 chart docs, got {chart_count}"
 
@@ -246,7 +242,6 @@ class TestDataIngestion:
 
 
 class TestChunkingPipeline:
-    """Test the new Pokémon-native chunking derivation logic."""
 
     @staticmethod
     def _corpus_records():
@@ -330,7 +325,6 @@ class TestChunkingPipeline:
 
 
 class TestHybridSearch:
-    """Test the hybrid search index construction and retrieval."""
 
     @pytest.fixture(scope="class")
     def search_index(self):
@@ -397,7 +391,6 @@ class TestHybridSearch:
         list1 = [{"id": "a", "content": "1"}, {"id": "b", "content": "2"}]
         list2 = [{"id": "c", "content": "3"}, {"id": "d", "content": "4"}]
 
-        # Weight list1 heavily
         fused = reciprocal_rank_fusion([list1, list2], weights=[10.0, 1.0], num_results=2)
         # "a" should be first since it's rank 0 in the heavily weighted list
         assert fused[0]["id"] == "a"
@@ -413,7 +406,6 @@ class TestHybridSearch:
 
 
 class TestRAGPipeline:
-    """Test the RAG pipeline (search → context → prompt → LLM)."""
 
     @pytest.fixture(scope="class")
     def search_index(self):
@@ -445,7 +437,6 @@ class TestRAGPipeline:
         context = rag.build_context(results)
         assert isinstance(context, str)
         assert len(context) > 0
-        # Context is the docs' search_text blocks joined by blank lines.
         for doc in results:
             assert doc["search_text"] in context
 
@@ -473,7 +464,6 @@ class TestRAGPipeline:
         answer = rag.rag("What are Pikachu's stats?")
         assert isinstance(answer, str)
         assert len(answer) > 0
-        # Should have called search + LLM
         mock_llm_client.responses.create.assert_called()
 
 
@@ -483,8 +473,6 @@ class TestRAGPipeline:
 
 
 class TestAgentLoop:
-    """Test the reference-style agentic loop: LLM tool use decides when to
-    search (search / web_search tools) and when to answer (plain message)."""
 
     @pytest.fixture(scope="class")
     def search_index(self):
@@ -667,7 +655,7 @@ class TestAgentLoop:
         ]
         assert any("Unknown tool" in out for out in error_outputs)
         assert result["answer"] == "I can't do that."
-        assert result["searches"] == []  # no search was executed
+        assert result["searches"] == []
 
     def test_agent_invalid_tool_arguments_do_not_crash(self, search_index):
         """Unparseable tool arguments → error output fed back, no crash, and
@@ -793,9 +781,6 @@ class TestAgentLoop:
 
 
 class TestAgentGuardrails:
-    """Guardrail rejection paths: rule pre-gate (layer 1, deterministic,
-    before any LLM call) and LLM-level off-topic refusal surfaced through the
-    rejection contract (layer 2), all against a stub search index."""
 
     @staticmethod
     def _tool_call(name, arguments, call_id="call_1"):
@@ -963,8 +948,6 @@ class RecordingSearchIndex(StubSearchIndex):
 
 
 class TestSearchTypeDispatch:
-    """search_type wiring (todo 6): RAGBase/RAGAgent dispatch to the selected
-    search backend — stub index only, never a real HybridSearch."""
 
     @staticmethod
     def _rag(search_type=None):
@@ -1023,7 +1006,6 @@ class TestSearchTypeDispatch:
 
 
 class TestMonitoring:
-    """Test OpenTelemetry tracing with SQLite storage."""
 
     def test_tracer_setup_creates_db(self, tmp_path):
         from monitoring.tracer import SQLiteSpanExporter
@@ -1366,7 +1348,6 @@ class TestMonitoring:
 
 
 class TestEvaluationResults:
-    """Verify that evaluation results are valid and meet minimum thresholds."""
 
     def test_retrieval_eval_file_exists(self):
         path = RESULTS_DIR / "retrieval_eval.json"
@@ -1541,7 +1522,6 @@ class TestEvaluationResults:
 
 
 class TestEvaluationScripts:
-    """Verify that evaluation scripts can be imported and their functions work."""
 
     def test_retrieval_eval_importable(self):
         sys.path.insert(0, str(PROJECT_ROOT))
@@ -1582,9 +1562,9 @@ class TestEvaluationScripts:
             assert "{answer}" in config["template"]
 
     def test_judge_scores_model(self):
-        from evaluation.llm_eval import JudgeScores
+        from evaluation.llm_eval import JudgeScore
 
-        scores = JudgeScores(faithfulness=5, relevance=4, coherence=5, explanation="Good answer")
+        scores = JudgeScore(faithfulness=5, relevance=4, coherence=5, explanation="Good answer")
         assert scores.faithfulness == 5
         assert scores.relevance == 4
 
@@ -1607,11 +1587,11 @@ class TestEvaluationScripts:
         assert result["hits"] == 2
         assert result["total"] == 2
 
-    def test_load_ground_truth(self):
-        from evaluation.retrieval_eval import load_ground_truth
+    def test_load_qa_pairs(self):
+        from evaluation.retrieval_eval import load_qa_pairs
 
         qa_path = EVAL_QA
-        questions = load_ground_truth(str(qa_path))
+        questions = load_qa_pairs(str(qa_path))
         # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: default dev
         # subset = a coverage-sampled 50 records × 5 LLM-generated questions (user directive 2026-08-09).
         assert len(questions) >= 250
@@ -1625,7 +1605,6 @@ class TestEvaluationScripts:
 
 
 class TestDockerConfiguration:
-    """Verify Docker files are valid and deployment-ready."""
 
     def test_dockerfile_exists(self):
         assert (PROJECT_ROOT / "deployment" / "Dockerfile").exists()
@@ -1703,7 +1682,6 @@ class TestDockerConfiguration:
 
 
 class TestFullPipeline:
-    """End-to-end integration: ingestion data → chunking → search → RAG → agent."""
 
     @pytest.fixture(scope="class")
     def full_pipeline(self):

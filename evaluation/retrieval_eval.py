@@ -3,12 +3,11 @@ import sys
 import time
 from pathlib import Path
 
-# Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def load_ground_truth(qa_path):
+def load_qa_pairs(qa_path):
     questions = []
     with open(qa_path) as f:
         for line in f:
@@ -62,31 +61,26 @@ def evaluate_search(search_fn, questions, k=5):
 def main():
     from src.search.hybrid import HybridSearch
 
-    # Paths
     qa_path = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
     results_dir = PROJECT_ROOT / "evaluation" / "results"
     results_dir.mkdir(exist_ok=True)
     output_path = results_dir / "retrieval_eval.json"
 
-    # Load ground truth
     print("Loading ground truth...")
-    questions = load_ground_truth(str(qa_path))
+    questions = load_qa_pairs(str(qa_path))
     print(f"Loaded {len(questions)} questions")
 
-    # Initialize hybrid search (loads documents + builds indices)
     print("Initializing search indices...")
     t0 = time.time()
     hs = HybridSearch()
     print(f"Search indices built in {time.time() - t0:.1f}s")
 
-    # Define search functions
     search_methods = {
         "keyword": hs.keyword_search,
         "vector": hs.vector_search,
         "hybrid": hs.search,
     }
 
-    # Evaluate each method
     k = 5
     all_results = {}
 
@@ -102,7 +96,6 @@ def main():
         print(f"  mrr: {scores['mrr']}")
         print(f"  time: {elapsed:.1f}s")
 
-    # Summary
     print("\n" + "=" * 60)
     print(f"{'Method':<12} {'P@5':>8} {'R@5':>8} {'MRR':>8} {'Time':>8}")
     print("-" * 60)
@@ -121,7 +114,6 @@ def main():
     )
     print(f"\nBest method by precision@{k}: {best_method}")
 
-    # Save results
     with open(output_path, "w") as f:
         json.dump(all_results, f, indent=2)
     print(f"\nResults saved to {output_path}")

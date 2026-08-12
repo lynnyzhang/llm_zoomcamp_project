@@ -2,7 +2,6 @@ import sqlite3
 import sys
 from pathlib import Path
 
-# Add project root to path
 project_root = Path(__file__).resolve().parents[1]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -97,10 +96,8 @@ df_queries = load_dataframe("""
 """)
 
 if not df_queries.empty:
-    # Convert nanoseconds to datetime
     df_queries["timestamp"] = pd.to_datetime(df_queries["start_time"], unit="ns")
 
-    # Group by time bucket (minute or hour depending on data density)
     time_range = df_queries["timestamp"].max() - df_queries["timestamp"].min()
     if time_range.total_seconds() < 3600:
         df_queries["time_bucket"] = df_queries["timestamp"].dt.floor("1min")
@@ -132,7 +129,6 @@ df_feedback = load_dataframe("""
 """)
 
 if not df_feedback.empty:
-    # Create pie chart data
     feedback_data = dict(zip(df_feedback["feedback"], df_feedback["count"]))
 
     col1, col2 = st.columns([1, 2])
@@ -167,7 +163,6 @@ if not df_latency.empty:
         (df_latency["end_time"] - df_latency["start_time"]) / 1e9
     )
 
-    # Histogram of durations
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Duration by span type**")
@@ -178,7 +173,6 @@ if not df_latency.empty:
 
     with col2:
         st.markdown("**Duration histogram (seconds)**")
-        # Create histogram bins
         bins = pd.cut(df_latency["duration_s"], bins=20)
         hist = df_latency.groupby(bins).size().reset_index(name="count")
         hist["label"] = hist["duration_s"].apply(lambda x: f"{x.left:.1f}-{x.right:.1f}")
@@ -265,7 +259,6 @@ if not df_iterations.empty:
 
     with col1:
         st.markdown("**Iterations per query**")
-        # Truncate query for display
         df_iterations["short_query"] = df_iterations["query"].str[:40] + "..."
         st.bar_chart(
             df_iterations.set_index("short_query")["agent_iterations"],

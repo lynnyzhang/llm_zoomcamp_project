@@ -41,7 +41,6 @@ def web_search(query, num_results=5):
         return []
 
     results = []
-    # The Instant Answer abstract is the top hit when one exists.
     abstract = data.get("AbstractText") or ""
     if abstract:
         results.append(
@@ -52,13 +51,12 @@ def web_search(query, num_results=5):
             }
         )
     for topic in data.get("RelatedTopics") or []:
-        if "Topics" in topic:  # category node → recurse one level
+        if "Topics" in topic:
             for sub in topic.get("Topics") or []:
                 results.append(_topic_to_result(sub))
         else:
             results.append(_topic_to_result(topic))
 
-    # Deduplicate by URL (fall back to snippet prefix when no URL).
     seen = set()
     unique = []
     for r in results:

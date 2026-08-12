@@ -52,7 +52,7 @@ the three `HybridSearch` methods.
 
 | Module | Function | Job |
 |---|---|---|
-| `src/llm.py` | `get_api_key()`, `get_base_url()`, `get_model()`, `create_client()` | Central env config: API key, endpoint, model id, OpenAI client |
+| `src/llm.py` | `LLMClient` (`get_api_key()`, `get_base_url()`, `get_model()`, `get()`) | Central env config: API key, endpoint, model id, OpenAI client wrapper |
 | `src/rag/pipeline.py` | `RAGBase.search()`, `.build_context()`, `.build_prompt()`, `.llm()`, `.rag()` | Plain pipeline: search → format context → prompt → LLM answer |
 | `src/rag/agent.py` | `RAGAgent.run()`, `.perform_search()`, `.analyze_results()`, `.reformulate_query()`, `.generate_answer()`, `_is_out_of_scope()`, `_has_pokemon_signals()` | Agentic loop: up to `MAX_ITERATIONS=3` search/analyze/reformulate cycles; 3-layer guardrails (rule pre-gate, LLM off-topic flag, deterministic fail-safe) reject out-of-scope questions; low-confidence in-domain questions get `UNCERTAINTY_NOTE` instead |
 

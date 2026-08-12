@@ -340,7 +340,6 @@ class TracedRAGAgent:
             span.set_attribute("agent_iterations", result.get("iterations", 0))
             span.set_attribute("search_count", len(result.get("searches", [])))
 
-            # Record search queries
             search_queries = [
                 s.query for s in result.get("searches", [])
             ]
@@ -362,7 +361,6 @@ class TracedRAGAgent:
             ]
             span.set_attribute("search_queries", json.dumps(search_queries))
 
-            # Use span_id as feedback reference
             span_id = format(span.get_span_context().span_id, "016x")
             return result, span_id
 
@@ -450,15 +448,12 @@ def get_trace_stats(db_path=None):
     try:
         stats = {}
 
-        # Total traces
         row = conn.execute("SELECT COUNT(*) FROM spans").fetchone()
         stats["total_traces"] = row[0]
 
-        # Distinct span names
         rows = conn.execute("SELECT DISTINCT name FROM spans").fetchall()
         stats["span_names"] = [r[0] for r in rows]
 
-        # Total tokens
         row = conn.execute(
             "SELECT SUM(input_tokens), SUM(output_tokens) FROM spans "
             "WHERE input_tokens IS NOT NULL"
@@ -466,13 +461,11 @@ def get_trace_stats(db_path=None):
         stats["total_input_tokens"] = row[0] or 0
         stats["total_output_tokens"] = row[1] or 0
 
-        # Total cost
         row = conn.execute(
             "SELECT SUM(cost) FROM spans WHERE cost IS NOT NULL"
         ).fetchone()
         stats["total_cost"] = row[0] or 0.0
 
-        # Feedback counts
         row = conn.execute(
             "SELECT feedback, COUNT(*) FROM spans "
             "WHERE feedback IS NOT NULL GROUP BY feedback"

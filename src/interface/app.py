@@ -4,7 +4,6 @@ import re
 import sys
 from pathlib import Path
 
-# Add project root to path for imports
 project_root = Path(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -17,7 +16,7 @@ load_dotenv(project_root / ".env")
 
 import streamlit as st
 
-from src.llm import create_client, get_model
+from src.llm import LLMClient
 from src.rag.agent import RAGAgent
 from src.search.hybrid import HybridSearch
 
@@ -64,7 +63,7 @@ with st.sidebar:
 
     st.divider()
     try:
-        st.markdown(f"**Model:** `{get_model()}`")
+        st.markdown(f"**Model:** `{LLMClient.get_model()}`")
     except RuntimeError:
         # Missing MODEL_ID must not crash the app at startup — LLM calls fail
         # lazily at first use (see AGENTS.md Gotchas).
@@ -94,7 +93,7 @@ def _make_agent():
     search_index = HybridSearch()
     return RAGAgent(
         search_index=search_index,
-        llm_client=create_client(),
+        llm_client=LLMClient.get(),
         max_iterations=max_iterations,
         search_type=search_type,
         num_results=num_results,
@@ -164,7 +163,6 @@ def _unique_docs(searches):
 
 
 def _filter_docs_by_question(unique_docs, question):
-    """Return only docs whose Pokémon name appears in the question text."""
     if not question:
         return []
 
@@ -326,7 +324,6 @@ def render_message_body(msg):
 
 
 def render_message(msg):
-    """Thin wrapper: opens one chat bubble and delegates to the body helper."""
     with st.chat_message(msg["role"]):
         render_message_body(msg)
 
@@ -348,13 +345,11 @@ for message in st.session_state.messages:
 # ---------------------------------------------------------------------------
 
 if prompt := st.chat_input("Ask a question about Pokémon..."):
-    # Add user message
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Get agent response — single bubble for spinner + answer
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:

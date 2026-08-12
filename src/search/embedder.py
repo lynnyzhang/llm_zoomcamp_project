@@ -5,7 +5,6 @@ import numpy as np
 import onnxruntime as ort
 from tokenizers import Tokenizer
 
-# Default model directory: <project root>/models/Xenova/all-MiniLM-L6-v2
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parents[2] / "models" / "Xenova" / "all-MiniLM-L6-v2"
 
 # Override the model location (used by Docker: EMBEDDER_MODEL_PATH=/app/data/models/...)

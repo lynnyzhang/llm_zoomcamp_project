@@ -19,14 +19,13 @@ from evaluation.evaluation_utils import (
     llm_structured,
     load_document_index,
 )
-from src.llm import get_model
+from src.llm import LLMClient
 
 # ---------------------------------------------------------------------------
 # Structured judge output
 # ---------------------------------------------------------------------------
 
 class JudgeScore(BaseModel):
-    """Structured judge output for answer quality (1-5)."""
     score: int
     explanation: str
 
@@ -84,7 +83,7 @@ def llm_judge_score(
     ground_truth,
     model=None,
 ):
-    model = model or get_model()
+    model = model or LLMClient.get_model()
     instructions = """\
 You are an expert judge for question-answering systems.
 Given a question, generated answer, and ground truth answer, rate the
@@ -107,7 +106,7 @@ Ground Truth Answer: {ground_truth}
 """
 
     # Single path: structured output via responses.parse(text_format=JudgeScore).
-    # llm_structured patches the client (patch_openai_client) so text_format
+    # LLMClient.get() probes text_format support once and patches responses.parse
     # works on OpenAI (native structured output) AND on llama.cpp
     # (response_format via extra_body). There is deliberately NO create()/JSON
     # extraction fallback: if the backend cannot honor the schema, the output
@@ -132,7 +131,7 @@ def evaluate_answer_quality(
     model=None,
     doc_idx=None,
 ):
-    model = model or get_model()
+    model = model or LLMClient.get_model()
     pairs = questions[:sample_size] if sample_size > 0 else questions
     scores = []
     errors = 0
@@ -189,7 +188,6 @@ def create_comparison_chart(results, output_path):
     simple = results["simple_rag"]
     agent = results["agentic_rag"]
 
-    # 1. Retrieval accuracy (hit rate)
     ax = axes[0]
     methods = ["Simple RAG", "Agentic RAG"]
     hit_rates = [simple["retrieval"]["hit_rate"], agent["retrieval"]["hit_rate"]]
@@ -202,7 +200,6 @@ def create_comparison_chart(results, output_path):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02,
                 f"{val:.1%}", ha="center", va="bottom", fontweight="bold")
 
-    # 2. Average searches per query
     ax = axes[1]
     avg_searches = [1.0, agent["avg_searches_per_query"]]
     bars = ax.bar(methods, avg_searches, color=colors, edgecolor="white", linewidth=1.5)
@@ -212,7 +209,6 @@ def create_comparison_chart(results, output_path):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.05,
                 f"{val:.2f}", ha="center", va="bottom", fontweight="bold")
 
-    # 3. Latency comparison
     ax = axes[2]
     latencies = [simple.get("latency_per_query", 0), agent.get("latency_per_query", 0)]
     bars = ax.bar(methods, latencies, color=colors, edgecolor="white", linewidth=1.5)
@@ -235,9 +231,8 @@ def create_comparison_chart(results, output_path):
 
 def main():
     from dotenv import load_dotenv
-    from openai import OpenAI
 
-    from src.llm import get_api_key, get_base_url
+    from src.llm import LLMClient
 
     load_dotenv(PROJECT_ROOT / ".env")
 
@@ -258,18 +253,14 @@ def main():
     doc_idx = load_document_index()
     print(f"Loaded {len(doc_idx)} documents")
 
-    base_url = get_base_url()
-    api_key = get_api_key()
+    base_url = LLMClient.get_base_url()
 
     llm_available = False
     client = None
     try:
         import urllib.request
         urllib.request.urlopen(base_url + "/models", timeout=3)
-        client = OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-        )
+        client = LLMClient.get()
         llm_available = True
         print(f"LLM API available at {base_url}")
     except Exception:
@@ -300,7 +291,6 @@ def main():
     print("PHASE 1: Simple RAG (single search)")
     print("=" * 60)
 
-    # Retrieval accuracy (all dev-subset questions)
     print("Measuring retrieval accuracy...")
     t0 = time.time()
     simple_retrieval = retrieval_accuracy(rag_base.search, qa_pairs, k=5)
@@ -331,7 +321,6 @@ def main():
     print("PHASE 2: Agentic RAG (agent loop)")
     print("=" * 60)
 
-    # Run agent on sample to measure searches and latency
     print("Running agent loop on sample...")
     agent_search_counts = []
     agent_latencies = []
@@ -421,9 +410,6 @@ def main():
         agent_mean_score = 0
         agent_errors = judge_sample
 
-    # -------------------------------------------------------------------------
-    # Phase 3: Full retrieval comparison (all 918)
-    # -------------------------------------------------------------------------
     print("\n" + "=" * 60)
     print("PHASE 3: Full retrieval comparison (dev subset)")
     print("=" * 60)
@@ -464,9 +450,6 @@ def main():
     print(f"  Avg searches/query: {full_avg_searches:.2f}")
     print(f"  Total time: {full_agent_time:.1f}s")
 
-    # -------------------------------------------------------------------------
-    # Compile results
-    # -------------------------------------------------------------------------
     print("\n" + "=" * 60)
     print("RESULTS SUMMARY")
     print("=" * 60)
@@ -510,11 +493,10 @@ def main():
         "config": {
             "total_questions": len(qa_pairs),
             "judge_sample_size": judge_sample,
-            "model": get_model(),
+            "model": LLMClient.get_model(),
         },
     }
 
-    # Print summary
     r = results
     print(f"  Simple RAG retrieval hit rate:  {r['simple_rag']['retrieval']['hit_rate']:.1%}")
     print(f"  Agent RAG retrieval hit rate:   {r['agentic_rag']['retrieval']['hit_rate']:.1%}")
@@ -525,12 +507,10 @@ def main():
     print(f"  Avg searches/query (agent):     {r['agentic_rag']['avg_searches_per_query']}")
     print(f"  Latency overhead:               {r['comparison']['latency_overhead']:+.2f}s/query")
 
-    # Save results
     with open(output_path, "w") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     print(f"\nResults saved to {output_path}")
 
-    # Create visualization
     try:
         create_comparison_chart(results, str(chart_path))
     except Exception as e:

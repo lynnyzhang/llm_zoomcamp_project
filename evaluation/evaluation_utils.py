@@ -5,7 +5,7 @@ from pathlib import Path
 
 from tqdm.auto import tqdm
 
-from src.llm import get_model
+from src.llm import LLMClient
 
 _DEFAULT_DOCUMENTS_PATH = (
     Path(__file__).resolve().parents[1] / "data" / "chunks" / "documents.jsonl"
@@ -38,7 +38,7 @@ def calc_total_price(usages):
 
 
 def llm_structured(client, instructions, user_prompt, output_type, model=None):
-    model = model or get_model()
+    model = model or LLMClient.get_model()
     messages = [
         {"role": "developer", "content": instructions},
         {"role": "user", "content": user_prompt},

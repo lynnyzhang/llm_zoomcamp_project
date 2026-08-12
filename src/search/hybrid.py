@@ -41,7 +41,6 @@ def reciprocal_rank_fusion(result_lists, weights=None, k=60, num_results=5):
 
 
 class HybridSearch:
-    # Default data path relative to this file
     _DEFAULT_DATA = Path(__file__).resolve().parents[2] / "data" / "chunks" / "documents.jsonl"
 
     def __init__(
@@ -64,14 +63,12 @@ class HybridSearch:
         self.vector_weight = vector_weight
         self.rrf_k = rrf_k
 
-        # keyword index
         self.keyword_index = Index(
             text_fields=["search_text", "name"],
             keyword_fields=["id", "types", "kind"],
         )
         self.keyword_index.fit(self.documents)
 
-        # vector index
         self.embedder = Embedder(model_path)
         texts = [doc["search_text"] for doc in self.documents]
         self.embeddings = self.embedder.encode_batch(texts, normalize=True)
@@ -82,18 +79,15 @@ class HybridSearch:
         kw = keyword_weight if keyword_weight is not None else self.keyword_weight
         vw = vector_weight if vector_weight is not None else self.vector_weight
 
-        # keyword search
         keyword_results = self.keyword_index.search(
             query, num_results=num_results * 2
         )
 
-        # vector search
         query_vector = self.embedder.encode(query, normalize=True)
         vector_results = self.vector_index.search(
             query_vector, num_results=num_results * 2
         )
 
-        # fuse with RRF
         fused = reciprocal_rank_fusion(
             [keyword_results, vector_results],
             weights=[kw, vw],
