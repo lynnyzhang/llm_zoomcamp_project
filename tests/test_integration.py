@@ -1403,13 +1403,17 @@ class TestEvaluationResults:
                     f"{method}.{metric} = {section[metric]} out of range [0, 1]"
                 )
 
-    def test_retrieval_eval_vector_beats_keyword(self):
+    def test_retrieval_eval_hybrid_beats_vector(self):
         with open(RESULTS_DIR / "retrieval_eval.json") as f:
             data = json.load(f)
 
-        # Vector should have higher recall than keyword
-        assert data["vector"]["recall@5"] >= data["keyword"]["recall@5"], (
-            f"Vector recall {data['vector']['recall@5']} < keyword recall {data['keyword']['recall@5']}"
+        # RRF fusion must improve on the vector-only baseline. The old
+        # "vector beats keyword" claim does not hold on the Pokémon dev
+        # subset: queries are dominated by exact Pokémon names, so keyword
+        # search (recall ~0.89) beats vector (~0.81) — see committed
+        # retrieval_eval.json. Hybrid still beats vector on every metric.
+        assert data["hybrid"]["recall@5"] >= data["vector"]["recall@5"], (
+            f"Hybrid recall {data['hybrid']['recall@5']} < vector recall {data['vector']['recall@5']}"
         )
 
     def test_llm_eval_file_exists(self):

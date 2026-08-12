@@ -63,7 +63,12 @@ with st.sidebar:
     )
 
     st.divider()
-    st.markdown(f"**Model:** `{get_model()}`")
+    try:
+        st.markdown(f"**Model:** `{get_model()}`")
+    except RuntimeError:
+        # Missing MODEL_ID must not crash the app at startup — LLM calls fail
+        # lazily at first use (see AGENTS.md Gotchas).
+        st.markdown("**Model:** not configured (set `MODEL_ID` in `.env`)")
     st.markdown(f"**Search:** `{search_type}`")
 
 
@@ -92,6 +97,7 @@ def _make_agent():
         llm_client=create_client(),
         max_iterations=max_iterations,
         search_type=search_type,
+        num_results=num_results,
     )
 
 
@@ -119,6 +125,8 @@ def get_agent():
         # at call time) so switching search_type skips rebuilding the ONNX index.
         inner = getattr(st.session_state.agent, "agent", st.session_state.agent)
         inner.rag.search_type = search_type
+        inner.max_iterations = max_iterations
+        inner.num_results = num_results
     return st.session_state.agent
 
 
@@ -135,16 +143,10 @@ def compute_confidence(searches):
         if s.analysis and s.analysis.get("sufficient", False)
     )
 
-    # Base confidence from proportion of sufficient iterations
-    base_confidence = sufficient_count / len(searches)
-
-    # Bonus for finding results in fewer iterations (more efficient)
-    efficiency_bonus = 1.0 / len(searches)
-
-    # Combine: 70% base + 30% efficiency
-    confidence = 0.7 * base_confidence + 0.3 * efficiency_bonus
-
-    return min(confidence, 1.0)
+    # Confidence from the proportion of sufficient iterations. No efficiency
+    # term: the agent is instructed to search multiple times with different
+    # keywords, so more searches must never lower the score.
+    return sufficient_count / len(searches)
 
 
 def _unique_docs(searches):

@@ -40,7 +40,9 @@ class RAGBase:
             return self.search_index.keyword_search(query, num_results=num_results)
         if self.search_type == "vector":
             return self.search_index.vector_search(query, num_results=num_results)
-        return self.search_index.search(query, num_results=num_results)
+        if self.search_type == "hybrid":
+            return self.search_index.search(query, num_results=num_results)
+        raise ValueError(f"Unknown search_type: {self.search_type!r}")
 
     def build_context(self, search_results):
         blocks = []

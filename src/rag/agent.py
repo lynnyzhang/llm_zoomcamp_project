@@ -121,10 +121,13 @@ REJECT_PATTERNS = (
     re.compile(r"\bhack"),
     re.compile(r"\bemulator"),
     re.compile(r"\bshowdown"),
-    # Non-Pokémon topics
+    # Non-Pokémon topics — multi-word patterns only, so in-domain phrasing
+    # ("of course", "best course of action", "a python Pokémon") never trips
+    # the gate; ambiguous cases fall through to the LLM-level guardrail.
     re.compile(r"\bdocker\b"),
-    re.compile(r"\bcourse\b"),
-    re.compile(r"\bpython\b"),
+    re.compile(r"\bcoursework\b"),
+    re.compile(r"\bcourse (?:homework|assignment|project|work|material|notes|exam)\b"),
+    re.compile(r"\bpython (?:code|script|program|course|homework|tutorial)\b"),
     re.compile(r"\bcook"),
     re.compile(r"\bfinance"),
     re.compile(r"\bstock\b"),
@@ -179,6 +182,7 @@ class RAGAgent:
         model=None,
         max_iterations=MAX_ITERATIONS,
         search_type="hybrid",
+        num_results=5,
     ):
         if search_index is None:
             search_index = HybridSearch()
@@ -193,6 +197,7 @@ class RAGAgent:
         self.model = model
         self.max_iterations = max_iterations
         self.search_type = search_type
+        self.num_results = num_results
 
     # ------------------------------------------------------------------
     # Tool: search
@@ -220,13 +225,27 @@ class RAGAgent:
             # feed the error back so the model can recover.
             output = json.dumps({"error": f"Could not parse arguments for tool '{call.name}': missing 'query'."})
         elif call.name == "search":
-            results = self.perform_search(query, num_results=5)
+            results = self.perform_search(query, num_results=self.num_results)
             searches.append(
                 SearchRecord(query=query, results=results, analysis={"sufficient": len(results) > 0})
             )
-            output = json.dumps(results, ensure_ascii=False)
+            # Feed the LLM only the retrieval-relevant fields — full docs
+            # (stats, type_effectiveness, flavor text, sprite URLs) waste
+            # context on every iteration.
+            output = json.dumps(
+                [
+                    {
+                        "id": r.get("id"),
+                        "name": r.get("name"),
+                        "search_text": r.get("search_text"),
+                        "score": r.get("score"),
+                    }
+                    for r in results
+                ],
+                ensure_ascii=False,
+            )
         elif call.name == "web_search":
-            results = web_search(query, num_results=5)
+            results = web_search(query, num_results=self.num_results)
             searches.append(
                 SearchRecord(query=query, results=results, analysis={"sufficient": len(results) > 0})
             )
@@ -274,14 +293,22 @@ class RAGAgent:
                     messages.append(self._make_call(item, searches))
                     called_tool = True
                 elif item.type == "message":
-                    last_answer = item.content[0].text
+                    # Guard against empty or non-text content parts — a
+                    # refusal-only response must never crash the loop.
+                    for part in item.content:
+                        if getattr(part, "text", None):
+                            last_answer = part.text
+                            break
             if not called_tool:
                 break
 
         # Guardrail (layer 2): LLM-level off-topic — the model was instructed
         # to refuse out-of-domain questions with the exact rejection message
         # and no tool calls; surface it through the same rejection contract.
-        if not searches and last_answer == REJECTION_MESSAGE:
+        # Compare normalized (case/whitespace-insensitive) and regardless of
+        # whether tools were called, so a paraphrased or post-search refusal
+        # still surfaces as a rejection.
+        if last_answer.strip().lower() == REJECTION_MESSAGE.strip().lower():
             return rejection_result()
 
         return {

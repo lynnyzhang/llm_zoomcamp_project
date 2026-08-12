@@ -4,20 +4,20 @@
     "recall@5": 0.892,
     "mrr": 0.8415,
     "num_questions": 250,
-    "time_seconds": 0.33
+    "time_seconds": 0.23
   },
   "vector": {
     "precision@5": 0.1616,
     "recall@5": 0.808,
     "mrr": 0.7114,
     "num_questions": 250,
-    "time_seconds": 0.61
+    "time_seconds": 0.6
   },
   "hybrid": {
     "precision@5": 0.176,
     "recall@5": 0.88,
     "mrr": 0.8343,
     "num_questions": 250,
-    "time_seconds": 0.97
+    "time_seconds": 1.1
   }
 }

@@ -1,16 +1,10 @@
-# evaluation/evaluation_utils.py
-#
-# Shared evaluation helpers, mirroring the course's evaluation_utils.py as
-# closely as possible (calc_price, calc_total_price, patch_openai_client,
-# llm_structured, llm_structured_retry, map_progress) plus the
-# Pokémon-specific document-index lookup used by the LLM-judge evals.
-
 import json
 import time
 import types
 from pathlib import Path
-from pydantic import BaseModel
+
 from tqdm.auto import tqdm
+
 from src.llm import get_model
 
 _DEFAULT_DOCUMENTS_PATH = (
@@ -43,67 +37,12 @@ def calc_total_price(usages):
     return total_cost
 
 
-def patch_openai_client(client):
-    """
-    Safely overrides client.responses.parse to support llama.cpp via
-    'response_format' while falling back cleanly to the native SDK function
-    when no text_format is requested.
-    """
-    _original_parse = client.responses.parse
-
-    def _patched_responses_parse(self, model, input, **kwargs):
-        pydantic_model = kwargs.pop("text_format", None)
-
-        if pydantic_model is None:
-            return _original_parse(model=model, input=input, **kwargs)
-
-        llama_cpp_format = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": pydantic_model.__name__,
-                "strict": True,
-                "schema": pydantic_model.model_json_schema(),
-            },
-        }
-
-        # Inject the formatting schema into the extra_body container payload
-        extra_body = kwargs.pop("extra_body", {})
-        extra_body["response_format"] = llama_cpp_format
-
-        return _original_parse(
-            model=model,
-            input=input,
-            extra_body=extra_body,
-            **kwargs,
-        )
-
-    client.responses.parse = types.MethodType(_patched_responses_parse, client.responses)
-    return client
-
-
-def supports_text_format_parse(client, model, output_type):
-    # Local servers (e.g. llama.cpp) accept the request but return plain text
-    # (output_parsed=None), silently wasting a generation — probe once and patch if none.
-    try:
-        probe = client.responses.parse(
-            model=model,
-            input=[{"role": "user", "content": 'Reply with JSON only: {"qa_pairs": []}'}],
-            text_format=output_type
-        )
-        return probe.output_parsed is not None
-    except Exception:  # noqa: BLE001 — any rejection means JSON fallback mode
-        return False
-
-
 def llm_structured(client, instructions, user_prompt, output_type, model=None):
     model = model or get_model()
     messages = [
         {"role": "developer", "content": instructions},
         {"role": "user", "content": user_prompt},
     ]
-
-    if not supports_text_format_parse(client, model, output_type):
-        client = patch_openai_client(client)
 
     response = client.responses.parse(
         model=model,
@@ -130,7 +69,7 @@ def llm_structured_retry(
                 output_type,
                 model=model,
             )
-        except Exception:  # noqa: BLE001 — retry covers any transient failure
+        except Exception:
             if attempt == max_retries - 1:
                 raise
             time.sleep(2**attempt)

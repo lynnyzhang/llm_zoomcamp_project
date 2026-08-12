@@ -21,7 +21,6 @@ from evaluation.evaluation_utils import (
 )
 from src.llm import get_model
 
-
 # ---------------------------------------------------------------------------
 # Structured judge output
 # ---------------------------------------------------------------------------
@@ -120,7 +119,7 @@ Ground Truth Answer: {ground_truth}
                 "structured output unsupported: server returned output_parsed=None"
             )
         return {"score": parsed.score, "explanation": parsed.explanation}
-    except Exception as e:  # noqa: BLE001 — judge failure returns None for the caller to count
+    except Exception as e:
         print(f"  Judge error: {e}")
         return None
 
@@ -273,7 +272,7 @@ def main():
         )
         llm_available = True
         print(f"LLM API available at {base_url}")
-    except Exception:  # noqa: BLE001 — any endpoint failure degrades to retrieval-only mode
+    except Exception:
         print(f"LLM API not available at {base_url} — running retrieval-only evaluation")
 
     # Initialize search
@@ -301,7 +300,7 @@ def main():
     print("PHASE 1: Simple RAG (single search)")
     print("=" * 60)
 
-    # Retrieval accuracy (all 918 questions)
+    # Retrieval accuracy (all dev-subset questions)
     print("Measuring retrieval accuracy...")
     t0 = time.time()
     simple_retrieval = retrieval_accuracy(rag_base.search, qa_pairs, k=5)
@@ -398,7 +397,7 @@ def main():
             try:
                 result = agent.run(question)
                 generated = result["answer"]
-            except Exception as e:  # noqa: BLE001 — per-question errors never abort the batch
+            except Exception as e:
                 print(f"  [{i+1}/{len(agent_sample)}] Error: {e}")
                 agent_errors += 1
                 continue
@@ -426,7 +425,7 @@ def main():
     # Phase 3: Full retrieval comparison (all 918)
     # -------------------------------------------------------------------------
     print("\n" + "=" * 60)
-    print("PHASE 3: Full retrieval comparison (all 918)")
+    print("PHASE 3: Full retrieval comparison (dev subset)")
     print("=" * 60)
 
     full_sample = qa_pairs[:agent_full_sample]
@@ -534,7 +533,7 @@ def main():
     # Create visualization
     try:
         create_comparison_chart(results, str(chart_path))
-    except Exception as e:  # noqa: BLE001 — chart failure is non-fatal to eval results
+    except Exception as e:
         print(f"Chart creation failed (non-fatal): {e}")
 
     return results

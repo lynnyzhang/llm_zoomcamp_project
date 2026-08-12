@@ -20,6 +20,130 @@ TYPE_ORDER = [
 # Rotom-Heat, ...) which never participate in evolution linkage.
 CANONICAL_MAX_ID = 1025
 
+# Curated evolution overrides for chains where dex-id order != evolution
+# order: baby Pokémon introduced after their parents, branched chains, and
+# cross-generation evolutions. Keyed by canonical corpus name →
+# (evolves_from, evolves_into). The dex-order fallback below only handles
+# linear chains (where dex order == evolution order).
+EVOLUTION_OVERRIDES = {
+    # Baby chains (baby dex id > parent dex id)
+    "Pichu": (None, ["Pikachu"]),
+    "Pikachu": ("Pichu", ["Raichu"]),
+    "Raichu": ("Pikachu", []),
+    "Cleffa": (None, ["Clefairy"]),
+    "Clefairy": ("Cleffa", ["Clefable"]),
+    "Clefable": ("Clefairy", []),
+    "Igglybuff": (None, ["Jigglypuff"]),
+    "Jigglypuff": ("Igglybuff", ["Wigglytuff"]),
+    "Wigglytuff": ("Jigglypuff", []),
+    "Azurill": (None, ["Marill"]),
+    "Marill": ("Azurill", ["Azumarill"]),
+    "Azumarill": ("Marill", []),
+    "Elekid": (None, ["Electabuzz"]),
+    "Electabuzz": ("Elekid", ["Electivire"]),
+    "Electivire": ("Electabuzz", []),
+    "Magby": (None, ["Magmar"]),
+    "Magmar": ("Magby", ["Magmortar"]),
+    "Magmortar": ("Magmar", []),
+    "Smoochum": (None, ["Jynx"]),
+    "Jynx": ("Smoochum", []),
+    "Tyrogue": (None, ["Hitmonlee", "Hitmonchan", "Hitmontop"]),
+    "Hitmonlee": ("Tyrogue", []),
+    "Hitmonchan": ("Tyrogue", []),
+    "Hitmontop": ("Tyrogue", []),
+    "Wynaut": (None, ["Wobbuffet"]),
+    "Wobbuffet": ("Wynaut", []),
+    "Budew": (None, ["Roselia"]),
+    "Roselia": ("Budew", ["Roserade"]),
+    "Roserade": ("Roselia", []),
+    "Chingling": (None, ["Chimecho"]),
+    "Chimecho": ("Chingling", []),
+    "Bonsly": (None, ["Sudowoodo"]),
+    "Sudowoodo": ("Bonsly", []),
+    "Mime-Jr": (None, ["Mr-Mime"]),
+    "Mr-Mime": ("Mime-Jr", ["Mr-Rime"]),
+    "Mr-Rime": ("Mr-Mime", []),
+    "Happiny": (None, ["Chansey"]),
+    "Chansey": ("Happiny", ["Blissey"]),
+    "Blissey": ("Chansey", []),
+    "Munchlax": (None, ["Snorlax"]),
+    "Snorlax": ("Munchlax", []),
+    "Mantyke": (None, ["Mantine"]),
+    "Mantine": ("Mantyke", []),
+    # Branched chains (dex order breaks the linear chain)
+    "Oddish": (None, ["Gloom"]),
+    "Gloom": ("Oddish", ["Vileplume", "Bellossom"]),
+    "Vileplume": ("Gloom", []),
+    "Bellossom": ("Gloom", []),
+    "Poliwag": (None, ["Poliwhirl"]),
+    "Poliwhirl": ("Poliwag", ["Poliwrath", "Politoed"]),
+    "Poliwrath": ("Poliwhirl", []),
+    "Politoed": ("Poliwhirl", []),
+    "Wurmple": (None, ["Silcoon", "Cascoon"]),
+    "Silcoon": ("Wurmple", ["Beautifly"]),
+    "Cascoon": ("Wurmple", ["Dustox"]),
+    "Beautifly": ("Silcoon", []),
+    "Dustox": ("Cascoon", []),
+    "Ralts": (None, ["Kirlia"]),
+    "Kirlia": ("Ralts", ["Gardevoir", "Gallade"]),
+    "Gardevoir": ("Kirlia", []),
+    "Gallade": ("Kirlia", []),
+    "Eevee": (None, ["Vaporeon", "Jolteon", "Flareon", "Espeon", "Umbreon", "Leafeon", "Glaceon", "Sylveon"]),
+    "Vaporeon": ("Eevee", []),
+    "Jolteon": ("Eevee", []),
+    "Flareon": ("Eevee", []),
+    "Espeon": ("Eevee", []),
+    "Umbreon": ("Eevee", []),
+    "Leafeon": ("Eevee", []),
+    "Glaceon": ("Eevee", []),
+    "Sylveon": ("Eevee", []),
+    "Slowpoke": (None, ["Slowbro", "Slowking"]),
+    "Slowbro": ("Slowpoke", []),
+    "Slowking": ("Slowpoke", []),
+    "Snorunt": (None, ["Glalie", "Froslass"]),
+    "Glalie": ("Snorunt", []),
+    "Froslass": ("Snorunt", []),
+    "Clamperl": (None, ["Huntail", "Gorebyss"]),
+    "Huntail": ("Clamperl", []),
+    "Gorebyss": ("Clamperl", []),
+    "Nincada": (None, ["Ninjask", "Shedinja"]),
+    "Ninjask": ("Nincada", []),
+    "Shedinja": ("Nincada", []),
+    "Scyther": (None, ["Scizor", "Kleavor"]),
+    "Scizor": ("Scyther", []),
+    "Kleavor": ("Scyther", []),
+    "Meowth": (None, ["Persian", "Perrserker"]),
+    "Persian": ("Meowth", []),
+    "Perrserker": ("Meowth", []),
+    "Sneasel": (None, ["Weavile", "Sneasler"]),
+    "Weavile": ("Sneasel", []),
+    "Sneasler": ("Sneasel", []),
+    "Yamask": (None, ["Cofagrigus", "Runerigus"]),
+    "Cofagrigus": ("Yamask", []),
+    "Runerigus": ("Yamask", []),
+    "Wooper": (None, ["Quagsire", "Clodsire"]),
+    "Quagsire": ("Wooper", []),
+    "Clodsire": ("Wooper", []),
+    "Burmy": (None, ["Wormadam-Plant", "Mothim"]),
+    "Wormadam-Plant": ("Burmy", []),
+    "Mothim": ("Burmy", []),
+    "Cosmog": (None, ["Cosmoem"]),
+    "Cosmoem": ("Cosmog", ["Solgaleo", "Lunala"]),
+    "Solgaleo": ("Cosmoem", []),
+    "Lunala": ("Cosmoem", []),
+    "Charcadet": (None, ["Armarouge", "Ceruledge"]),
+    "Armarouge": ("Charcadet", []),
+    "Ceruledge": ("Charcadet", []),
+    "Applin": (None, ["Flapple", "Appletun", "Dipplin"]),
+    "Flapple": ("Applin", []),
+    "Appletun": ("Applin", []),
+    "Dipplin": ("Applin", ["Hydrapple"]),
+    "Hydrapple": ("Dipplin", []),
+    # Bred, not evolved (dataset groups them in one chain)
+    "Phione": (None, []),
+    "Manaphy": (None, []),
+}
+
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _CORPUS_PATH = _PROJECT_ROOT / "data" / "corpus.jsonl"
 _TYPES_CSV_PATH = _PROJECT_ROOT / "data" / "raw" / "pokemon_types.csv"
@@ -96,9 +220,16 @@ def build_evolution_map(corpus):
 
 
 def _evolution_linkage(record, chain):
-    """Return (evolves_from, evolves_into) for a record within its chain."""
+    """Return (evolves_from, evolves_into) for a record within its chain.
+
+    Curated overrides first (baby/branched chains where dex order !=
+    evolution order); the dex-order heuristic is the fallback.
+    """
     if record["id"] > CANONICAL_MAX_ID or not chain:
         return None, []
+    override = EVOLUTION_OVERRIDES.get(record["name"])
+    if override is not None:
+        return override
     names = [r["name"] for r in chain]
     idx = next(
         (i for i, r in enumerate(chain) if r["id"] == record["id"]), None
@@ -106,15 +237,41 @@ def _evolution_linkage(record, chain):
     if idx is None:
         return None, []
     evolves_from = names[idx - 1] if idx > 0 else None
-    evolves_into = names[idx + 1:]
+    evolves_into = [names[idx + 1]] if idx + 1 < len(names) else []
     return evolves_from, evolves_into
+
+
+def _chain_render_order(chain):
+    """Evolution-order names for a chain, using the curated overrides when
+    the dex-order heuristic would misorder it (baby chains); otherwise the
+    dex order is already a valid evolution order."""
+    names = [r["name"] for r in chain]
+    if not any(name in EVOLUTION_OVERRIDES for name in names):
+        return names
+    by_name = {r["name"] for r in chain}
+    ordered = []
+    queue = [
+        name for name in names
+        if EVOLUTION_OVERRIDES.get(name, (None, []))[0] is None
+    ]
+    while queue:
+        name = queue.pop(0)
+        if name in ordered:
+            continue
+        ordered.append(name)
+        queue.extend(
+            child for child in EVOLUTION_OVERRIDES.get(name, (None, []))[1]
+            if child in by_name
+        )
+    ordered.extend(n for n in names if n not in ordered)
+    return ordered
 
 
 def _chain_render(record, chain):
     """Render the 'Evolution chain' line of search_text for a record."""
     if record["id"] > CANONICAL_MAX_ID or not chain:
         return "Evolution chain: none"
-    names = [r["name"] for r in chain]
+    names = _chain_render_order(chain)
     if len(names) < 2:
         return f"Evolution chain: {record['evolution_chain_id']} (single member)"
     path = " -> ".join(names)

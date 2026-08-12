@@ -114,9 +114,12 @@ def main():
         )
     print("=" * 60)
 
-    # Determine best
-    best_hybrid = all_results["hybrid"][f"precision@{k}"] > all_results["keyword"][f"precision@{k}"]
-    print(f"\nHybrid > Keyword precision@{k}: {best_hybrid}")
+    # Report the best method factually — no claim that hybrid must win: on
+    # the Pokémon dev subset, exact-name keyword search often beats vector.
+    best_method = max(
+        all_results, key=lambda m: all_results[m][f"precision@{k}"]
+    )
+    print(f"\nBest method by precision@{k}: {best_method}")
 
     # Save results
     with open(output_path, "w") as f:

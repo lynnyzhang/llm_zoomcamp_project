@@ -138,7 +138,7 @@ def llm_judge_retry(client, instructions, user_prompt, model=None, max_retries=3
     for attempt in range(max_retries):
         try:
             return llm_judge(client, instructions, user_prompt, model=model)
-        except Exception as e:  # noqa: BLE001 — retry covers any judge failure
+        except Exception as e:
             if attempt == max_retries - 1:
                 print(f"  Judge call failed after {max_retries} attempts: {e}")
                 return None
@@ -214,7 +214,7 @@ def evaluate_with_prompt(
             search_results = rag_pipeline.search(question)
             context = rag_pipeline.build_context(search_results)
             generated = rag_pipeline.rag(question)
-        except Exception as e:  # noqa: BLE001 — per-question errors never abort the batch
+        except Exception as e:
             print(f"  [{i+1}/{len(pairs)}] RAG error for question {pair.get('id')}: {e}")
             errors += 1
             continue

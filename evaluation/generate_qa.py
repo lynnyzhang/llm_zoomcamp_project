@@ -104,7 +104,7 @@ def _generate_questions(client, model, record, instructions=DATA_GEN_INSTRUCTION
                     "structured output unsupported: server returned output_parsed=None"
                 )
             return parsed.questions
-        except Exception:  # noqa: BLE001 — retry covers any server/salvage failure
+        except Exception:
             if attempt == 2:
                 raise
             time.sleep(2**attempt)
