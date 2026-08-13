@@ -173,7 +173,7 @@ class RAGAgent:
             if confidence_threshold is not None
             else get_confidence_threshold()
         )
-        self.graph = self._build_graph()
+        self.graph = self.build_graph()
 
     # ------------------------------------------------------------------
     # Search
@@ -186,7 +186,7 @@ class RAGAgent:
     # Graph construction
     # ------------------------------------------------------------------
 
-    def _build_graph(self):
+    def build_graph(self):
         graph = StateGraph(AgentState)
         graph.add_node("local_search", self.local_search)
         graph.add_node("local_judge", self.local_judge)
@@ -200,12 +200,12 @@ class RAGAgent:
         graph.add_edge(START, "local_search")
         graph.add_conditional_edges(
             "local_search",
-            self._route_local_start,
+            self.route_local_start,
             {"judge": "local_judge", "empty": "web_search"},
         )
         graph.add_conditional_edges(
             "local_judge",
-            self._route_local_judge,
+            self.route_local_judge,
             {
                 "answer": "answer_node",
                 "partial": "web_search",
@@ -216,7 +216,7 @@ class RAGAgent:
         graph.add_edge("web_search", "web_judge")
         graph.add_conditional_edges(
             "web_judge",
-            self._route_web_judge,
+            self.route_web_judge,
             {"answer": "answer_node", "fallback": "fallback_node"},
         )
         graph.add_edge("answer_node", "finalize")
@@ -229,12 +229,12 @@ class RAGAgent:
     # Routing
     # ------------------------------------------------------------------
 
-    def _route_local_start(self, state):
+    def route_local_start(self, state):
         # Empty local results cannot be judged — go straight to the web.
         record = state.get("local_record")
         return "judge" if record and record.results else "empty"
 
-    def _route_local_judge(self, state):
+    def route_local_judge(self, state):
         analysis = state["local_record"].analysis or {}
         if (
             analysis.get("verdict") == "answer"
@@ -250,7 +250,7 @@ class RAGAgent:
             return "reject"
         return "escalate"
 
-    def _route_web_judge(self, state):
+    def route_web_judge(self, state):
         analysis = state["web_record"].analysis or {}
         # The web path is the last stop: a grounded answer_partial from the
         # web judge is still the best available answer.
@@ -278,7 +278,7 @@ class RAGAgent:
     def local_judge(self, state):
         record = state["local_record"]
         try:
-            verdict = self._judge(state["query"], record.results, "local knowledge base")
+            verdict = self.judge(state["query"], record.results, "local knowledge base")
             if verdict is None:
                 raise ValueError("judge returned no structured verdict")
             record.analysis = {
@@ -345,7 +345,7 @@ class RAGAgent:
                 "judge_answer": None,
             }
         try:
-            verdict = self._judge(state["query"], record.results, "Bulbapedia web results")
+            verdict = self.judge(state["query"], record.results, "Bulbapedia web results")
             if verdict is None:
                 raise ValueError("judge returned no structured verdict")
             record.analysis = {
@@ -404,8 +404,8 @@ class RAGAgent:
     # Judge
     # ------------------------------------------------------------------
 
-    def _judge(self, query, results, source_label):
-        context = self._format_context(results, source_label)
+    def judge(self, query, results, source_label):
+        context = self.format_context(results, source_label)
         messages = [
             {"role": "developer", "content": INSTRUCTIONS},
             {
@@ -440,10 +440,10 @@ class RAGAgent:
         response = client.responses.create(
             model=self.model, input=messages, temperature=temperature
         )
-        return self._parse_judge_text(response.output_text)
+        return self.parse_judge_text(response.output_text)
 
     @staticmethod
-    def _parse_judge_text(text):
+    def parse_judge_text(text):
         if not isinstance(text, str) or not text:
             return None
         cleaned = text.strip().strip("`")
@@ -499,7 +499,7 @@ class RAGAgent:
             return None
 
     @staticmethod
-    def _format_context(results, source_label):
+    def format_context(results, source_label):
         blocks = []
         for item in results:
             text = item.get("search_text") or item.get("snippet") or ""

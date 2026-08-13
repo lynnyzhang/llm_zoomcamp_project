@@ -42,6 +42,11 @@ reliability, observability, maintainability) requires improvement.
 - **Docstrings only when mandatory** — add a docstring only where it is
   required for understanding (e.g. a function the LLM needs to understand
   what it does).
+- **No leading-underscore names** — never prefix variables, functions,
+  methods, classes, or module-level constants with a single underscore
+  (e.g. write `judge` not `_judge`, `DB_PATH` not `_DB_PATH`). This
+  project does not use Python's private-marking convention; drop the
+  underscore everywhere.
 
 ## Setup
 

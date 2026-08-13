@@ -41,7 +41,7 @@ STAT_KEYS = [
 ]
 
 
-def _validate_archive_body(content, content_type=""):
+def validate_archive_body(content, content_type=""):
     """Validate a downloaded body is a ZIP archive before we try to open it.
 
     Kaggle's anonymous download endpoint is now bot-blocked and returns an
@@ -78,7 +78,7 @@ def download_archive(url=KAGGLE_DATASET_URL):
     except requests.RequestException as exc:
         raise SystemExit(f"FATAL: archive download failed: {exc}") from exc
     print(f"  HTTP {resp.status_code}, {len(resp.content)} bytes")
-    _validate_archive_body(resp.content, resp.headers.get("content-type", ""))
+    validate_archive_body(resp.content, resp.headers.get("content-type", ""))
     return zipfile.ZipFile(io.BytesIO(resp.content))
 
 
@@ -113,26 +113,26 @@ def extract_raw_csvs():
         )
 
 
-def _int(value):
+def to_int(value):
     value = (value or "").strip()
     return int(value) if value else None
 
 
-def _float(value):
+def to_float(value):
     value = (value or "").strip()
     return float(value) if value else None
 
 
-def _bool(value):
+def to_bool(value):
     return (value or "").strip().lower() == "true"
 
 
-def _list(value):
+def to_list(value):
     value = (value or "").strip()
     return [item.strip() for item in value.split("|") if item.strip()] if value else []
 
 
-def _str_or_none(value):
+def to_str_or_none(value):
     value = (value or "").strip()
     return value if value else None
 
@@ -149,26 +149,26 @@ def parse_row(row):
         "name": row["name"].strip(),
         "types": types,
         "generation": row["generation"].strip(),
-        "stats": {k: _int(row[k]) for k in STAT_KEYS},
-        "height_m": _float(row["height_m"]),
-        "weight_kg": _float(row["weight_kg"]),
-        "abilities": _list(row["abilities"]),
-        "hidden_ability": _str_or_none(row["hidden_ability"]),
-        "egg_groups": _list(row["egg_groups"]),
-        "color": _str_or_none(row["color"]),
-        "shape": _str_or_none(row["shape"]),
-        "habitat": _str_or_none(row["habitat"]),
-        "growth_rate": _str_or_none(row["growth_rate"]),
-        "capture_rate": _int(row["capture_rate"]),
-        "base_happiness": _int(row["base_happiness"]),
-        "base_experience": _int(row["base_experience"]),
-        "genus": _str_or_none(row["genus"]),
-        "is_legendary": _bool(row["is_legendary"]),
-        "is_mythical": _bool(row["is_mythical"]),
-        "is_baby": _bool(row["is_baby"]),
-        "evolution_chain_id": _int(row["evolution_chain_id"]),
+        "stats": {k: to_int(row[k]) for k in STAT_KEYS},
+        "height_m": to_float(row["height_m"]),
+        "weight_kg": to_float(row["weight_kg"]),
+        "abilities": to_list(row["abilities"]),
+        "hidden_ability": to_str_or_none(row["hidden_ability"]),
+        "egg_groups": to_list(row["egg_groups"]),
+        "color": to_str_or_none(row["color"]),
+        "shape": to_str_or_none(row["shape"]),
+        "habitat": to_str_or_none(row["habitat"]),
+        "growth_rate": to_str_or_none(row["growth_rate"]),
+        "capture_rate": to_int(row["capture_rate"]),
+        "base_happiness": to_int(row["base_happiness"]),
+        "base_experience": to_int(row["base_experience"]),
+        "genus": to_str_or_none(row["genus"]),
+        "is_legendary": to_bool(row["is_legendary"]),
+        "is_mythical": to_bool(row["is_mythical"]),
+        "is_baby": to_bool(row["is_baby"]),
+        "evolution_chain_id": to_int(row["evolution_chain_id"]),
         "flavor_text": row["flavor_text"].strip(),
-        "sprite_url": _str_or_none(row["sprite_url"]),
+        "sprite_url": to_str_or_none(row["sprite_url"]),
     }
 
 

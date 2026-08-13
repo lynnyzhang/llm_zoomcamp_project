@@ -48,10 +48,10 @@ class Embedder:
         vectors = []
         for chunk in chunks:
             encoded = self.tokenizer.encode_batch(chunk)
-            vectors.append(self._run(encoded, normalize=normalize))
+            vectors.append(self.run(encoded, normalize=normalize))
         return np.concatenate(vectors, axis=0)
 
-    def _run(self, encoded, normalize):
+    def run(self, encoded, normalize):
         feed = {}
         if "input_ids" in self.input_names:
             feed["input_ids"] = np.array([e.ids for e in encoded], dtype=np.int64)

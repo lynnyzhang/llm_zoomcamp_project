@@ -7,7 +7,7 @@ from tqdm.auto import tqdm
 
 from src.llm import LLMClient
 
-_DEFAULT_DOCUMENTS_PATH = (
+DEFAULT_DOCUMENTS_PATH = (
     Path(__file__).resolve().parents[1] / "data" / "chunks" / "documents.jsonl"
 )
 
@@ -100,7 +100,7 @@ def load_document_index(documents_path=None):
     the analog of the FAQ 'answer' lookup in the course's RAG eval
     (answer_orig = doc_idx[doc_id]["answer"]).
     """
-    path = Path(documents_path) if documents_path else _DEFAULT_DOCUMENTS_PATH
+    path = Path(documents_path) if documents_path else DEFAULT_DOCUMENTS_PATH
     docs = {}
     with open(path, encoding="utf-8") as f:
         for line in f:

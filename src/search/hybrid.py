@@ -6,7 +6,7 @@ from minsearch import Index, VectorSearch
 from src.search.embedder import Embedder
 
 
-def _load_documents(path):
+def load_documents(path):
     docs = []
     with open(path) as f:
         for line in f:
@@ -41,7 +41,7 @@ def reciprocal_rank_fusion(result_lists, weights=None, k=60, num_results=5):
 
 
 class HybridSearch:
-    _DEFAULT_DATA = Path(__file__).resolve().parents[2] / "data" / "chunks" / "documents.jsonl"
+    DEFAULT_DATA = Path(__file__).resolve().parents[2] / "data" / "chunks" / "documents.jsonl"
 
     def __init__(
         self,
@@ -55,9 +55,9 @@ class HybridSearch:
         if documents is not None:
             self.documents = documents
         elif documents_path is not None:
-            self.documents = _load_documents(documents_path)
+            self.documents = load_documents(documents_path)
         else:
-            self.documents = _load_documents(self._DEFAULT_DATA)
+            self.documents = load_documents(self.DEFAULT_DATA)
 
         self.keyword_weight = keyword_weight
         self.vector_weight = vector_weight

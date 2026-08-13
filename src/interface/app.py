@@ -22,7 +22,7 @@ from src.rag.agent import RAGAgent
 from src.search.hybrid import HybridSearch
 
 
-def _parse_cli_flags(argv):
+def parse_cli_flags(argv):
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--show-confidence", action="store_true", default=False)
     args, _ = parser.parse_known_args(argv)
@@ -30,7 +30,7 @@ def _parse_cli_flags(argv):
 
 
 # Read once at import; --show-confidence toggles the LLM-judge confidence bar.
-SHOW_CONFIDENCE = _parse_cli_flags(sys.argv[1:])
+SHOW_CONFIDENCE = parse_cli_flags(sys.argv[1:])
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -61,7 +61,7 @@ if "feedback" not in st.session_state:
 # Initialize agent (lazy loading)
 # ---------------------------------------------------------------------------
 
-def _make_agent():
+def make_agent():
     search_index = HybridSearch()
     return RAGAgent(
         search_index=search_index,
@@ -69,7 +69,7 @@ def _make_agent():
     )
 
 
-def _maybe_trace(agent):
+def maybe_trace(agent):
     # Fall back to the plain agent when tracing is disabled or the tracer
     # cannot be initialized (an unwritable data/ must never break the app).
     try:
@@ -87,7 +87,7 @@ def _maybe_trace(agent):
 def get_agent():
     if st.session_state.agent is None:
         with st.spinner("Loading search index and LLM..."):
-            st.session_state.agent = _maybe_trace(_make_agent())
+            st.session_state.agent = maybe_trace(make_agent())
     return st.session_state.agent
 
 
@@ -95,7 +95,7 @@ def get_agent():
 # Helper functions
 # ---------------------------------------------------------------------------
 
-def _unique_docs(searches):
+def unique_docs(searches):
     seen_ids = set()
     unique_docs = []
 
@@ -113,7 +113,7 @@ def _unique_docs(searches):
     return unique_docs
 
 
-def _filter_docs_by_question(unique_docs, question):
+def filter_docs_by_question(unique_docs, question):
     if not question:
         return []
 
@@ -128,7 +128,7 @@ def _filter_docs_by_question(unique_docs, question):
     return matched
 
 
-def _doc_artwork_url(doc):
+def doc_artwork_url(doc):
     sprite_url = doc.get("sprite_url")
     if sprite_url:
         return sprite_url
@@ -144,7 +144,7 @@ def _doc_artwork_url(doc):
     )
 
 
-def _stats_excerpt(doc, limit=200):
+def stats_excerpt(doc, limit=200):
     # Type-chart docs carry no stats.
     if doc.get("kind") == "type_chart":
         return ""
@@ -162,7 +162,7 @@ def _stats_excerpt(doc, limit=200):
     return ", ".join(parts)[:limit]
 
 
-def _card_title(doc):
+def card_title(doc):
     if doc.get("kind") == "type_chart":
         return f"{doc.get('type') or 'Unknown'} type chart"
     name = doc.get("name", "Untitled")
@@ -172,7 +172,7 @@ def _card_title(doc):
     return name
 
 
-def _card_caption(doc):
+def card_caption(doc):
     if doc.get("kind") == "type_chart":
         return "Type chart"
     types = doc.get("types") or []
@@ -181,7 +181,7 @@ def _card_caption(doc):
     return "unknown"
 
 
-def _pokemon_card_grid(docs):
+def pokemon_card_grid(docs):
     st.subheader("Pokémon Cards")
 
     for row_start in range(0, len(docs), 4):
@@ -189,23 +189,23 @@ def _pokemon_card_grid(docs):
         columns = st.columns(4)
         for col, doc in zip(columns, row_docs):
             with col:
-                title = _card_title(doc)
-                artwork_url = _doc_artwork_url(doc)
+                title = card_title(doc)
+                artwork_url = doc_artwork_url(doc)
                 if artwork_url:
                     # Broken/404 artwork must not break the card — the title
                     # and stats below still render without the image.
                     with contextlib.suppress(Exception):
                         st.image(artwork_url, width="stretch")
                 st.markdown(f"**{title}**")
-                caption = _card_caption(doc)
+                caption = card_caption(doc)
                 if caption:
                     st.caption(caption)
-                excerpt = _stats_excerpt(doc)
+                excerpt = stats_excerpt(doc)
                 if excerpt:
                     st.caption(excerpt)
 
 
-def _record_feedback(span_id, feedback):
+def record_feedback(span_id, feedback):
     # Persist feedback for a message's span; never crash the UI. Messages
     # without a span (untraced agent or pre-tracing history) are skipped;
     # write failures (unwritable database) are logged and swallowed.
@@ -247,11 +247,11 @@ def render_message_body(msg):
         elif source == "web":
             st.caption("Source: Bulbapedia (web)")
 
-        unique_docs = _unique_docs(searches)
+        unique_docs = unique_docs(searches)
         question = msg.get("question", "")
-        matched_docs = _filter_docs_by_question(unique_docs, question) if question else []
+        matched_docs = filter_docs_by_question(unique_docs, question) if question else []
         if matched_docs:
-            _pokemon_card_grid(matched_docs)
+            pokemon_card_grid(matched_docs)
 
         if SHOW_CONFIDENCE:
             confidence = result.get("confidence")
@@ -264,12 +264,12 @@ def render_message_body(msg):
     with col1:
         if st.button("👍", key=f"up_{msg_id}"):
             st.session_state.feedback[msg_id] = "positive"
-            _record_feedback(msg.get("span_id"), "positive")
+            record_feedback(msg.get("span_id"), "positive")
             st.toast("Thanks for the feedback!")
     with col2:
         if st.button("👎", key=f"down_{msg_id}"):
             st.session_state.feedback[msg_id] = "negative"
-            _record_feedback(msg.get("span_id"), "negative")
+            record_feedback(msg.get("span_id"), "negative")
             st.toast("Thanks for the feedback!")
 
     # Show feedback status

@@ -58,7 +58,7 @@ extra text):
 """.strip()
 
 # The model sometimes truncates the JSON mid-list — retries in
-# _generate_questions cover it; top up any shortfall with follow-up
+# generate_questions cover it; top up any shortfall with follow-up
 # generations.
 TARGET_QUESTIONS_PER_RECORD = 5
 FILL_ATTEMPTS = 3
@@ -87,7 +87,7 @@ class Questions(BaseModel):
     questions: list[str]
 
 
-def _generate_questions(client, model, record, instructions=DATA_GEN_INSTRUCTIONS):
+def generate_questions(client, model, record, instructions=DATA_GEN_INSTRUCTIONS):
     user_prompt = json.dumps(record)
     # Single path: structured output via responses.parse(text_format=Questions).
     # LLMClient (LLMClient.get) probes text_format support once and patches
@@ -121,13 +121,13 @@ def generate_questions_for_record(pokemon_id, record, client, model, target_ques
                 seen.add(question)
                 rows.append({"question": question, "document": pokemon_id})
 
-    add(_generate_questions(client, model, record))
+    add(generate_questions(client, model, record))
     for _ in range(FILL_ATTEMPTS):
         if len(rows) >= target_questions:
             break
         needed = target_questions - len(rows)
         add(
-            _generate_questions(
+            generate_questions(
                 client,
                 model,
                 record,
@@ -268,7 +268,7 @@ def main(argv=None):
 
     client = LLMClient.get()
     # Bound the SDK's default 600s per-request timeout and disable its built-in
-    # retries (the _generate_questions loop below is the retry layer): a
+    # retries (the generate_questions loop below is the retry layer): a
     # black-holing endpoint must fail fast, not hang for minutes per attempt.
     # LLMClient.get() returns the LLMClient wrapper — configure the underlying
     # OpenAI client it lazily creates.

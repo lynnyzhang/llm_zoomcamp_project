@@ -144,12 +144,12 @@ EVOLUTION_OVERRIDES = {
     "Manaphy": (None, []),
 }
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_CORPUS_PATH = _PROJECT_ROOT / "data" / "corpus.jsonl"
-_TYPES_CSV_PATH = _PROJECT_ROOT / "data" / "raw" / "pokemon_types.csv"
-_OUTPUT_PATH = _PROJECT_ROOT / "data" / "chunks" / "documents.jsonl"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CORPUS_PATH = PROJECT_ROOT / "data" / "corpus.jsonl"
+TYPES_CSV_PATH = PROJECT_ROOT / "data" / "raw" / "pokemon_types.csv"
+OUTPUT_PATH = PROJECT_ROOT / "data" / "chunks" / "documents.jsonl"
 
-_TYPE_CHART_FIELDS = [
+TYPE_CHART_FIELDS = [
     "double_damage_to",
     "half_damage_to",
     "no_damage_to",
@@ -171,12 +171,12 @@ def load_type_chart(path):
                     for item in row[field].split("|")
                     if item.strip()
                 ]
-                for field in _TYPE_CHART_FIELDS
+                for field in TYPE_CHART_FIELDS
             }
     return chart
 
 
-def _type_chart_doc(chart, t):
+def type_chart_doc(chart, t):
     """Build one Part B type-chart document from a chart row key `t`."""
     title = t.capitalize()
 
@@ -197,7 +197,7 @@ def _type_chart_doc(chart, t):
     )
 
     doc = {"id": f"type_{t}", "kind": "type_chart", "type": title}
-    for field in _TYPE_CHART_FIELDS:
+    for field in TYPE_CHART_FIELDS:
         doc[field] = [v.capitalize() for v in chart[t][field]]
     doc["search_text"] = search_text
     return doc
@@ -219,7 +219,7 @@ def build_evolution_map(corpus):
     return chains
 
 
-def _evolution_linkage(record, chain):
+def evolution_linkage(record, chain):
     """Return (evolves_from, evolves_into) for a record within its chain.
 
     Curated overrides first (baby/branched chains where dex order !=
@@ -241,7 +241,7 @@ def _evolution_linkage(record, chain):
     return evolves_from, evolves_into
 
 
-def _chain_render_order(chain):
+def chain_render_order(chain):
     """Evolution-order names for a chain, using the curated overrides when
     the dex-order heuristic would misorder it (baby chains); otherwise the
     dex order is already a valid evolution order."""
@@ -267,10 +267,10 @@ def _chain_render_order(chain):
     return ordered
 
 
-def _chain_render(record, chain):
+def chain_render(record, chain):
     if record["id"] > CANONICAL_MAX_ID or not chain:
         return "Evolution chain: none"
-    names = _chain_render_order(chain)
+    names = chain_render_order(chain)
     if len(names) < 2:
         return f"Evolution chain: {record['evolution_chain_id']} (single member)"
     path = " -> ".join(names)
@@ -301,7 +301,7 @@ def type_effectiveness(record, chart):
     return result
 
 
-def _yes_no(value):
+def yes_no(value):
     return "yes" if value else "no"
 
 
@@ -341,18 +341,18 @@ def build_search_text(record, chart, chain):
         f"total {stats['base_stat_total']}"
     )
     lines.append(
-        f"Flags: legendary {_yes_no(record['is_legendary'])}, "
-        f"mythical {_yes_no(record['is_mythical'])}, "
-        f"baby {_yes_no(record['is_baby'])}"
+        f"Flags: legendary {yes_no(record['is_legendary'])}, "
+        f"mythical {yes_no(record['is_mythical'])}, "
+        f"baby {yes_no(record['is_baby'])}"
     )
-    lines.append(_chain_render(record, chain))
+    lines.append(chain_render(record, chain))
     lines.append(f"Type effectiveness: {eff_str}")
     lines.append(f"Flavor text: {record['flavor_text']}")
     return "\n".join(lines)
 
 
 def build_pokemon_doc(record, chart, chain):
-    evolves_from, evolves_into = _evolution_linkage(record, chain)
+    evolves_from, evolves_into = evolution_linkage(record, chain)
     doc = dict(record)
     doc["evolves_from"] = evolves_from
     doc["evolves_into"] = evolves_into
@@ -362,21 +362,21 @@ def build_pokemon_doc(record, chart, chain):
 
 
 def main():
-    if not _CORPUS_PATH.exists():
+    if not CORPUS_PATH.exists():
         raise FileNotFoundError(
-            f"Missing corpus at {_CORPUS_PATH}. "
+            f"Missing corpus at {CORPUS_PATH}. "
             "Run `uv run python -m src.data.ingest` first."
         )
-    if not _TYPES_CSV_PATH.exists():
+    if not TYPES_CSV_PATH.exists():
         raise FileNotFoundError(
-            f"Missing type chart at {_TYPES_CSV_PATH}. "
+            f"Missing type chart at {TYPES_CSV_PATH}. "
             "Run `uv run python -m src.data.ingest` first."
         )
 
-    with open(_CORPUS_PATH, encoding="utf-8") as f:
+    with open(CORPUS_PATH, encoding="utf-8") as f:
         corpus = [json.loads(line) for line in f if line.strip()]
 
-    chart = load_type_chart(_TYPES_CSV_PATH)
+    chart = load_type_chart(TYPES_CSV_PATH)
     chains = build_evolution_map(corpus)
 
     docs = [
@@ -386,16 +386,16 @@ def main():
     # Part B: 18 type-chart docs appended after the 1,350 Pokémon docs,
     # in the order the rows appear in pokemon_types.csv (dict preserves order).
     for t in chart:
-        docs.append(_type_chart_doc(chart, t))
+        docs.append(type_chart_doc(chart, t))
 
-    _OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(_OUTPUT_PATH, "w", encoding="utf-8") as f:
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         f.writelines(json.dumps(doc, ensure_ascii=False) + "\n" for doc in docs)
 
-    print(f"Processed {_CORPUS_PATH}")
-    print(f"Saved {len(docs)} docs to {_OUTPUT_PATH}")
+    print(f"Processed {CORPUS_PATH}")
+    print(f"Saved {len(docs)} docs to {OUTPUT_PATH}")
 
-    with open(_OUTPUT_PATH, encoding="utf-8") as f:
+    with open(OUTPUT_PATH, encoding="utf-8") as f:
         first = json.loads(f.readline())
     print(f"Sample document keys: {list(first.keys())}")
 

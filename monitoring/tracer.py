@@ -23,15 +23,15 @@ from opentelemetry.sdk.trace.export import (
 # Database path
 # ---------------------------------------------------------------------------
 
-_DB_DIR = Path(__file__).resolve().parents[1] / "monitoring"
-_DB_PATH = _DB_DIR / "traces.db"
+DB_DIR = Path(__file__).resolve().parents[1] / "monitoring"
+DB_PATH = DB_DIR / "traces.db"
 
 
 def get_traces_db_path():
-    return _DB_PATH
+    return DB_PATH
 
 
-def _postgres_config():
+def postgres_config():
     # Returns None (local-dev path) when POSTGRES_HOST is unset, so local runs
     # and tests never require Postgres. Defaults mirror docker-compose.yml.
     host = os.environ.get("POSTGRES_HOST")
@@ -46,7 +46,7 @@ def _postgres_config():
     }
 
 
-def _span_id(span):
+def span_id(span):
     # Stable hex span id shared by exporters and run_with_feedback.
     return format(span.get_span_context().span_id, "016x")
 
@@ -68,18 +68,18 @@ class SQLiteSpanExporter(SpanExporter):
     # Extended schema beyond the homework: adds feedback, agent_iterations,
     # query, and search_queries columns for richer monitoring.
     def __init__(self, db_path=None):
-        self.db_path = Path(db_path) if db_path else _DB_PATH
+        self.db_path = Path(db_path) if db_path else DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._ensure_schema()
+        self.ensure_schema()
 
-    def _connect(self):
+    def connect(self):
         # Fresh connection per call: SQLite connections are thread-bound, so a
         # cached one would break exports from another thread (same reason
         # dashboard.py opens a new connection per query).
         return sqlite3.connect(str(self.db_path))
 
-    def _ensure_schema(self):
-        conn = self._connect()
+    def ensure_schema(self):
+        conn = self.connect()
         try:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS spans (
@@ -113,7 +113,7 @@ class SQLiteSpanExporter(SpanExporter):
         # Every write failure is contained (warning + FAILURE) — an unwritable
         # database must never crash the app.
         try:
-            conn = self._connect()
+            conn = self.connect()
             try:
                 for span in spans:
                     attrs = dict(span.attributes or {})
@@ -134,7 +134,7 @@ class SQLiteSpanExporter(SpanExporter):
                             attrs.get("agent_iterations"),
                             attrs.get("query"),
                             attrs.get("search_queries"),
-                            _span_id(span),
+                            span_id(span),
                         ),
                     )
                 conn.commit()
@@ -159,7 +159,7 @@ class SQLiteSpanExporter(SpanExporter):
 # Postgres span exporter (docker path, opt-in via POSTGRES_HOST)
 # ---------------------------------------------------------------------------
 
-_PG_SPANS_SCHEMA = """
+PG_SPANS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS spans (
     name TEXT,
     start_time BIGINT,
@@ -176,9 +176,9 @@ CREATE TABLE IF NOT EXISTS spans (
 """
 
 
-def _ensure_postgres_schema(conn):
+def ensure_postgres_schema(conn):
     with conn.cursor() as cur:
-        cur.execute(_PG_SPANS_SCHEMA)
+        cur.execute(PG_SPANS_SCHEMA)
         cur.execute(
             "ALTER TABLE spans ADD COLUMN IF NOT EXISTS span_id TEXT"
         )
@@ -197,14 +197,14 @@ class PostgresSpanExporter(SpanExporter):
     def __init__(self, config=None):
         import psycopg
 
-        self._logger = logging.getLogger(__name__)
-        cfg = config or _postgres_config()
+        self.logger = logging.getLogger(__name__)
+        cfg = config or postgres_config()
         if cfg is None:
             raise RuntimeError(
                 "PostgresSpanExporter requires POSTGRES_HOST to be set"
             )
         self.conn = psycopg.connect(**cfg)
-        _ensure_postgres_schema(self.conn)
+        ensure_postgres_schema(self.conn)
 
     def export(self, spans):
         try:
@@ -228,12 +228,12 @@ class PostgresSpanExporter(SpanExporter):
                             attrs.get("agent_iterations"),
                             attrs.get("query"),
                             attrs.get("search_queries"),
-                            _span_id(span),
+                            span_id(span),
                         ),
                     )
             self.conn.commit()
         except Exception:
-            self._logger.warning(
+            self.logger.warning(
                 "Failed to export spans to Postgres", exc_info=True
             )
             self.conn.rollback()
@@ -244,13 +244,13 @@ class PostgresSpanExporter(SpanExporter):
         try:
             self.conn.close()
         except Exception:
-            self._logger.warning("Postgres shutdown failed", exc_info=True)
+            self.logger.warning("Postgres shutdown failed", exc_info=True)
 
     def force_flush(self):
         try:
             self.conn.commit()
         except Exception:
-            self._logger.warning(
+            self.logger.warning(
                 "Postgres force_flush failed", exc_info=True
             )
             return False
@@ -278,7 +278,7 @@ class TracerSetup:
                     "could not open database",
                     exc_info=True,
                 )
-            if _postgres_config() is not None:
+            if postgres_config() is not None:
                 try:
                     self.postgres_exporter = PostgresSpanExporter()
                     self.provider.add_span_processor(
@@ -306,8 +306,8 @@ class TracerSetup:
 # Global tracer (lazily initialized)
 # ---------------------------------------------------------------------------
 
-_default_setup: TracerSetup | None = None
-_setup_lock = threading.Lock()
+default_setup: TracerSetup | None = None
+setup_lock = threading.Lock()
 
 
 def get_tracer():
@@ -315,11 +315,11 @@ def get_tracer():
     # run concurrently), so the lazy singleton must be guarded: two threads
     # racing here would each build a TracerSetup, double-register a global
     # tracer provider, and orphan the first exporter.
-    global _default_setup
-    with _setup_lock:
-        if _default_setup is None:
-            _default_setup = TracerSetup()
-        return _default_setup.tracer
+    global default_setup
+    with setup_lock:
+        if default_setup is None:
+            default_setup = TracerSetup()
+        return default_setup.tracer
 
 
 # ---------------------------------------------------------------------------
@@ -369,20 +369,20 @@ class TracedRAGAgent:
 # Feedback storage
 # ---------------------------------------------------------------------------
 
-def _record_feedback_postgres(span_id, feedback):
+def record_feedback_postgres(span_id, feedback):
     # Dual-write feedback into the Postgres spans table (docker path), running
     # only when POSTGRES_HOST is set. Updates the exact span by span_id,
     # inserting a placeholder row when the span export never reached Postgres.
     # Failures are logged and swallowed — feedback in SQLite must never be
     # lost because Postgres is down.
-    cfg = _postgres_config()
+    cfg = postgres_config()
     if cfg is None or not span_id:
         return
     try:
         import psycopg
 
         with psycopg.connect(**cfg) as conn:
-            _ensure_postgres_schema(conn)
+            ensure_postgres_schema(conn)
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE spans SET feedback = %s WHERE span_id = %s",
@@ -405,7 +405,7 @@ def record_feedback(span_id, feedback, db_path=None):
     # None, falls back to the legacy behavior: update the first (oldest)
     # feedback-less agent.run row. Never raises — an unwritable database logs
     # a warning and returns False.
-    path = Path(db_path) if db_path else _DB_PATH
+    path = Path(db_path) if db_path else DB_PATH
     if not path.exists():
         return False
 
@@ -435,12 +435,12 @@ def record_feedback(span_id, feedback, db_path=None):
         )
         return False
 
-    _record_feedback_postgres(span_id, feedback)
+    record_feedback_postgres(span_id, feedback)
     return recorded
 
 
 def get_trace_stats(db_path=None):
-    path = Path(db_path) if db_path else _DB_PATH
+    path = Path(db_path) if db_path else DB_PATH
     if not path.exists():
         return {"total_traces": 0}
 
@@ -483,7 +483,7 @@ def get_trace_stats(db_path=None):
 
 if __name__ == "__main__":
     print("Testing OpenTelemetry tracing with SQLite storage...")
-    print(f"Database path: {_DB_PATH}")
+    print(f"Database path: {DB_PATH}")
 
     # Initialize tracer
     setup = TracerSetup()
@@ -500,7 +500,7 @@ if __name__ == "__main__":
 
     # Verify database
     import sqlite3
-    conn = sqlite3.connect(str(_DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.execute("PRAGMA table_info(spans)")
     columns = [row[1] for row in cursor.fetchall()]
     print(f"Schema columns: {columns}")
