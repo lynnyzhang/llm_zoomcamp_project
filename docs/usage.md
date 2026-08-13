@@ -8,12 +8,11 @@ The Streamlit app at `http://localhost:8501` provides a conversational interface
 
 Type a question in the chat input at the bottom of the page. The system will:
 
-1. **Check scope** — reject out-of-scope questions (battle simulation, save files, cheats, non-Pokémon topics)
-2. **Search** the Pokédex corpus using hybrid search (keyword + vector)
-3. **Analyze** whether results are sufficient to answer
-4. **Reformulate** the query if results are insufficient (up to 3 iterations)
-5. **Generate** a grounded answer from the retrieved context
-6. **Display** the answer with confidence score, Pokémon cards, and full process visualization
+1. **Search locally** — always starts with hybrid search (keyword + vector) over the Pokédex corpus
+2. **Judge** — an LLM judge decides whether the local results confidently answer the question (verdict + confidence score)
+3. **Escalate** — only when local results are insufficient: web search restricted to Bulbapedia (Tavily)
+4. **Answer or reject** — a confident answer (local or web) is returned with its source; otherwise a clear rejection message
+5. **Display** — answer with source caption, optional confidence bar (`--show-confidence`), Pokémon cards, and feedback buttons
 
 ### Example Queries
 
@@ -38,25 +37,13 @@ Each response includes:
 
 **Answer** — The generated response, grounded in retrieved Pokédex entries.
 
-**Confidence Score** — A progress bar showing how confident the system is. Calculated from:
-- Proportion of search iterations that found sufficient results (70%)
-- Efficiency bonus for finding results in fewer iterations (30%)
+**Confidence Score** — An optional progress bar with the LLM judge's confidence (0–100%) in the answer. Hidden by default; launch the app with `--show-confidence` to display it.
 
 **Pokémon Cards** — Retrieved documents render as cards with official artwork (sprite URLs from the dataset, PokeAPI fallback), the Pokémon's name and types, and a stats excerpt. Only Pokémon named in the question are shown — questions that name no Pokémon get no cards. Artwork that fails to load degrades gracefully — the card still shows the title.
 
 **Feedback Buttons** — Thumbs up/down to record whether the answer was helpful. Feedback is attached to the exact tracing span for the message and shows up in monitoring.
 
-**Rejection banner** — For out-of-scope questions the answer renders as a warning banner with no cards or confidence (the query never reached search).
-
-### Sidebar Settings
-
-| Setting              | Default | Range  | Description                                      |
-|----------------------|---------|--------|--------------------------------------------------|
-| Search results       | 5       | 1-10   | Number of documents retrieved per search iteration|
-| Search type          | hybrid  | —      | hybrid / keyword / vector                         |
-| Max agent iterations | 3       | 1-5    | Maximum search-reformulate cycles                 |
-
-Changing settings takes effect on the next query. The search type setting rewires the backend at call time, so switching costs nothing.
+**Rejection banner** — When the LLM judge finds no confident answer — out-of-scope questions, or gaps neither the local knowledge base nor Bulbapedia can fill — the answer renders as a warning banner with no cards, confidence, or source.
 
 ## CLI Usage
 
@@ -69,16 +56,18 @@ agent = RAGAgent()
 result = agent.run("What are Pikachu's stats?")
 
 print(f"Answer: {result['answer']}")
+print(f"Source: {result['source']}")            # 'local' or 'web'
+print(f"Confidence: {result['confidence']}")
 print(f"Iterations: {result['iterations']}")
 for i, search in enumerate(result['searches']):
-    print(f"  Search {i+1}: query='{search.query}', results={len(search.results)}")
-    print(f"    Sufficient: {search.analysis.get('sufficient')}")
+    print(f"  Search {i+1}: query='{search.query}', source={search.source}, results={len(search.results)}")
+    print(f"    Verdict: {search.analysis.get('verdict')}, confidence: {search.analysis.get('confidence')}")
 ```
 
 ### Single Query (Simple RAG)
 
 ```python
-from src.rag.pipeline import RAGBase
+from src.rag.RAGBase import RAGBase
 from src.search.hybrid import HybridSearch
 
 search_index = HybridSearch()
@@ -201,7 +190,7 @@ Output: `evaluation/results/llm_eval.json`
 
 ### Agent vs Simple RAG Evaluation
 
-Compares agentic RAG (iterative search) against simple RAG (single search) on retrieval accuracy, answer quality, and latency.
+Compares agentic RAG (LangGraph escalate flow: local search → LLM judge → Bulbapedia web fallback) against simple RAG (single search) on retrieval accuracy, answer quality, and latency.
 
 ```bash
 uv run python -m evaluation.agent_eval
@@ -249,7 +238,7 @@ for search_record in result['searches']:
 ### Custom RAG Pipeline
 
 ```python
-from src.rag.pipeline import RAGBase
+from src.rag.RAGBase import RAGBase
 from src.search.hybrid import HybridSearch
 
 # Custom prompt template

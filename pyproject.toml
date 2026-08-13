@@ -23,6 +23,7 @@ dependencies = [
     "requests>=2.34.2",
     "sqlitesearch>=0.1.0",
     "streamlit>=1.59.2",
+    "tavily-python>=0.7.27",
     "tokenizers>=0.22.2",
     "toyaikit>=0.0.11",
     "tqdm>=4.68.3",

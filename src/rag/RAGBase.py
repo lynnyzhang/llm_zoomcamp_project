@@ -59,9 +59,10 @@ class RAGBase:
             {"role": "developer", "content": self.instructions},
             {"role": "user", "content": prompt},
         ]
-        response = self.llm_client.responses.create(
+        response = self.llm_client.client.responses.create(
             model=self.model,
             input=messages,
+            temperature=LLMClient.get_answer_temperature(),
         )
         return response.output_text
 

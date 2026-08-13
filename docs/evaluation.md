@@ -56,7 +56,7 @@ Refresh of 2026-08-10 on the regenerated ground-truth set (questions-only):
 - **Keyword leads** on recall@5 (0.892) and MRR (0.8415): exact name/type/stat vocabulary still matches the `search_text` layout, and the id/types keyword fields surface the right document at rank 1.
 - **Vector trails** (recall 0.808, MRR 0.711) — paraphrased questions distance the embedding from the labeled record rendering.
 - **Hybrid ≈ keyword** (recall 0.880, MRR 0.834): RRF fusion recovers most of vector's misses without losing keyword's rank-1 edge, at ~3x keyword's cost (1.0s vs 0.3s).
-- This is a meaningful spread again: the harder question set gives the agentic loop (reformulation) real room to add retrieval value (see Section 3).
+- This is a meaningful spread again: the harder question set gives the agentic loop real room to add retrieval value (see Section 3).
 
 ### Key Numbers
 
@@ -121,11 +121,13 @@ Refresh of 2026-08-10 on the regenerated ground-truth set (questions-only):
 ### Methodology
 
 - **Simple RAG**: Single hybrid search → LLM answer (baseline)
-- **Agentic RAG**: Iterative search with LLM-driven query reformulation (up to 3 iterations)
+- **Agentic RAG**: LangGraph escalate flow — local hybrid search first, LLM judge (verdict + confidence), Bulbapedia web search (Tavily) only when local results are insufficient, and rejection when neither path yields a confident answer
 - Evaluated on:
   - Retrieval accuracy (250 questions) — hit rate in top-5
   - Answer quality (20-question judge sample) — LLM-as-judge correctness (1-5)
   - Latency and search overhead
+
+> **Note:** The numbers below come from the pre-refactor agent (manual tool-use loop with query reformulation). The agent was re-architected on 2026-08-12 to the LangGraph escalate flow above — re-run `evaluation.agent_eval` to refresh these results.
 
 ### Results
 

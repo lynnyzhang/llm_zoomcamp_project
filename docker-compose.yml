@@ -42,6 +42,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-http://host.docker.internal:9101/v1}
       MODEL_ID: ${MODEL_ID}
+      TAVILY_API_KEY: ${TAVILY_API_KEY}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-capstone}

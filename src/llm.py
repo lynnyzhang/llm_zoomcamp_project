@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 class Test(BaseModel):
     """Minimal output type for the one-time text_format support test."""
-    qa_pairs: list
+    id: int
 
 
 class LLMClient:
@@ -24,13 +24,12 @@ class LLMClient:
 
     Reads api_key / base_url / model from .env once (constructor), creates the
     underlying OpenAI client lazily exactly once, and tests + patches
-    ``responses.parse`` text_format support exactly once at first client
-    access. ``responses`` mirrors the underlying client so callers keep using
-    ``llm_client.responses.create/parse``. Use ``LLMClient.get()`` for the
-    process-wide singleton.
+    ``client.responses.parse`` text_format support exactly once at first
+    client access. Callers use ``LLMClient.get().client.responses.*``
+    (create/parse) — the wrapper adds nothing beyond this one-time setup.
     """
 
-    default_client = None  # process-wide singleton instance
+    default_client = None
 
     @staticmethod
     def env(name):
@@ -66,6 +65,18 @@ class LLMClient:
             )
         return model
 
+    # Per-call-type temperatures, env-overridable: the verdict step must be
+    # deterministic (greedy) so borderline questions do not flip between
+    # answer and escalate; the answer step keeps slight variety. Reasoning
+    # models (e.g. o1/o3) reject temperature != 1 — set both vars to "1".
+    @staticmethod
+    def get_judge_temperature():
+        return float(os.environ.get("JUDGE_TEMPERATURE", "0.0"))
+
+    @staticmethod
+    def get_answer_temperature():
+        return float(os.environ.get("ANSWER_TEMPERATURE", "0.3"))
+
     @classmethod
     def get(cls):
         """Return the process-wide LLMClient singleton — the underlying OpenAI
@@ -91,18 +102,6 @@ class LLMClient:
                 self.patch_parse()
         return self.openai_client
 
-    @property
-    def responses(self):
-        """Mirror of the underlying client's responses API (create/parse)."""
-        return self.client.responses
-
-    def parse(self, model=None, input=None, text_format=None, **kwargs):
-        """Structured-output parse with text_format support (patched once for
-        llama.cpp-style servers that only accept response_format)."""
-        return self.responses.parse(
-            model=model, input=input, text_format=text_format, **kwargs
-        )
-
     def test_text_format(self):
         # Local servers (e.g. llama.cpp) accept the request but return plain
         # text (output_parsed=None), silently wasting a generation — test
@@ -110,7 +109,7 @@ class LLMClient:
         try:
             test = self.openai_client.responses.parse(
                 model=self.model,
-                input=[{"role": "user", "content": 'Reply with JSON only: {"qa_pairs": []}'}],
+                input=[{"role": "user", "content": 'reply with a id as intger'}],
                 text_format=Test,
             )
             return test.output_parsed is not None

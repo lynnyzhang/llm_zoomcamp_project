@@ -1,67 +1,48 @@
 # src/search/web.py
 #
-# Keyless web search backend for the agent's web_search tool: the DuckDuckGo
-# Instant Answer API (free, no API key, via requests — already a project
-# dependency). Returns a small list of {title, url, snippet} dicts and
-# degrades gracefully to [] on any failure (offline, rate limits, timeouts)
-# so the agent loop never breaks on web issues.
+# Web search backend for the agent's escalation path: Tavily, restricted to
+# bulbapedia.bulbagarden.net. Returns a small list of {title, url, snippet}
+# dicts (the same shape the old DuckDuckGo backend produced, so consumers are
+# unchanged). The caller is responsible for handling failures (the agent's
+# web_search node degrades gracefully to empty results).
 
-import requests
+import os
 
-DDG_API_URL = "https://api.duckduckgo.com/"
-TIMEOUT_SECONDS = 10
-
-
-def _topic_to_result(topic):
-    """Map a DuckDuckGo RelatedTopic (or nested Topics entry) to a result."""
-    text = topic.get("Text") or ""
-    return {
-        "title": topic.get("Result") or (text.split(" - ")[0][:80] if text else ""),
-        "url": topic.get("FirstURL") or "",
-        "snippet": text,
-    }
+from tavily import TavilyClient
 
 
-def web_search(query, num_results=5):
-    """Web search via the DuckDuckGo Instant Answer API.
+def get_api_key():
+    key = os.environ.get("TAVILY_API_KEY")
+    if key is None or not key.strip():
+        raise RuntimeError(
+            "TAVILY_API_KEY is not set or is empty in .env. Set it in project/.env (see .env.example)."
+        )
+    return key
 
-    Returns up to num_results dicts {title, url, snippet}. Never raises:
-    any failure returns [] (the agent feeds empty results back to the LLM,
-    which can then decide how to proceed).
+
+def web_search(query, num_results=5, api_key=None):
+    """Web search via Tavily, restricted to bulbapedia.bulbagarden.net.
+
+    Returns up to num_results dicts {title, url, snippet}. Raises on missing
+    key or API errors; the agent wraps this call so the flow degrades to a
+    rejection instead of crashing.
     """
-    try:
-        response = requests.get(
-            DDG_API_URL,
-            params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
-            timeout=TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        data = response.json()
-    except Exception:  # noqa: BLE001 — web search must never break the agent loop
-        return []
-
-    results = []
-    abstract = data.get("AbstractText") or ""
-    if abstract:
-        results.append(
-            {
-                "title": data.get("Heading") or query,
-                "url": data.get("AbstractURL") or "",
-                "snippet": abstract,
-            }
-        )
-    for topic in data.get("RelatedTopics") or []:
-        if "Topics" in topic:
-            for sub in topic.get("Topics") or []:
-                results.append(_topic_to_result(sub))
-        else:
-            results.append(_topic_to_result(topic))
-
-    seen = set()
-    unique = []
-    for r in results:
-        key = r["url"] or r["snippet"][:40]
-        if key and key not in seen:
-            seen.add(key)
-            unique.append(r)
-    return unique[:num_results]
+    client = TavilyClient(api_key=api_key or get_api_key())
+    response = client.search(
+        query=query,
+        search_depth="basic",
+        max_results=num_results,
+        include_domains=["bulbapedia.bulbagarden.net"],
+    )
+    results = [
+        {
+            "title": item.get("title", ""),
+            "url": item.get("url", ""),
+            "snippet": item.get("content", ""),
+        }
+        for item in response.get("results", [])
+        # Skip non-authoritative user subpages (User:, User talk:, blog
+        # posts) — the judge must not ground answers on them.
+        if "/user" not in item.get("url", "").lower()
+    ]
+    return results[:num_results]

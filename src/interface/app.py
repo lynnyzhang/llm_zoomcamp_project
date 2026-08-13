@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import logging
 import re
@@ -20,6 +21,17 @@ from src.llm import LLMClient
 from src.rag.agent import RAGAgent
 from src.search.hybrid import HybridSearch
 
+
+def _parse_cli_flags(argv):
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--show-confidence", action="store_true", default=False)
+    args, _ = parser.parse_known_args(argv)
+    return args.show_confidence
+
+
+# Read once at import; --show-confidence toggles the LLM-judge confidence bar.
+SHOW_CONFIDENCE = _parse_cli_flags(sys.argv[1:])
+
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
@@ -29,46 +41,6 @@ st.set_page_config(
     page_icon="🤖",
     layout="wide",
 )
-
-
-# ---------------------------------------------------------------------------
-# Sidebar settings
-# ---------------------------------------------------------------------------
-
-with st.sidebar:
-    st.header("⚙️ Settings")
-
-    num_results = st.slider(
-        "Number of search results",
-        min_value=1,
-        max_value=10,
-        value=5,
-        help="How many documents to retrieve per search iteration",
-    )
-
-    search_type = st.selectbox(
-        "Search type",
-        options=["hybrid", "keyword", "vector"],
-        index=0,
-        help="Hybrid combines keyword + vector with RRF fusion",
-    )
-
-    max_iterations = st.slider(
-        "Max agent iterations",
-        min_value=1,
-        max_value=5,
-        value=3,
-        help="Maximum number of search-reformulate cycles",
-    )
-
-    st.divider()
-    try:
-        st.markdown(f"**Model:** `{LLMClient.get_model()}`")
-    except RuntimeError:
-        # Missing MODEL_ID must not crash the app at startup — LLM calls fail
-        # lazily at first use (see AGENTS.md Gotchas).
-        st.markdown("**Model:** not configured (set `MODEL_ID` in `.env`)")
-    st.markdown(f"**Search:** `{search_type}`")
 
 
 # ---------------------------------------------------------------------------
@@ -94,9 +66,6 @@ def _make_agent():
     return RAGAgent(
         search_index=search_index,
         llm_client=LLMClient.get(),
-        max_iterations=max_iterations,
-        search_type=search_type,
-        num_results=num_results,
     )
 
 
@@ -119,13 +88,6 @@ def get_agent():
     if st.session_state.agent is None:
         with st.spinner("Loading search index and LLM..."):
             st.session_state.agent = _maybe_trace(_make_agent())
-    else:
-        # Re-wire the sidebar selection onto the cached agent (dispatch is read
-        # at call time) so switching search_type skips rebuilding the ONNX index.
-        inner = getattr(st.session_state.agent, "agent", st.session_state.agent)
-        inner.rag.search_type = search_type
-        inner.max_iterations = max_iterations
-        inner.num_results = num_results
     return st.session_state.agent
 
 
@@ -133,27 +95,16 @@ def get_agent():
 # Helper functions
 # ---------------------------------------------------------------------------
 
-def compute_confidence(searches):
-    if not searches:
-        return 0.0
-
-    sufficient_count = sum(
-        1 for s in searches
-        if s.analysis and s.analysis.get("sufficient", False)
-    )
-
-    # Confidence from the proportion of sufficient iterations. No efficiency
-    # term: the agent is instructed to search multiple times with different
-    # keywords, so more searches must never lower the score.
-    return sufficient_count / len(searches)
-
-
 def _unique_docs(searches):
     seen_ids = set()
     unique_docs = []
 
     for search in searches:
         for doc in search.results:
+            # Only doc-shaped local results render as cards; web results
+            # (title/url/snippet) carry no "id" and must never be shown.
+            if not isinstance(doc, dict) or "id" not in doc:
+                continue
             doc_id = doc.get("id", "")
             if doc_id and doc_id not in seen_ids:
                 seen_ids.add(doc_id)
@@ -290,15 +241,22 @@ def render_message_body(msg):
     else:
         st.markdown(answer)
 
+        source = result.get("source")
+        if source == "local":
+            st.caption("Source: Local knowledge base")
+        elif source == "web":
+            st.caption("Source: Bulbapedia (web)")
+
         unique_docs = _unique_docs(searches)
         question = msg.get("question", "")
         matched_docs = _filter_docs_by_question(unique_docs, question) if question else []
         if matched_docs:
             _pokemon_card_grid(matched_docs)
 
-        # Confidence score
-        confidence = compute_confidence(searches)
-        st.progress(confidence, text=f"Confidence: {confidence:.0%}")
+        if SHOW_CONFIDENCE:
+            confidence = result.get("confidence")
+            if confidence is not None:
+                st.progress(confidence, text=f"Confidence: {confidence:.0%}")
 
     # Feedback buttons
     st.divider()

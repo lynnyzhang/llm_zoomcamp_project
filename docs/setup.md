@@ -6,6 +6,7 @@
 - **LLM API endpoint** — a locally hosted LLM (e.g. `http://localhost:9101/v1`) or a cloud OpenAI-compatible API (e.g. `https://api.openai.com/v1`), configured via `OPENAI_API_BASE_URL` in `.env`
   - Model: `MODEL_ID` is required in `.env` (no default fallback)
   - The LLM API must be reachable before starting the app
+- **Tavily API key** (optional) — `TAVILY_API_KEY` in `.env` enables the Bulbapedia web-search fallback when the local knowledge base is insufficient; without it the agent answers from local search only and rejects when it cannot answer confidently
 
 ## Development Subset (Default)
 
@@ -26,6 +27,8 @@ Edit `.env`:
 OPENAI_API_KEY="your-api-key-here"
 OPENAI_API_BASE_URL="http://localhost:9101/v1"
 DATASET_PATH="./data"
+TAVILY_API_KEY="your-tavily-api-key-here"   # optional: Bulbapedia web-search fallback
+CONFIDENCE_THRESHOLD="0.7"                  # optional: minimum LLM-judge confidence to answer
 ```
 
 ### 2. Start services
@@ -180,6 +183,8 @@ Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took 
 | `OPENAI_API_BASE_URL` | `http://localhost:9101/v1`    | LLM API endpoint — local hosted LLM or cloud OpenAI-compatible API |
 | `MODEL_ID`         | (none — required)                | LLM model name, no default fallback  |
 | `DATASET_PATH`     | `./data`                         | Dataset storage path                |
+| `TAVILY_API_KEY`   | (none — optional)                | Tavily API key for the Bulbapedia web-search fallback; without it the agent rejects when local search cannot answer confidently |
+| `CONFIDENCE_THRESHOLD` | `0.7`                         | Minimum LLM-judge confidence (0.0–1.0) required to return an answer |
 | `POSTGRES_DB`      | `capstone`                       | PostgreSQL database name            |
 | `POSTGRES_USER`    | `capstone`                       | PostgreSQL username                  |
 | `POSTGRES_PASSWORD`| `capstone_secret`                | PostgreSQL password                  |
@@ -210,7 +215,7 @@ repo bundle (fallback: Kaggle API) ──► data/raw/pokemon_complete.csv + pok
               HybridSearch index (keyword + vector + RRF)
                     │
                     ▼
-              RAG Agent (guardrails + iterative search + LLM)
+              RAG Agent (LangGraph escalate: local search → LLM judge → Bulbapedia web)
                     │
                     ▼
               Streamlit UI (chat + Pokémon cards + feedback)

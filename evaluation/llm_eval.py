@@ -277,7 +277,7 @@ def main():
 
     print("Initializing RAG pipeline...")
     t0 = time.time()
-    from src.rag.pipeline import RAGBase
+    from src.rag.RAGBase import RAGBase
     from src.search.hybrid import HybridSearch
 
     search_index = HybridSearch()

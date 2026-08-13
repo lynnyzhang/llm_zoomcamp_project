@@ -94,7 +94,7 @@ unchanged).
 | `src/llm.py` | env config: API key, base URL, model ID, client creation |
 | `src/data/` | `download_model.py`, `chunker.py`, `ingest.py` (index build) |
 | `src/search/` | `hybrid.py` (keyword + vector + RRF), `embedder.py` (ONNX) |
-| `src/rag/` | `pipeline.py` (RAGBase), `agent.py` (agentic loop + guardrails) |
+| `src/rag/` | `RAGBase.py` (RAGBase), `agent.py` (agentic loop + guardrails) |
 | `src/interface/app.py` | Streamlit chat UI (Pokémon cards, feedback) |
 | `evaluation/` | offline eval (pre-deployment): `generate_qa.py` (QA set), `retrieval_eval.py`, `llm_eval.py`, `agent_eval.py`; `data/` (qa.jsonl), `results/` |
 | `monitoring/` | `tracer.py` (SQLiteSpanExporter + PostgresSpanExporter), `dashboard.py` (Streamlit); runtime `traces.db`; `grafana/` + `dashboards/` configs |

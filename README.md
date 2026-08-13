@@ -230,7 +230,7 @@ project/
 │   │   ├── embedder.py     # ONNX embedder (onnxruntime, no torch)
 │   │   └── hybrid.py       # Hybrid search (keyword + vector + RRF)
 │   ├── rag/
-│   │   ├── pipeline.py     # Base RAG pipeline
+│   │   ├── RAGBase.py       # Base RAG pipeline
 │   │   └── agent.py        # Agentic RAG + guardrails + reformulation
 │   └── interface/
 │       └── app.py          # Streamlit chat UI

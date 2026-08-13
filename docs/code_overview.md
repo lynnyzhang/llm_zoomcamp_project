@@ -53,19 +53,19 @@ the three `HybridSearch` methods.
 | Module | Function | Job |
 |---|---|---|
 | `src/llm.py` | `LLMClient` (`get_api_key()`, `get_base_url()`, `get_model()`, `get()`) | Central env config: API key, endpoint, model id, OpenAI client wrapper |
-| `src/rag/pipeline.py` | `RAGBase.search()`, `.build_context()`, `.build_prompt()`, `.llm()`, `.rag()` | Plain pipeline: search → format context → prompt → LLM answer |
-| `src/rag/agent.py` | `RAGAgent.run()`, `.perform_search()`, `.analyze_results()`, `.reformulate_query()`, `.generate_answer()`, `_is_out_of_scope()`, `_has_pokemon_signals()` | Agentic loop: up to `MAX_ITERATIONS=3` search/analyze/reformulate cycles; 3-layer guardrails (rule pre-gate, LLM off-topic flag, deterministic fail-safe) reject out-of-scope questions; low-confidence in-domain questions get `UNCERTAINTY_NOTE` instead |
+| `src/rag/RAGBase.py` | `RAGBase.search()`, `.build_context()`, `.build_prompt()`, `.llm()`, `.rag()` | Plain pipeline: search → format context → prompt → LLM answer |
+| `src/rag/agent.py` | `RAGAgent.run()`, `.perform_search()`, `_build_graph()`, `local_search()`, `local_judge()`, `web_search_node()`, `web_judge()`, `answer_node()`, `reject_node()`, `finalize_node()`, `_judge()` | LangGraph escalate flow: local hybrid search always first → LLM judge (verdict + confidence) → Bulbapedia web search (Tavily, `src/search/web.py`) only when local results are insufficient; only confident answers are returned (gated by `CONFIDENCE_THRESHOLD`, default 0.7), otherwise the rejection message |
 
-**Call chain:** `app` → `RAGAgent.run(query)` → (guardrail check) →
-`perform_search` → `HybridSearch.search` → `analyze_results` → either answer or
-`reformulate_query` → repeat. `RAGBase.rag()` is the non-agentic path used by
+**Call chain:** `app` → `RAGAgent.run(query)` → `local_search` (HybridSearch)
+→ `local_judge` → `answer_node` | (`web_search` → `web_judge` → `answer_node` /
+`reject_node`) → `finalize`. `RAGBase.rag()` is the non-agentic path used by
 evaluation for comparison.
 
 ## 4. Interface layer
 
 | Module | Function | Job |
 |---|---|---|
-| `src/interface/app.py` | `_make_agent()`, `_maybe_trace()`, `render_message()`, `render_message_body()`, `_filter_docs_by_question()`, `_pokemon_card_grid()`, `_record_feedback()`, `compute_confidence()` | Streamlit chat: agent answers + Pokémon cards (only Pokémon named in the question) with artwork, rejection banners for out-of-scope, thumbs up/down feedback |
+| `src/interface/app.py` | `_make_agent()`, `_maybe_trace()`, `render_message()`, `render_message_body()`, `_filter_docs_by_question()`, `_pokemon_card_grid()`, `_record_feedback()`, `_parse_cli_flags()` | Streamlit chat: agent answers with source caption (local knowledge base / Bulbapedia), optional LLM-judge confidence bar (`--show-confidence` launch flag), Pokémon cards (only Pokémon named in the question) with artwork, rejection banners, thumbs up/down feedback |
 
 **Call chain:** `render_message` is the single path for both history and live
 replies; `render_message_body` → `_unique_docs` → `_filter_docs_by_question` →
@@ -109,7 +109,8 @@ spans → exporters persist → `dashboard.py` reads back via `get_traces_db_pat
    back into monitoring.
 4. **Dev subset discipline:** `ingest.py` builds the full 1,350-record corpus by default; `generate_qa.py`'s coverage-sampled dev subset (50 records → 250 questions) keeps every automated run cheap; full-data QA runs are manual (`--full`), per user directive.
 5. **Ground truth = question → document:** `generate_qa.py` writes only questions (`{"question", "document"}`); the LLM never writes answers — `llm_eval`/`agent_eval` resolve the ground-truth answer from the linked document's `search_text`, keeping the judge honest.
-5. **Guardrail contract:** `RAGAgent` returns `rejected:true` with zero
-   searches for out-of-scope queries (verified by tests asserting
-   `searches == []`), and the app renders a warning banner instead of cards —
-   the rejection behavior is the same in every layer.
+6. **Guardrail contract:** `RAGAgent` returns `rejected:true` with the
+   rejection message when the LLM judge finds no confident answer from local
+   or Bulbapedia search (out-of-scope, below-threshold, or web failure), and
+   the app renders a warning banner instead of cards — the rejection behavior
+   is the same in every layer.

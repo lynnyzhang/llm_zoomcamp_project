@@ -77,7 +77,7 @@ def test_text_format_and_patch_run_once(monkeypatch):
     assert c.client is fake  # second access must not re-test/re-patch
     assert original_parse.call_count == 1  # test ran exactly once
 
-    c.parse(model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer)
+    c.client.responses.parse(model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer)
     call = original_parse.call_args
     kwargs = call.kwargs
     assert "text_format" not in kwargs
@@ -95,7 +95,7 @@ def test_parse_with_text_format_unsupported_injects_response_format(monkeypatch)
     original_parse = fake.responses.parse  # reference before patch
 
     c = llm.LLMClient(api_key="k", base_url="u", model="m")
-    c.parse(model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer)
+    c.client.responses.parse(model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer)
 
     call = original_parse.call_args
     kwargs = call.kwargs
@@ -113,7 +113,7 @@ def test_parse_without_text_format_passes_through(monkeypatch):
     original_parse = fake.responses.parse  # reference before patch
 
     c = llm.LLMClient(api_key="k", base_url="u", model="m")
-    c.parse(model="m", input=[{"role": "user", "content": "hi"}])
+    c.client.responses.parse(model="m", input=[{"role": "user", "content": "hi"}])
 
     call = original_parse.call_args
     kwargs = call.kwargs
@@ -128,20 +128,12 @@ def test_parse_with_text_format_supported_passes_through(monkeypatch):
     monkeypatch.setattr("src.llm.OpenAI", lambda **kw: fake)
 
     c = llm.LLMClient(api_key="k", base_url="u", model="m")
-    c.parse(model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer)
+    c.client.responses.parse(model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer)
 
     call = fake.responses.parse.call_args
     kwargs = call.kwargs
     assert kwargs["text_format"] is Answer
     assert "extra_body" not in kwargs
-
-
-def test_responses_property_mirrors_underlying(monkeypatch):
-    fake = make_fake_openai(test_supported=True)
-    monkeypatch.setattr("src.llm.OpenAI", lambda **kw: fake)
-
-    c = llm.LLMClient(api_key="k", base_url="u", model="m")
-    assert c.responses is c.client.responses
 
 
 # ---------------------------------------------------------------------------

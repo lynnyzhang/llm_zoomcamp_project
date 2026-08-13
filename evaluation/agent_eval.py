@@ -275,8 +275,8 @@ def main():
     print(f"Search index ready in {time.time() - t0:.1f}s")
 
     # Initialize pipelines
-    from src.rag.agent import RAGAgent
-    from src.rag.pipeline import RAGBase
+    from src.rag.agent import RAGAgent, SearchRecord
+    from src.rag.RAGBase import RAGBase
 
     rag_base = RAGBase(search_index=search_index, llm_client=client)
     agent = RAGAgent(search_index=search_index, llm_client=client)
@@ -340,20 +340,25 @@ def main():
             search_results = rag_base.search(query)
             q_elapsed = time.time() - q_start
             agent_search_counts.append(1)
-            result_searches = [type("SR", (), {"results": search_results})()]
-            result = {"searches": result_searches, "answer": ""}
+            result = {
+                "searches": [SearchRecord(query, search_results, source="local")],
+                "answer": "",
+                "iterations": 1,
+                "rejected": False,
+                "source": "local",
+                "confidence": None,
+            }
 
         agent_latencies.append(q_elapsed)
 
+        # Only LOCAL search records carry doc ids — web results (title/url/
+        # snippet) have none, so they cannot count toward doc-id retrieval.
         all_retrieved_ids = []
-        if llm_available:
-            for search_record in result["searches"]:
-                for doc in search_record.results:
-                    all_retrieved_ids.append(str(doc.get("id", "")))
-        else:
-            for sr in result_searches:
-                for doc in sr.results:
-                    all_retrieved_ids.append(str(doc.get("id", "")))
+        for search_record in result["searches"]:
+            if search_record.source != "local":
+                continue
+            for doc in search_record.results:
+                all_retrieved_ids.append(str(doc.get("id", "")))
 
         if relevant_id in all_retrieved_ids:
             agent_retrieval_hits += 1
@@ -396,12 +401,16 @@ def main():
                 agent_errors += 1
                 continue
 
-            agent_quality_scores.append(judge_result["score"])
+            judge_result["question_id"] = pair.get("id")
+            judge_result["question"] = question
+            judge_result["source"] = result.get("source")
+            judge_result["confidence"] = result.get("confidence")
+            agent_quality_scores.append(judge_result)
 
             if (i + 1) % 10 == 0:
                 print(f"  [{i+1}/{len(agent_sample)}] evaluated")
 
-        agent_mean_score = round(np.mean(agent_quality_scores), 2) if agent_quality_scores else 0
+        agent_mean_score = round(np.mean([s["score"] for s in agent_quality_scores]), 2) if agent_quality_scores else 0
 
         print(f"  Mean score: {agent_mean_score}/5")
         print(f"  Evaluated: {len(agent_quality_scores)}, Errors: {agent_errors}")
@@ -429,6 +438,8 @@ def main():
             full_agent_search_counts.append(result["iterations"])
             all_ids = []
             for sr in result["searches"]:
+                if sr.source != "local":
+                    continue
                 for doc in sr.results:
                     all_ids.append(str(doc.get("id", "")))
         else:
