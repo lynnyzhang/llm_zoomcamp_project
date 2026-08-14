@@ -16,19 +16,15 @@ def load_documents(path):
     return docs
 
 
-# Weighted Reciprocal Rank Fusion:
-# score(doc) = sum over lists of weight_i * 1 / (k + rank_i)
-def reciprocal_rank_fusion(result_lists, weights=None, k=60, num_results=5):
-    if weights is None:
-        weights = [1.0] * len(result_lists)
-
+# Reciprocal Rank Fusion: score(doc) = sum over lists of 1 / (k + rank_i)
+def rrf(result_lists, k=60, num_results=5):
     scores = {}
     docs = {}
 
-    for weight, results in zip(weights, result_lists):
+    for results in result_lists:
         for rank, doc in enumerate(results):
             key = (doc["id"],)
-            scores[key] = scores.get(key, 0.0) + weight * (1.0 / (k + rank))
+            scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
             docs[key] = doc
 
     ranked = sorted(scores, key=scores.get, reverse=True)
@@ -46,21 +42,13 @@ class HybridSearch:
     def __init__(
         self,
         documents_path=None,
-        documents=None,
-        model_path=None,
-        keyword_weight=1.0,
-        vector_weight=1.0,
         rrf_k=60,
     ):
-        if documents is not None:
-            self.documents = documents
-        elif documents_path is not None:
+        if documents_path is not None:
             self.documents = load_documents(documents_path)
         else:
             self.documents = load_documents(self.DEFAULT_DATA)
 
-        self.keyword_weight = keyword_weight
-        self.vector_weight = vector_weight
         self.rrf_k = rrf_k
 
         self.keyword_index = Index(
@@ -69,16 +57,13 @@ class HybridSearch:
         )
         self.keyword_index.fit(self.documents)
 
-        self.embedder = Embedder(model_path)
+        self.embedder = Embedder()
         texts = [doc["search_text"] for doc in self.documents]
         self.embeddings = self.embedder.encode_batch(texts, normalize=True)
         self.vector_index = VectorSearch()
         self.vector_index.fit(self.embeddings, self.documents)
 
-    def search(self, query, num_results=5, keyword_weight=None, vector_weight=None):
-        kw = keyword_weight if keyword_weight is not None else self.keyword_weight
-        vw = vector_weight if vector_weight is not None else self.vector_weight
-
+    def search(self, query, num_results=5):
         keyword_results = self.keyword_index.search(
             query, num_results=num_results * 2
         )
@@ -88,9 +73,8 @@ class HybridSearch:
             query_vector, num_results=num_results * 2
         )
 
-        fused = reciprocal_rank_fusion(
+        fused = rrf(
             [keyword_results, vector_results],
-            weights=[kw, vw],
             k=self.rrf_k,
             num_results=num_results,
         )
@@ -119,7 +103,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     print(f"Loading documents from {data_path}...")
-    hybrid = HybridSearch(documents_path=data_path, vector_weight=0.7, keyword_weight=1.0)
+    hybrid = HybridSearch(documents_path=data_path)
 
     test_queries = [
         "pikachu",

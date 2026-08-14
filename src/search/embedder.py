@@ -21,8 +21,10 @@ def default_model_dir():
 
 
 class Embedder:
-    def __init__(self, path=None):
-        path = Path(path) if path is not None else default_model_dir()
+    # Model location comes from default_model_dir() (env-overridable for
+    # Docker) — no path parameter; callers never had a use for one.
+    def __init__(self):
+        path = default_model_dir()
 
         tokenizer_file = path / "tokenizer.json"
         model_file = path / "model.onnx"

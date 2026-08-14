@@ -106,7 +106,7 @@ Ground Truth Answer: {ground_truth}
 """
 
     # Single path: structured output via responses.parse(text_format=JudgeScore).
-    # LLMClient.get() probes text_format support once and patches responses.parse
+    # The eval scripts use their own patch_openai_client (evaluation_utils):
     # works on OpenAI (native structured output) AND on llama.cpp
     # (response_format via extra_body). There is deliberately NO create()/JSON
     # extraction fallback: if the backend cannot honor the schema, the output

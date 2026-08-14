@@ -26,23 +26,15 @@ class RAGBase:
         instructions=INSTRUCTIONS,
         prompt_template=PROMPT_TEMPLATE,
         model=None,
-        search_type="hybrid",
     ):
         self.search_index = search_index
         self.llm_client = llm_client or LLMClient.get()
         self.instructions = instructions
         self.prompt_template = prompt_template
         self.model = model or LLMClient.get_model()
-        self.search_type = search_type
 
     def search(self, query, num_results=5):
-        if self.search_type == "keyword":
-            return self.search_index.keyword_search(query, num_results=num_results)
-        if self.search_type == "vector":
-            return self.search_index.vector_search(query, num_results=num_results)
-        if self.search_type == "hybrid":
-            return self.search_index.search(query, num_results=num_results)
-        raise ValueError(f"Unknown search_type: {self.search_type!r}")
+        return self.search_index.search(query, num_results=num_results)
 
     def build_context(self, search_results):
         blocks = []

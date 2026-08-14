@@ -28,7 +28,7 @@ OPENAI_API_KEY="your-api-key-here"
 OPENAI_API_BASE_URL="http://localhost:9101/v1"
 DATASET_PATH="./data"
 TAVILY_API_KEY="your-tavily-api-key-here"   # optional: Bulbapedia web-search fallback
-CONFIDENCE_THRESHOLD="0.7"                  # optional: minimum LLM-judge confidence to answer
+CONFIDENCE_THRESHOLD="0.65"                 # minimum grounding cosine (0..1) for an answer; below it -> rejection
 ```
 
 ### 2. Start services
@@ -184,7 +184,9 @@ Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took 
 | `MODEL_ID`         | (none — required)                | LLM model name, no default fallback  |
 | `DATASET_PATH`     | `./data`                         | Dataset storage path                |
 | `TAVILY_API_KEY`   | (none — optional)                | Tavily API key for the Bulbapedia web-search fallback; without it the agent rejects when local search cannot answer confidently |
-| `CONFIDENCE_THRESHOLD` | `0.7`                         | Minimum LLM-judge confidence (0.0–1.0) required to return an answer |
+| `CONFIDENCE_THRESHOLD` | `0.65`                        | Minimum grounding score (0–1) an answer must have to be returned — max embedding-cosine similarity between the answer and any single retrieved record; below it the answer is replaced by the rejection message |
+| `AGENT_TEMPERATURE` | `0.0`                          | Sampling temperature for agent-loop tool decisions (deterministic) — set to `1` for reasoning models (o1/o3) |
+| `ANSWER_TEMPERATURE` | `0.3`                         | Sampling temperature for `RAGBase.llm()` answer generation — set to `1` for reasoning models (o1/o3) |
 | `POSTGRES_DB`      | `capstone`                       | PostgreSQL database name            |
 | `POSTGRES_USER`    | `capstone`                       | PostgreSQL username                  |
 | `POSTGRES_PASSWORD`| `capstone_secret`                | PostgreSQL password                  |
@@ -215,7 +217,7 @@ repo bundle (fallback: Kaggle API) ──► data/raw/pokemon_complete.csv + pok
               HybridSearch index (keyword + vector + RRF)
                     │
                     ▼
-              RAG Agent (LangGraph escalate: local search → LLM judge → Bulbapedia web)
+              RAG Agent (manual tool loop: LLM decides local / Bulbapedia web search)
                     │
                     ▼
               Streamlit UI (chat + Pokémon cards + feedback)

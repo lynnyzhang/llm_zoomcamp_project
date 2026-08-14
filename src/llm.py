@@ -4,8 +4,10 @@
 # OpenAI-compatible endpoint (locally hosted LLM or cloud API).
 #
 # LLMClient owns ALL retrieval: api key, base URL, and model are read from
-# .env inside the class — the text_format
-# test + llama.cpp patch run exactly once at first client access.
+# .env inside the class. Callers use LLMClient.get().client.responses.* —
+# create() works as-is on any endpoint; parse(text_format=PydanticClass)
+# returns output_parsed directly, without manual JSON parsing, because the
+# one-time text_format test + llama.cpp patch run at first client access.
 
 import os
 import types
@@ -25,11 +27,12 @@ class LLMClient:
     Reads api_key / base_url / model from .env once (constructor), creates the
     underlying OpenAI client lazily exactly once, and tests + patches
     ``client.responses.parse`` text_format support exactly once at first
-    client access. Callers use ``LLMClient.get().client.responses.*``
-    (create/parse) — the wrapper adds nothing beyond this one-time setup.
+    client access so ``parse(text_format=...)`` returns ``output_parsed`` on
+    any endpoint (llama.cpp included) — no manual JSON parsing. Callers use
+    ``LLMClient.get().client.responses.*`` (create/parse).
     """
 
-    default_client = None
+    default_client = None  # process-wide singleton instance
 
     @staticmethod
     def env(name):
@@ -65,13 +68,13 @@ class LLMClient:
             )
         return model
 
-    # Per-call-type temperatures, env-overridable: the verdict step must be
-    # deterministic (greedy) so borderline questions do not flip between
-    # answer and escalate; the answer step keeps slight variety. Reasoning
-    # models (e.g. o1/o3) reject temperature != 1 — set both vars to "1".
+    # Per-call-type temperatures, env-overridable: the agent loop must be
+    # deterministic (greedy) so tool decisions are stable; the RAG answer
+    # step keeps slight variety. Reasoning models (e.g. o1/o3) reject
+    # temperature != 1 — set both vars to "1".
     @staticmethod
-    def get_judge_temperature():
-        return float(os.environ.get("JUDGE_TEMPERATURE", "0.0"))
+    def get_agent_temperature():
+        return float(os.environ.get("AGENT_TEMPERATURE", "0.0"))
 
     @staticmethod
     def get_answer_temperature():
@@ -118,14 +121,14 @@ class LLMClient:
 
     def patch_parse(self):
         """Safely overrides client.responses.parse to support llama.cpp via
-        'response_format' while falling back cleanly to the native SDK function
-        when no text_format is requested."""
+        'response_format' while keeping text_format in the SDK call, so the
+        SDK's own parser still produces output_parsed from the JSON reply."""
         original_parse = self.openai_client.responses.parse
 
         def patched_responses_parse(self, model, input, **kwargs):
-            pydantic_model = kwargs.pop("text_format", None)
+            pydantic_model = kwargs.get("text_format", None)
 
-            if pydantic_model is None:
+            if not pydantic_model:
                 return original_parse(model=model, input=input, **kwargs)
 
             llama_cpp_format = {

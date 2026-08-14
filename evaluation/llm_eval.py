@@ -115,9 +115,9 @@ def llm_judge(client, instructions, user_prompt, model=None):
     ]
 
     # Single path: structured output via responses.parse(text_format=JudgeScore).
-    # LLMClient (LLMClient.get) probes text_format support once and patches
-    # responses.parse for llama.cpp (response_format via extra_body), passing
-    # through to the native SDK on OpenAI. There is deliberately NO
+    # The eval scripts use their own patch_openai_client (evaluation_utils)
+    # for llama.cpp (response_format via extra_body), passing through to the
+    # native SDK on OpenAI. There is deliberately NO
     # create()/JSON-extraction fallback: if the backend cannot honor the
     # schema, the output is prose — not JSON — so there is nothing to salvage
     # (llm_judge_retry retries transient failures).

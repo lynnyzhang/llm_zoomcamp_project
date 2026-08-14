@@ -1,4 +1,4 @@
-"""Unit tests for the src.llm LLMClient refactor.
+"""Unit tests for the src.llm LLMClient.
 
 All LLM calls are mocked — no real network, no real .env needed (conftest.py
 sets MODEL_ID="test-model"). The process-wide singleton is reset between tests
@@ -54,7 +54,7 @@ def test_get_returns_singleton(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# LLMClient construction / lazy client
+# LLMClient construction / lazy client + text_format test/patch
 # ---------------------------------------------------------------------------
 
 def test_client_created_exactly_once(monkeypatch):
@@ -77,17 +77,36 @@ def test_text_format_and_patch_run_once(monkeypatch):
     assert c.client is fake  # second access must not re-test/re-patch
     assert original_parse.call_count == 1  # test ran exactly once
 
-    c.client.responses.parse(model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer)
+    c.client.responses.parse(
+        model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer
+    )
     call = original_parse.call_args
     kwargs = call.kwargs
-    assert "text_format" not in kwargs
+    assert kwargs["text_format"] is Answer  # SDK keeps parsing -> output_parsed
     assert kwargs["extra_body"]["response_format"]["type"] == "json_schema"
     assert kwargs["extra_body"]["response_format"]["json_schema"]["name"] == "Answer"
 
 
 # ---------------------------------------------------------------------------
-# parse behavior
+# parse behavior (output_parsed, no manual JSON parsing)
 # ---------------------------------------------------------------------------
+
+def test_patched_parse_keeps_sdk_output_parsed(monkeypatch):
+    fake = make_fake_openai(test_supported=False)
+    monkeypatch.setattr("src.llm.OpenAI", lambda **kw: fake)
+    response = MagicMock()
+    response.output_parsed = Answer(text="parsed by the SDK")
+    fake.responses.parse.side_effect = [RuntimeError("unsupported"), response]
+
+    c = llm.LLMClient(api_key="k", base_url="u", model="m")
+    result = c.client.responses.parse(
+        model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer
+    )
+
+    # text_format stays in the SDK call, so the SDK's own parser fills
+    # output_parsed from the JSON reply — no manual parsing anywhere.
+    assert result.output_parsed.text == "parsed by the SDK"
+
 
 def test_parse_with_text_format_unsupported_injects_response_format(monkeypatch):
     fake = make_fake_openai(test_supported=False)
@@ -95,13 +114,15 @@ def test_parse_with_text_format_unsupported_injects_response_format(monkeypatch)
     original_parse = fake.responses.parse  # reference before patch
 
     c = llm.LLMClient(api_key="k", base_url="u", model="m")
-    c.client.responses.parse(model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer)
+    c.client.responses.parse(
+        model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer
+    )
 
     call = original_parse.call_args
     kwargs = call.kwargs
     assert kwargs["model"] == "m"
     assert kwargs["input"] == [{"role": "user", "content": "hi"}]
-    assert "text_format" not in kwargs
+    assert kwargs["text_format"] is Answer  # SDK keeps parsing -> output_parsed
     assert kwargs["extra_body"]["response_format"]["type"] == "json_schema"
     assert kwargs["extra_body"]["response_format"]["json_schema"]["name"] == "Answer"
     assert kwargs["extra_body"]["response_format"]["json_schema"]["strict"] is True
@@ -128,7 +149,9 @@ def test_parse_with_text_format_supported_passes_through(monkeypatch):
     monkeypatch.setattr("src.llm.OpenAI", lambda **kw: fake)
 
     c = llm.LLMClient(api_key="k", base_url="u", model="m")
-    c.client.responses.parse(model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer)
+    c.client.responses.parse(
+        model="m", input=[{"role": "user", "content": "hi"}], text_format=Answer
+    )
 
     call = fake.responses.parse.call_args
     kwargs = call.kwargs
@@ -157,6 +180,20 @@ def test_get_model_missing_raises(monkeypatch):
     monkeypatch.delenv("MODEL_ID", raising=False)
     with pytest.raises(RuntimeError):
         llm.LLMClient.get_model()
+
+
+def test_temperature_getters_defaults(monkeypatch):
+    monkeypatch.delenv("AGENT_TEMPERATURE", raising=False)
+    monkeypatch.delenv("ANSWER_TEMPERATURE", raising=False)
+    assert llm.LLMClient.get_agent_temperature() == 0.0
+    assert llm.LLMClient.get_answer_temperature() == 0.3
+
+
+def test_temperature_getters_read_env(monkeypatch):
+    monkeypatch.setenv("AGENT_TEMPERATURE", "0.5")
+    monkeypatch.setenv("ANSWER_TEMPERATURE", "0.7")
+    assert llm.LLMClient.get_agent_temperature() == 0.5
+    assert llm.LLMClient.get_answer_temperature() == 0.7
 
 
 # ---------------------------------------------------------------------------

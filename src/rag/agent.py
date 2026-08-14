@@ -3,10 +3,6 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict
-
-from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field, model_validator
 
 from src.llm import LLMClient
 from src.rag.RAGBase import RAGBase
@@ -25,77 +21,70 @@ REJECTION_MESSAGE = (
 )
 
 INSTRUCTIONS = f"""\
-You are a Pokémon knowledge assistant that answers questions by judging
-retrieved context. For each question, decide ONE of four verdicts:
+You are a Pokémon knowledge assistant that answers questions about the
+1,350-Pokémon knowledge base and Bulbapedia. You decide yourself when to
+search, using two tools:
 
-- "answer": the retrieved context fully answers the question. Write
-  "answer" using ONLY the context — never from memory.
-- "answer_partial": the retrieved context answers the question only
-  partially. Write a grounded partial answer: state what the context
-  supports, then state what it does not determine. Example: for "which
-  Pokémon pair well with Pikachu?", if the context shows Pikachu is
-  Electric and weak to Ground, answer "Pikachu is Electric-type; based on
-  type coverage, partners that resist Ground complement it — the context
-  does not rank specific best partners." Questions asking for "best"/"top"
-  picks work the same way: give the grounded guidance and explicitly say
-  the context does not establish a definitive ranking. A grounded partial
-  answer always beats "escalate". The system will try a web search to
-  complete the answer. Hedge unsupported claims ("based on the retrieved
-  data", "the context does not say") and never invent facts.
-- "escalate": the context contains no relevant facts for the question —
-  empty, unrelated, or nothing usable. Only escalate when even a hedged
-  partial answer would be ungrounded.
-- "reject": the question asks the assistant to predict winners or simulate
-  the outcome of a specific battle or tournament (e.g. "who would win
-  Charizard vs Blastoise?"), access save files, provide cheats, emulators,
-  or real-time data, or is not about Pokémon at all — coursework, finance,
-  medicine, or any other non-Pokémon topic.
-  Pokémon questions about type matchups, weaknesses, or team composition
-  are NEVER rejected — even when phrased with battle formats ("3v3 battle",
-  "gen 1"): use "answer" or "answer_partial" when the context supports it,
-  otherwise "escalate".
-  Pokémon-adjacent topics (game history, anime, manga, lore, characters)
-  are also in scope: if the context lacks the answer, use "escalate",
-  never "reject".
+- search_local_knowledge_base(query): the local knowledge base — stats,
+  types, weaknesses, abilities, evolutions, alternate forms, type charts.
+  Use this first for any Pokémon question.
+- search_bulbapedia(query): web search of Bulbapedia for facts the local
+  base lacks (moves, anime, manga, lore, game history, strategy). Pass a
+  short keyword query with the Pokémon name and the missing facts.
 
-confidence: how confident you are that every claim in the answer is
-grounded in the retrieved context (0.0 to 1.0) — groundedness, not
-completeness: a partial answer stating exactly what the context does and
-does not say can be highly confident. If verdict is "answer" or
-"answer_partial", confidence must be at least the configured threshold.
-
-The assistant answers questions about the 1,350-Pokémon knowledge base: stats,
-types, weaknesses, abilities, evolutions, alternate forms, and type-matchup
-guidance grounded in type coverage. It may escalate to Bulbapedia via web
-search when the local knowledge base is insufficient. Answers come only from
-retrieved context, never from memory. It cannot predict battle outcomes,
-simulate battles, access save files, help with cheats or emulators, answer
-non-Pokémon topics, or provide real-time data. When neither the local
-knowledge base nor Bulbapedia yields a confident answer, reply with the
-rejection message verbatim — never guess:
+Rules:
+- Answer ONLY from retrieved tool results — never from memory.
+- If the local results confidently answer the question, reply with the
+  answer. If they are insufficient or only partial, call search_bulbapedia
+  and answer with the combined results.
+- A grounded partial answer is better than a refusal: state what the tools
+  support, then state what they do not determine, and hedge ("based on the
+  retrieved data", "the tools do not say"). You may decline to rank "best"
+  picks while giving type-coverage guidance from the retrieved data.
+- Out of scope — reply with the rejection message verbatim and do NOT call
+  tools: predicting winners or simulating the outcome of a specific battle,
+  access to save files, cheats, emulators, real-time data, or any
+  non-Pokémon topic. Team-building and type-matchup questions ARE in scope.
+- never guess: when the tools yield no confident answer, reply with the
+  rejection message verbatim:
 {REJECTION_MESSAGE}
 """
 
-# Back-compat alias used by older callers/tests.
-AGENT_INSTRUCTIONS = INSTRUCTIONS
-
 MAX_ITERATIONS = 3
 
-# ---------------------------------------------------------------------------
-# Judge schema
-# ---------------------------------------------------------------------------
+LOCAL_SEARCH_TOOL = {
+    "type": "function",
+    "name": "search_local_knowledge_base",
+    "description": (
+        "Search the local Pokémon knowledge base (1,350 Pokémon: stats, "
+        "types, weaknesses, abilities, evolutions, alternate forms, type "
+        "charts). Use this first for any Pokémon question."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"query": {"type": "string", "description": "Search query"}},
+        "required": ["query"],
+    },
+}
 
+WEB_SEARCH_TOOL = {
+    "type": "function",
+    "name": "search_bulbapedia",
+    "description": (
+        "Search Bulbapedia for Pokémon facts the local knowledge base lacks "
+        "(moves, anime, manga, lore, game history, strategy). Pass a short "
+        "keyword query with the Pokémon name and the missing facts."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Short keyword query"}
+        },
+        "required": ["query"],
+    },
+}
 
-class JudgeVerdict(BaseModel):
-    verdict: Literal["answer", "answer_partial", "escalate", "reject"]
-    confidence: float = Field(ge=0.0, le=1.0)
-    answer: str | None = None
-
-    @model_validator(mode="after")
-    def require_answer_for_answer(self):
-        if self.verdict in ("answer", "answer_partial") and not self.answer:
-            raise ValueError("answer is required when verdict is 'answer' or 'answer_partial'")
-        return self
+TOOLS = [LOCAL_SEARCH_TOOL, WEB_SEARCH_TOOL]
 
 
 # ---------------------------------------------------------------------------
@@ -107,38 +96,33 @@ class JudgeVerdict(BaseModel):
 class SearchRecord:
     query: str
     results: list[dict]
-    analysis: dict[str, Any] | None = None
     source: str | None = None
-
-
-@dataclass
-class AgentResult:
-    answer: str
-    searches: list[SearchRecord]
-    iterations: int
-
-
-class AgentState(TypedDict):
-    query: str
-    local_record: SearchRecord | None
-    web_record: SearchRecord | None
-    source: str | None
-    confidence: float | None
-    judge_answer: str | None
-    partial_answer: str | None
-    partial_confidence: float | None
-    answer: str | None
-    rejected: bool
-    searches: list[SearchRecord]
-    iterations: int
+    reformulated_query: str | None = None
 
 
 def get_confidence_threshold():
-    return float(os.environ.get("CONFIDENCE_THRESHOLD", "0.7"))
+    return float(os.environ.get("CONFIDENCE_THRESHOLD", "0.65"))
+
+
+def cosine_similarity(embedder, text_a, text_b):
+    """Cosine similarity of two texts' embedding vectors (0..1).
+
+    Used for the two RAG quality scores: grounding (answer vs retrieved
+    context — faithfulness) and relevance (question vs answer)."""
+    if not text_a or not text_b:
+        return 0.0
+    va = embedder.encode(text_a, normalize=False)
+    vb = embedder.encode(text_b, normalize=False)
+    dot = sum(x * y for x, y in zip(va, vb))
+    norm_a = sum(x * x for x in va) ** 0.5
+    norm_b = sum(y * y for y in vb) ** 0.5
+    if not norm_a or not norm_b:
+        return 0.0
+    return float(dot / (norm_a * norm_b))
 
 
 # ---------------------------------------------------------------------------
-# RAGAgent (LangGraph escalate flow)
+# RAGAgent (manual tool-use loop)
 # ---------------------------------------------------------------------------
 
 
@@ -150,7 +134,6 @@ class RAGAgent:
         llm_client=None,
         model=None,
         max_iterations=MAX_ITERATIONS,
-        search_type="hybrid",
         num_results=5,
         confidence_threshold=None,
     ):
@@ -161,371 +144,188 @@ class RAGAgent:
             search_index=search_index,
             llm_client=llm_client,
             model=model,
-            search_type=search_type,
         )
         self.llm_client = self.rag.llm_client
         self.model = model
         self.max_iterations = max_iterations
-        self.search_type = search_type
         self.num_results = num_results
+        # Reuses the search index's embedder for the grounding/relevance
+        # scores; without one (stub indexes) the scores are skipped.
+        self.embedder = getattr(search_index, "embedder", None)
         self.confidence_threshold = (
             confidence_threshold
             if confidence_threshold is not None
             else get_confidence_threshold()
         )
-        self.graph = self.build_graph()
 
     # ------------------------------------------------------------------
-    # Search
+    # Tools
     # ------------------------------------------------------------------
 
     def perform_search(self, query, num_results=5):
         return self.rag.search(query, num_results=num_results)
 
-    # ------------------------------------------------------------------
-    # Graph construction
-    # ------------------------------------------------------------------
-
-    def build_graph(self):
-        graph = StateGraph(AgentState)
-        graph.add_node("local_search", self.local_search)
-        graph.add_node("local_judge", self.local_judge)
-        graph.add_node("web_search", self.web_search_node)
-        graph.add_node("web_judge", self.web_judge)
-        graph.add_node("answer_node", self.answer_node)
-        graph.add_node("reject_node", self.reject_node)
-        graph.add_node("fallback_node", self.fallback_node)
-        graph.add_node("finalize", self.finalize_node)
-
-        graph.add_edge(START, "local_search")
-        graph.add_conditional_edges(
-            "local_search",
-            self.route_local_start,
-            {"judge": "local_judge", "empty": "web_search"},
-        )
-        graph.add_conditional_edges(
-            "local_judge",
-            self.route_local_judge,
-            {
-                "answer": "answer_node",
-                "partial": "web_search",
-                "escalate": "web_search",
-                "reject": "reject_node",
-            },
-        )
-        graph.add_edge("web_search", "web_judge")
-        graph.add_conditional_edges(
-            "web_judge",
-            self.route_web_judge,
-            {"answer": "answer_node", "fallback": "fallback_node"},
-        )
-        graph.add_edge("answer_node", "finalize")
-        graph.add_edge("reject_node", "finalize")
-        graph.add_edge("fallback_node", "finalize")
-        graph.add_edge("finalize", END)
-        return graph.compile()
-
-    # ------------------------------------------------------------------
-    # Routing
-    # ------------------------------------------------------------------
-
-    def route_local_start(self, state):
-        # Empty local results cannot be judged — go straight to the web.
-        record = state.get("local_record")
-        return "judge" if record and record.results else "empty"
-
-    def route_local_judge(self, state):
-        analysis = state["local_record"].analysis or {}
-        if (
-            analysis.get("verdict") == "answer"
-            and (analysis.get("confidence") or 0) >= self.confidence_threshold
-        ):
-            return "answer"
-        if (
-            analysis.get("verdict") == "answer_partial"
-            and (analysis.get("confidence") or 0) >= self.confidence_threshold
-        ):
-            return "partial"
-        if analysis.get("verdict") == "reject":
-            return "reject"
-        return "escalate"
-
-    def route_web_judge(self, state):
-        analysis = state["web_record"].analysis or {}
-        # The web path is the last stop: a grounded answer_partial from the
-        # web judge is still the best available answer.
-        if (
-            analysis.get("verdict") in ("answer", "answer_partial")
-            and (analysis.get("confidence") or 0) >= self.confidence_threshold
-        ):
-            return "answer"
-        return "fallback"
-
-    # ------------------------------------------------------------------
-    # Nodes
-    # ------------------------------------------------------------------
-
-    def local_search(self, state):
-        results = self.perform_search(state["query"], num_results=self.num_results)
-        record = SearchRecord(
-            query=state["query"],
-            results=results,
-            analysis={"sufficient": bool(results), "verdict": None, "confidence": None},
-            source="local",
-        )
-        return {"local_record": record}
-
-    def local_judge(self, state):
-        record = state["local_record"]
-        try:
-            verdict = self.judge(state["query"], record.results, "local knowledge base")
-            if verdict is None:
-                raise ValueError("judge returned no structured verdict")
-            record.analysis = {
-                "sufficient": True,
-                "verdict": verdict.verdict,
-                "confidence": verdict.confidence,
-            }
-            updates = {
-                "local_record": record,
-                "source": "local",
-                "confidence": verdict.confidence,
-                "judge_answer": verdict.answer,
-            }
-            # Carry the grounded partial answer so the web path can fall back
-            # to it when Bulbapedia cannot complete it.
-            if (
-                verdict.verdict == "answer_partial"
-                and verdict.confidence >= self.confidence_threshold
-            ):
-                updates["partial_answer"] = verdict.answer
-                updates["partial_confidence"] = verdict.confidence
-            return updates
-        except Exception:
-            # Fail toward escalation: a judge failure must never fabricate an
-            # answer or block the web fallback.
-            record.analysis = {"sufficient": True, "verdict": "escalate", "confidence": 0.0}
-            return {
-                "local_record": record,
-                "source": "local",
-                "confidence": 0.0,
-                "judge_answer": None,
-            }
-
-    def web_search_node(self, state):
-        try:
-            results = web.web_search(state["query"], num_results=self.num_results)
-        except Exception:
-            # Broad except: any web failure (missing/invalid key, usage limit,
-            # network) yields empty results so the flow rejects gracefully.
-            logging.getLogger(__name__).warning(
-                "Web search failed for %r", state["query"], exc_info=True
+    def execute_tool(self, name, arguments, question):
+        if name == "search_local_knowledge_base":
+            results = self.perform_search(
+                arguments.get("query", question), num_results=self.num_results
             )
-            results = []
-        record = SearchRecord(
-            query=state["query"],
-            results=results,
-            analysis={"sufficient": bool(results), "verdict": None, "confidence": None},
-            source="web",
-        )
-        return {"web_record": record}
-
-    def web_judge(self, state):
-        record = state["web_record"]
-        if not record.results:
-            record.analysis = {
-                "sufficient": False,
-                "verdict": "reject",
-                "confidence": 0.0,
-            }
-            return {
-                "web_record": record,
-                "source": "web",
-                "confidence": 0.0,
-                "judge_answer": None,
-            }
-        try:
-            verdict = self.judge(state["query"], record.results, "Bulbapedia web results")
-            if verdict is None:
-                raise ValueError("judge returned no structured verdict")
-            record.analysis = {
-                "sufficient": True,
-                "verdict": verdict.verdict,
-                "confidence": verdict.confidence,
-            }
-            return {
-                "web_record": record,
-                "source": "web",
-                "confidence": verdict.confidence,
-                "judge_answer": verdict.answer,
-            }
-        except Exception:
-            # Final path: a judge failure here can only degrade to a rejection.
-            record.analysis = {"sufficient": True, "verdict": "reject", "confidence": 0.0}
-            return {
-                "web_record": record,
-                "source": "web",
-                "confidence": 0.0,
-                "judge_answer": None,
-            }
-
-    def answer_node(self, state):
-        return {"answer": state.get("judge_answer") or "", "rejected": False}
-
-    def reject_node(self, state):
-        return {
-            "answer": REJECTION_MESSAGE,
-            "source": None,
-            "confidence": None,
-            "rejected": True,
-        }
-
-    def fallback_node(self, state):
-        # Web could not answer confidently: surface the carried partial
-        # answer instead of a rejection; without one, plain reject.
-        if state.get("partial_answer"):
-            return {
-                "answer": state["partial_answer"],
-                "source": "local",
-                "confidence": state.get("partial_confidence"),
-                "rejected": False,
-            }
-        return self.reject_node(state)
-
-    def finalize_node(self, state):
-        searches = [
-            r
-            for r in (state.get("local_record"), state.get("web_record"))
-            if r is not None
-        ]
-        return {"searches": searches, "iterations": len(searches)}
-
-    # ------------------------------------------------------------------
-    # Judge
-    # ------------------------------------------------------------------
-
-    def judge(self, query, results, source_label):
-        context = self.format_context(results, source_label)
-        messages = [
-            {"role": "developer", "content": INSTRUCTIONS},
-            {
-                "role": "user",
-                "content": (
-                    f"Question: {query}\n\nRetrieved context:\n{context}\n\n"
-                    'Reply with ONLY a JSON object: {"verdict": "answer"|"escalate"|"reject", '
-                    '"confidence": <0.0-1.0>, "answer": <the answer only when verdict is "answer", else null>}'
-                ),
-            },
-        ]
-        # Skip the structured-output attempt when the one-time client test
-        # already proved this server ignores it (llama.cpp ~24s wasted per
-        # judge call) — the fallback below parses the raw text instead.
-        temperature = LLMClient.get_judge_temperature()
-        client = self.llm_client.client
-        if getattr(self.llm_client, "text_format_supported", True):
+            record = SearchRecord(query=question, results=results, source="local")
+            return record, self.format_tool_results(results)
+        if name == "search_bulbapedia":
+            query = arguments.get("query", question)
             try:
-                response = client.responses.parse(
-                    model=self.model,
-                    input=messages,
-                    text_format=JudgeVerdict,
-                    temperature=temperature,
+                results = web.web_search(query, num_results=self.num_results)
+            except Exception:
+                # Broad except: any web failure (missing/invalid key, usage
+                # limit, network) yields empty results so the model still
+                # gets a tool response and can decide without crashing.
+                logging.getLogger(__name__).warning(
+                    "Web search failed for %r", question, exc_info=True
                 )
-                if response.output_parsed is not None:
-                    return response.output_parsed
-            except Exception:
-                pass
-        # Some OpenAI-compatible servers ignore structured output and reply
-        # with prose — salvage the verdict from the raw text instead of
-        # failing the whole flow.
-        response = client.responses.create(
-            model=self.model, input=messages, temperature=temperature
-        )
-        return self.parse_judge_text(response.output_text)
+                results = []
+            record = SearchRecord(
+                query=question,
+                results=results,
+                source="web",
+                reformulated_query=query,
+            )
+            return record, self.format_tool_results(results)
+        return None, json.dumps({"error": f"unknown tool: {name}"})
 
     @staticmethod
-    def parse_judge_text(text):
-        if not isinstance(text, str) or not text:
-            return None
-        cleaned = text.strip().strip("`")
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if match:
-            try:
-                data = json.loads(match.group(0))
-                if isinstance(data, dict):
-                    return JudgeVerdict.model_validate(data)
-            except Exception:
-                pass
-        verdict = None
-        confidence = None
-        answer = None
-        verdict_match = re.search(
-            r'verdict\s*[:=]\s*"?\s*(answer_partial|answer|escalate|reject)',
-            cleaned,
-            re.IGNORECASE,
-        ) or re.search(
-            r"^\s*(answer_partial|answer|escalate|reject)\s*:",
-            cleaned,
-            re.MULTILINE | re.IGNORECASE,
-        )
-        if verdict_match:
-            verdict = verdict_match.group(1).lower()
-        confidence_match = re.search(
-            r'confidence\s*[:=]\s*"?\s*([0-9]*\.?[0-9]+)', cleaned, re.IGNORECASE
-        )
-        if confidence_match:
-            confidence = min(max(float(confidence_match.group(1)), 0.0), 1.0)
-        if verdict in ("answer", "answer_partial"):
-            answer_match = re.search(
-                r"^\s*(?:answer_partial|answer)\s*:\s*(.+)$",
-                cleaned,
-                re.MULTILINE | re.DOTALL,
-            )
-            if not answer_match:
-                answer_match = re.search(r'"answer"\s*:\s*(.+)$', cleaned, re.DOTALL)
-            if answer_match:
-                answer = re.sub(
-                    r"\n\s*confidence\s*[:=].*$",
-                    "",
-                    answer_match.group(1),
-                    flags=re.MULTILINE,
-                ).strip()
-        try:
-            return JudgeVerdict(
-                verdict=verdict or "escalate",
-                confidence=confidence if confidence is not None else 0.0,
-                answer=answer,
-            )
-        except Exception:
-            return None
-
-    @staticmethod
-    def format_context(results, source_label):
+    def format_tool_results(results):
         blocks = []
         for item in results:
-            text = item.get("search_text") or item.get("snippet") or ""
-            if text:
-                blocks.append(text)
-        body = "\n\n".join(blocks) if blocks else "(no results)"
-        return f"Source: {source_label}\n\n{body}"
+            if "snippet" in item:
+                blocks.append(
+                    {
+                        "title": item.get("title", ""),
+                        "url": item.get("url", ""),
+                        "snippet": (item.get("snippet") or "")[:800],
+                        "score": round(float(item.get("score") or 0.0), 3),
+                    }
+                )
+            else:
+                blocks.append(
+                    {
+                        "name": item.get("name", ""),
+                        "text": (item.get("search_text") or "")[:1500],
+                    }
+                )
+        return json.dumps(blocks, ensure_ascii=False)
 
     # ------------------------------------------------------------------
     # Entry point
     # ------------------------------------------------------------------
 
     def run(self, query):
-        initial = {"query": query}
-        # Bound the graph so a pathological routing path cannot hang the UI.
-        state = self.graph.invoke(
-            initial,
-            config={"recursion_limit": max(10, self.max_iterations * 5)},
-        )
+        # Deterministic guard: empty/whitespace or pure punctuation can never
+        # be a question — reject without spending an LLM round trip.
+        if not query or not query.strip() or not re.search(r"[a-zA-Z0-9]", query):
+            return {
+                "answer": REJECTION_MESSAGE,
+                "searches": [],
+                "iterations": 0,
+                "rejected": True,
+                "source": None,
+                "confidence": None,
+                "relevance": None,
+            }
+
+        items = [
+            {"role": "developer", "content": INSTRUCTIONS},
+            {"role": "user", "content": query},
+        ]
+        searches = []
+        sources = set()
+        try:
+            for turn in range(self.max_iterations + 1):
+                # The local knowledge base is the only tool on the first
+                # turn, so the model cannot skip it; the web tool unlocks
+                # afterwards while the model keeps all decisions.
+                tools = TOOLS if turn > 0 else [LOCAL_SEARCH_TOOL]
+                response = self.llm_client.client.responses.create(
+                    model=self.model,
+                    input=items,
+                    tools=tools,
+                    temperature=LLMClient.get_agent_temperature(),
+                )
+                calls = [item for item in response.output if item.type == "function_call"]
+                if not calls:
+                    return self.finalize(response.output_text, query, searches, sources)
+                items += calls
+                for call in calls:
+                    try:
+                        arguments = json.loads(call.arguments or "{}")
+                    except Exception:
+                        arguments = {}
+                    record, output = self.execute_tool(call.name, arguments, query)
+                    if record is not None:
+                        searches.append(record)
+                        sources.add(record.source or "")
+                    items.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": getattr(call, "call_id", None)
+                            or f"call_{len(searches)}",
+                            "output": output,
+                        }
+                    )
+        except Exception:
+            # Fail-soft: an LLM/network failure must never fabricate an answer.
+            logging.getLogger(__name__).warning(
+                "Agent loop failed for %r", query, exc_info=True
+            )
+        # Loop exhausted without a final answer: never guess.
+        return self.finalize(None, query, searches, sources)
+
+    def finalize(self, answer_text, query, searches, sources):
+        answer = (answer_text or "").strip()
+        if not answer or answer == REJECTION_MESSAGE:
+            return {
+                "answer": REJECTION_MESSAGE,
+                "searches": searches,
+                "iterations": len(searches),
+                "rejected": True,
+                "source": None,
+                "confidence": None,
+                "relevance": None,
+            }
+        confidence = None
+        relevance = None
+        if self.embedder is not None:
+            # Grounding = the best match against any single retrieved
+            # record — concatenating all records dilutes the answer's
+            # actual source. Relevance = the question vs the answer.
+            scores = []
+            for record in searches:
+                for item in record.results:
+                    text = item.get("search_text") or item.get("snippet") or ""
+                    if text:
+                        scores.append(cosine_similarity(self.embedder, answer, text))
+            confidence = max(scores) if scores else 0.0
+            relevance = cosine_similarity(self.embedder, query, answer)
+        if confidence is not None and confidence < self.confidence_threshold:
+            # Ungrounded answers (memory, invented facts, tool-less replies)
+            # fail the gate — never surface them.
+            return {
+                "answer": REJECTION_MESSAGE,
+                "searches": searches,
+                "iterations": len(searches),
+                "rejected": True,
+                "source": None,
+                "confidence": None,
+                "relevance": None,
+            }
         return {
-            "answer": state.get("answer") or "",
-            "searches": state.get("searches", []),
-            "iterations": state.get("iterations", 0),
-            "rejected": state.get("rejected", False),
-            "source": state.get("source"),
-            "confidence": state.get("confidence"),
+            "answer": answer,
+            "searches": searches,
+            "iterations": len(searches),
+            "rejected": False,
+            "source": "web" if "web" in sources else ("local" if "local" in sources else None),
+            "confidence": confidence,
+            "relevance": relevance,
         }
 
 

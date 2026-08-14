@@ -43,9 +43,9 @@ src.data.ingest`); the docker entrypoint runs them in sequence on boot.
 | Module | Function | Job |
 |---|---|---|
 | `src/search/embedder.py` | `Embedder.encode()`, `.encode_batch()` | Mean-pool + L2-normalize ONNX MiniLM embeddings (no torch) |
-| `src/search/hybrid.py` | `HybridSearch.search()`, `.keyword_search()`, `.vector_search()`, `reciprocal_rank_fusion()` | Three modes: minsearch keyword, vector, and hybrid fused by Reciprocal Rank Fusion (`score = Σ w/(k+rank)`); `search_type` selects at call time |
+| `src/search/hybrid.py` | `HybridSearch.search()`, `.keyword_search()`, `.vector_search()`, `rrf()` | Hybrid search = minsearch keyword + vector results fused by Reciprocal Rank Fusion (`score = Σ 1/(k+rank)`); the standalone keyword/vector methods serve `retrieval_eval.py` |
 
-**Call chain:** `RAGBase.search()` (below) dispatches on `search_type` to one of
+**Call chain:** `RAGBase.search()` (below) runs the hybrid search, then
 the three `HybridSearch` methods.
 
 ## 3. Runtime layer (RAG)
@@ -54,7 +54,7 @@ the three `HybridSearch` methods.
 |---|---|---|
 | `src/llm.py` | `LLMClient` (`get_api_key()`, `get_base_url()`, `get_model()`, `get()`) | Central env config: API key, endpoint, model id, OpenAI client wrapper |
 | `src/rag/RAGBase.py` | `RAGBase.search()`, `.build_context()`, `.build_prompt()`, `.llm()`, `.rag()` | Plain pipeline: search → format context → prompt → LLM answer |
-| `src/rag/agent.py` | `RAGAgent.run()`, `.perform_search()`, `build_graph()`, `local_search()`, `local_judge()`, `web_search_node()`, `web_judge()`, `answer_node()`, `reject_node()`, `fallback_node()`, `finalize_node()`, `judge()` | LangGraph escalate flow: local hybrid search always first → LLM judge (verdict + confidence) → Bulbapedia web search (Tavily, `src/search/web.py`) only when local results are insufficient; only confident answers are returned (gated by `CONFIDENCE_THRESHOLD`, default 0.7), otherwise the rejection message |
+| `src/rag/agent.py` | `RAGAgent.run()`, `.perform_search()`, `.execute_tool()`, `.format_tool_results()`, `.finalize()`, `cosine_similarity()` | Manual LLM tool-use loop (no graph framework): the model decides when to call `search_local_knowledge_base` / `search_bulbapedia` (Tavily, `src/search/web.py`) and writes its own web keyword queries; tool results feed back as `function_call_output` items until the model replies with a final answer; the final answer is gated by a programmatic grounding score (max embedding-cosine between the answer and any retrieved record, gated by `CONFIDENCE_THRESHOLD`, default 0.65) and otherwise replaced by the rejection message; `result["relevance"]` reports the question-answer embedding cosine; loop bounded by `MAX_ITERATIONS` |
 
 **Call chain:** `app` → `RAGAgent.run(query)` → `local_search` (HybridSearch)
 → `local_judge` → `answer_node` | (`web_search` → `web_judge` → `answer_node` /
@@ -110,7 +110,7 @@ spans → exporters persist → `dashboard.py` reads back via `get_traces_db_pat
 4. **Dev subset discipline:** `ingest.py` builds the full 1,350-record corpus by default; `generate_qa.py`'s coverage-sampled dev subset (50 records → 250 questions) keeps every automated run cheap; full-data QA runs are manual (`--full`), per user directive.
 5. **Ground truth = question → document:** `generate_qa.py` writes only questions (`{"question", "document"}`); the LLM never writes answers — `llm_eval`/`agent_eval` resolve the ground-truth answer from the linked document's `search_text`, keeping the judge honest.
 6. **Guardrail contract:** `RAGAgent` returns `rejected:true` with the
-   rejection message when the LLM judge finds no confident answer from local
-   or Bulbapedia search (out-of-scope, below-threshold, or web failure), and
+   rejection message when the model refuses (out-of-scope), the grounding
+   gate fails (below `CONFIDENCE_THRESHOLD`), or the loop is exhausted, and
    the app renders a warning banner instead of cards — the rejection behavior
    is the same in every layer.

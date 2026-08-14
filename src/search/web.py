@@ -1,10 +1,12 @@
 # src/search/web.py
 #
 # Web search backend for the agent's escalation path: Tavily, restricted to
-# bulbapedia.bulbagarden.net. Returns a small list of {title, url, snippet}
-# dicts (the same shape the old DuckDuckGo backend produced, so consumers are
-# unchanged). The caller is responsible for handling failures (the agent's
-# web_search node degrades gracefully to empty results).
+# bulbapedia.bulbagarden.net. Returns a small list of
+# {title, url, snippet, score} dicts (score = Tavily's own relevance score,
+# surfaced so the model can weight results; the shape otherwise matches the
+# old DuckDuckGo backend, so consumers are unchanged). The caller is
+# responsible for handling failures (the agent's web_search node degrades
+# gracefully to empty results).
 
 import os
 
@@ -39,6 +41,7 @@ def web_search(query, num_results=5, api_key=None):
             "title": item.get("title", ""),
             "url": item.get("url", ""),
             "snippet": item.get("content", ""),
+            "score": item.get("score", 0.0),
         }
         for item in response.get("results", [])
         # Skip non-authoritative user subpages (User:, User talk:, blog

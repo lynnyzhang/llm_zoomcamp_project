@@ -262,7 +262,7 @@ class PostgresSpanExporter(SpanExporter):
 # ---------------------------------------------------------------------------
 
 class TracerSetup:
-    def __init__(self, service_name="llm-zoomcapstone"):
+    def __init__(self):
         self.provider = TracerProvider()
         self.exporter: SQLiteSpanExporter | None = None
         self.postgres_exporter: PostgresSpanExporter | None = None
@@ -291,7 +291,7 @@ class TracerSetup:
                         exc_info=True,
                     )
         trace.set_tracer_provider(self.provider)
-        self.tracer = trace.get_tracer(service_name)
+        self.tracer = trace.get_tracer("llm-zoomcapstone")
 
     def shutdown(self):
         if self.exporter is not None:

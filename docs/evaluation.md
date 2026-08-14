@@ -121,13 +121,13 @@ Refresh of 2026-08-10 on the regenerated ground-truth set (questions-only):
 ### Methodology
 
 - **Simple RAG**: Single hybrid search → LLM answer (baseline)
-- **Agentic RAG**: LangGraph escalate flow — local hybrid search first, LLM judge (verdict + confidence), Bulbapedia web search (Tavily) only when local results are insufficient, and rejection when neither path yields a confident answer
+- **Agentic RAG**: manual LLM tool-use loop — the model decides when to search the local knowledge base and Bulbapedia (Tavily), answers grounded in the tool results, and refuses out-of-scope or unanswerable questions
 - Evaluated on:
   - Retrieval accuracy (250 questions) — hit rate in top-5
   - Answer quality (20-question judge sample) — LLM-as-judge correctness (1-5)
   - Latency and search overhead
 
-> **Note:** The numbers below come from the pre-refactor agent (manual tool-use loop with query reformulation). The agent was re-architected on 2026-08-12 to the LangGraph escalate flow above — re-run `evaluation.agent_eval` to refresh these results.
+> **Note:** The numbers below come from the pre-refactor agent (manual tool-use loop with query reformulation). The agent was re-architected on 2026-08-12 to a LangGraph escalate flow, rewritten on 2026-08-13 as a direct manual flow, and converted the same day to a native LLM tool-use loop — re-run `evaluation.agent_eval` to refresh these results.
 
 ### Results
 
@@ -151,8 +151,8 @@ Refresh of 2026-08-10 on the regenerated ground-truth set (questions-only):
 
 ### Analysis
 
-- **Both pipelines sit at a ~98% retrieval ceiling** on the 50-document type-tagged index. Single-shot retrieval is already near-perfect, so the agent's reformulation no longer adds retrieval value on this subset (the wiki corpus showed a +809% agentic advantage because its single-shot retrieval was near zero).
-- **The agent loop costs +20.7s/query** (reformulation LLM calls) for a -0.4pp hit-rate regression and a slightly lower judge score (3.65 vs 3.9).
+- **Both pipelines sit at a ~98% retrieval ceiling** on the 50-document type-tagged index. Single-shot retrieval is already near-perfect, so the agent loop no longer adds retrieval value on this subset (the wiki corpus showed a +809% agentic advantage because its single-shot retrieval was near zero).
+- **The agent loop costs +20.7s/query** (extra LLM tool-call rounds) for a -0.4pp hit-rate regression and a slightly lower judge score (3.65 vs 3.9).
 - **The loop still has a reason to exist**: multi-hop and edge questions on the full corpus (manual full-data run) where single-shot retrieval is weaker.
 
 ### Key Numbers

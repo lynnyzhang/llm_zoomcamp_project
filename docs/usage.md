@@ -8,11 +8,11 @@ The Streamlit app at `http://localhost:8501` provides a conversational interface
 
 Type a question in the chat input at the bottom of the page. The system will:
 
-1. **Search locally** — always starts with hybrid search (keyword + vector) over the Pokédex corpus
-2. **Judge** — an LLM judge decides whether the local results confidently answer the question (verdict + confidence score)
-3. **Escalate** — only when local results are insufficient: web search restricted to Bulbapedia (Tavily)
-4. **Answer or reject** — a confident answer (local or web) is returned with its source; otherwise a clear rejection message
-5. **Display** — answer with source caption, optional confidence bar (`--show-confidence`), Pokémon cards, and feedback buttons
+1. **Let the LLM decide** — the model receives two tools (`search_local_knowledge_base`, `search_bulbapedia`) and decides itself when and what to search
+2. **Search locally** — the model typically starts with hybrid search (keyword + vector) over the Pokédex corpus
+3. **Escalate** — only when the model judges local results insufficient: web search restricted to Bulbapedia (Tavily), with the model writing its own keyword query
+4. **Answer or reject** — the model answers grounded in the retrieved tool results; out-of-scope or unanswerable questions get the rejection message
+5. **Display** — answer with source caption, Pokémon cards, and feedback buttons
 
 ### Example Queries
 
@@ -35,15 +35,15 @@ Show me a hacked save file with all legendary Pokémon
 
 Each response includes:
 
-**Answer** — The generated response, grounded in retrieved Pokédex entries.
+**Answer** — The generated response, grounded in retrieved tool results.
 
-**Confidence Score** — An optional progress bar with the LLM judge's confidence (0–100%) in the answer. Hidden by default; launch the app with `--show-confidence` to display it.
+**Confidence Score** — An optional progress bar showing the grounding score (0–100%): the maximum embedding-cosine similarity between the answer and any single retrieved record — how semantically close the answer is to its source. Hidden by default; launch the app with `--show-confidence` to display it. Answers below `CONFIDENCE_THRESHOLD` (default 0.65) are rejected instead of shown.
 
 **Pokémon Cards** — Retrieved documents render as cards with official artwork (sprite URLs from the dataset, PokeAPI fallback), the Pokémon's name and types, and a stats excerpt. Only Pokémon named in the question are shown — questions that name no Pokémon get no cards. Artwork that fails to load degrades gracefully — the card still shows the title.
 
 **Feedback Buttons** — Thumbs up/down to record whether the answer was helpful. Feedback is attached to the exact tracing span for the message and shows up in monitoring.
 
-**Rejection banner** — When the LLM judge finds no confident answer — out-of-scope questions, or gaps neither the local knowledge base nor Bulbapedia can fill — the answer renders as a warning banner with no cards, confidence, or source.
+**Rejection banner** — When the model refuses (out-of-scope questions, or gaps neither the local knowledge base nor Bulbapedia can fill), the answer renders as a warning banner with no cards or source.
 
 ## CLI Usage
 
@@ -56,12 +56,12 @@ agent = RAGAgent()
 result = agent.run("What are Pikachu's stats?")
 
 print(f"Answer: {result['answer']}")
-print(f"Source: {result['source']}")            # 'local' or 'web'
-print(f"Confidence: {result['confidence']}")
+print(f"Source: {result['source']}")            # 'local' or 'web' (or None for direct answers)
 print(f"Iterations: {result['iterations']}")
 for i, search in enumerate(result['searches']):
     print(f"  Search {i+1}: query='{search.query}', source={search.source}, results={len(search.results)}")
-    print(f"    Verdict: {search.analysis.get('verdict')}, confidence: {search.analysis.get('confidence')}")
+    if search.reformulated_query:
+        print(f"    tool query: {search.reformulated_query}")
 ```
 
 ### Single Query (Simple RAG)
@@ -190,7 +190,7 @@ Output: `evaluation/results/llm_eval.json`
 
 ### Agent vs Simple RAG Evaluation
 
-Compares agentic RAG (LangGraph escalate flow: local search → LLM judge → Bulbapedia web fallback) against simple RAG (single search) on retrieval accuracy, answer quality, and latency.
+Compares agentic RAG (manual tool-use loop: the model decides when to search local / Bulbapedia web) against simple RAG (single search) on retrieval accuracy, answer quality, and latency.
 
 ```bash
 uv run python -m evaluation.agent_eval
@@ -210,8 +210,7 @@ from src.rag.agent import RAGAgent
 
 # Custom weights
 hs = HybridSearch(
-    keyword_weight=1.0,
-    vector_weight=0.7,
+    rrf_k=60,
     rrf_k=60,
 )
 

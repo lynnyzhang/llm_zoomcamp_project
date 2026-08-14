@@ -4,7 +4,7 @@
 
 The capstone application for the DataTalksClub LLM Zoomcamp 2026 course: an
 agentic RAG assistant for Pokémon knowledge with a Streamlit chat UI, hybrid
-search (keyword + vector, RRF fusion), LLM-driven query reformulation,
+search (keyword + vector, RRF fusion), LLM-driven tool use (local + Bulbapedia search),
 out-of-scope guardrails, evaluation scripts, monitoring, and Docker
 deployment.
 
@@ -28,6 +28,23 @@ documents. The user removes them; do not delete, move, or add them.
 **Design guidance:** mirror the reference folders' code design as closely as
 possible — reuse their patterns unless a production limitation (scale,
 reliability, observability, maintainability) requires improvement.
+
+**Course parity for math and signatures:** mathematical functions and class
+signatures must match the numbered course reference exactly unless a
+deviation is justified by test results or a documented production
+limitation. Prefer the course's own names, formulas, constants, and default
+values (e.g. `rrf`, `k=60`, the `text_format`/`response_format` patch
+pattern) over "improved" variants with no measured benefit.
+
+**Production complexity vs dead parameters:** production code is expected to
+be more complex than course code because edge cases must be handled — that
+complexity is earned. Unused parameters are not complexity, they are dead
+code. A parameter must have a real consumer to exist: a production caller,
+an env-backed configuration use case, or a course-identical signature.
+Consumption only by tests does NOT justify a feature parameter (test seams
+for infrastructure — e.g. `db_path` for tmp-dir isolation — are the
+exception). When auditing, classify parameters into: real production use /
+course parity / test seam / dead — and remove the last category.
 
 ## Code Style
 
@@ -99,7 +116,7 @@ unchanged).
 | `src/llm.py` | env config: API key, base URL, model ID, client creation |
 | `src/data/` | `download_model.py`, `chunker.py`, `ingest.py` (index build) |
 | `src/search/` | `hybrid.py` (keyword + vector + RRF), `embedder.py` (ONNX) |
-| `src/rag/` | `RAGBase.py` (RAGBase), `agent.py` (agentic loop + guardrails) |
+| `src/rag/` | `RAGBase.py` (RAGBase), `agent.py` (manual agentic loop: LLM tool calls, guardrails) |
 | `src/interface/app.py` | Streamlit chat UI (Pokémon cards, feedback) |
 | `evaluation/` | offline eval (pre-deployment): `generate_qa.py` (QA set), `retrieval_eval.py`, `llm_eval.py`, `agent_eval.py`; `data/` (qa.jsonl), `results/` |
 | `monitoring/` | `tracer.py` (SQLiteSpanExporter + PostgresSpanExporter), `dashboard.py` (Streamlit); runtime `traces.db`; `grafana/` + `dashboards/` configs |
@@ -112,7 +129,7 @@ unchanged).
 ## Testing
 
 ```bash
-set -a; source .env; set +a; uv run pytest -q   # 118 tests
+set -a; source .env; set +a; uv run pytest -q   # 115 tests
 ```
 
 ## Gotchas

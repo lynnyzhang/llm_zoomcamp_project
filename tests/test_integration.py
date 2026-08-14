@@ -369,12 +369,12 @@ class TestHybridSearch:
         assert scores == sorted(scores, reverse=True), "Scores should be in descending order"
 
     def test_rrf_fusion(self):
-        from src.search.hybrid import reciprocal_rank_fusion
+        from src.search.hybrid import rrf
 
         list1 = [{"id": "a", "content": "1"}, {"id": "b", "content": "2"}, {"id": "c", "content": "3"}]
         list2 = [{"id": "a", "content": "1"}, {"id": "d", "content": "4"}, {"id": "e", "content": "5"}]
 
-        fused = reciprocal_rank_fusion([list1, list2], num_results=3)
+        fused = rrf([list1, list2], num_results=3)
         assert len(fused) <= 3
         # Document "a" appears at rank 0 in both lists → highest score
         assert fused[0]["id"] == "a"
@@ -384,16 +384,6 @@ class TestHybridSearch:
         # Scores should be descending
         scores = [d["score"] for d in fused]
         assert scores == sorted(scores, reverse=True)
-
-    def test_rrf_with_weights(self):
-        from src.search.hybrid import reciprocal_rank_fusion
-
-        list1 = [{"id": "a", "content": "1"}, {"id": "b", "content": "2"}]
-        list2 = [{"id": "c", "content": "3"}, {"id": "d", "content": "4"}]
-
-        fused = reciprocal_rank_fusion([list1, list2], weights=[10.0, 1.0], num_results=2)
-        # "a" should be first since it's rank 0 in the heavily weighted list
-        assert fused[0]["id"] == "a"
 
     def test_search_empty_query(self, search_index):
         results = search_index.search("", num_results=3)
@@ -468,50 +458,45 @@ class TestRAGPipeline:
 
 
 # ===========================================================================
-# PHASE 5: Agent Loop
+# PHASE 5: Agent Tool Loop (LLM-driven tool use)
 # ===========================================================================
 
 
-class EmptySearchIndex:
-    """Search-index stand-in that returns no results (empty-local path)."""
+class TestAgentToolLoop:
 
-    def search(self, query, num_results=5):
-        return []
-
-
-class TestAgentLoop:
-
-    @pytest.fixture(scope="class")
-    def search_index(self):
-        from src.search.hybrid import HybridSearch
-
-        return HybridSearch(documents_path=CHUNKS_DIR / "documents.jsonl")
-
-    # --- mock helpers (judge + web search) -----------------------------
+    LOCAL = "search_local_knowledge_base"
+    WEB = "search_bulbapedia"
 
     @staticmethod
-    def verdict(verdict, confidence=0.9, answer=None):
-        from src.rag.agent import JudgeVerdict
-
-        return JudgeVerdict(verdict=verdict, confidence=confidence, answer=answer)
+    def function_call(name, arguments, call_id="call_1"):
+        item = MagicMock()
+        item.type = "function_call"
+        item.name = name
+        item.arguments = json.dumps(arguments)
+        item.call_id = call_id
+        return item
 
     @staticmethod
-    def parsed(verdict):
-        # Wrap so responses.parse(...).output_parsed returns the verdict.
+    def turn(text="", *calls):
         response = MagicMock()
-        response.output_parsed = verdict
+        response.output = list(calls)
+        response.output_text = text
         return response
 
     @staticmethod
-    def judge_client(*verdicts):
-        # One entry per judge call: a JudgeVerdict, or an Exception to make
-        # the mocked parse raise (simulating a judge failure).
+    def script_client(*turns):
         mock_client = MagicMock()
-        mock_client.client.responses.parse.side_effect = [
-            v if isinstance(v, Exception) else TestAgentLoop.parsed(v)
-            for v in verdicts
-        ]
+        mock_client.client.responses.create.side_effect = list(turns)
         return mock_client
+
+    @staticmethod
+    def agent(llm_client, **kwargs):
+        from src.rag.agent import RAGAgent
+        from src.search.embedder import Embedder
+
+        index = StubSearchIndex()
+        index.embedder = Embedder()
+        return RAGAgent(search_index=index, llm_client=llm_client, **kwargs)
 
     @staticmethod
     def web_fake():
@@ -519,397 +504,209 @@ class TestAgentLoop:
 
         def fake(query, num_results=5):
             calls.append((query, num_results))
-            return [{"title": "t", "url": "u", "snippet": "s"}]
+            return [{"title": "Ikue Otani", "url": "u", "snippet": "Ikue Otani voiced Pikachu in the anime"}]
 
         fake.calls = calls
         return fake
 
-    def agent(self, llm_client, search_index=None, **kwargs):
-        from src.rag.agent import RAGAgent
+    def test_tool_less_memory_answer_is_gated(self):
+        from src.rag.agent import REJECTION_MESSAGE
 
-        index = search_index if search_index is not None else StubSearchIndex()
-        return RAGAgent(search_index=index, llm_client=llm_client, **kwargs)
+        agent = self.agent(self.script_client(self.turn(text="Pikachu is Electric.")))
+        result = agent.run("What type is Pikachu?")
 
-    # --- search record / source ---------------------------------------
+        # No tool results -> grounding 0 -> the gate rejects memory answers.
+        assert result["rejected"] is True
+        assert result["answer"] == REJECTION_MESSAGE
+        assert result["searches"] == []
 
-    def test_perform_search_returns_results(self, search_index):
-        from src.rag.agent import RAGAgent
-
-        agent = RAGAgent(search_index=search_index, llm_client=MagicMock())
-        results = agent.perform_search("What are Pikachu's stats?")
-        assert len(results) > 0
-        assert "id" in results[0]
-
-    def test_local_search_record_is_tagged_local(self, search_index):
-        from src.rag.agent import RAGAgent
-
-        agent = RAGAgent(search_index=search_index, llm_client=MagicMock())
-        state = agent.local_search({"query": "pikachu"})
-        record = state["local_record"]
-        assert record.source == "local"
-        assert record.analysis["sufficient"] is True
-        assert record.analysis["verdict"] is None
-        assert record.analysis["confidence"] is None
-
-    # --- confident local-only path ------------------------------------
-
-    def test_local_confident_answer(self, monkeypatch):
+    def test_local_tool_then_answer(self, monkeypatch):
         web_fake = self.web_fake()
         monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        verdict = self.verdict("answer", confidence=0.95, answer="Pikachu has 90 base Speed.")
-        agent = self.agent(self.judge_client(verdict))
+        agent = self.agent(self.script_client(
+            self.turn("", self.function_call(self.LOCAL, {"query": "pikachu stats"})),
+            self.turn(text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90."),
+        ))
         result = agent.run("What are Pikachu's stats?")
 
-        assert result["answer"] == "Pikachu has 90 base Speed."
         assert result["source"] == "local"
-        assert result["confidence"] == 0.95
-        assert result["rejected"] is False
         assert result["iterations"] == 1
         assert len(result["searches"]) == 1
         assert result["searches"][0].source == "local"
-        # A confident local answer must not trigger a web lookup.
+        assert result["confidence"] > 0.65  # grounding cosine vs the Pikachu doc
+        assert result["relevance"] > 0.6   # query-answer cosine
         assert web_fake.calls == []
 
-    def test_result_contract_has_all_keys(self, monkeypatch):
+    def test_local_then_web_then_answer(self, monkeypatch):
         web_fake = self.web_fake()
         monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        verdict = self.verdict("answer", confidence=0.95, answer="Pikachu is Electric.")
-        agent = self.agent(self.judge_client(verdict))
-        result = agent.run("Tell me about Pikachu")
-
-        assert set(result) == {"answer", "searches", "iterations", "rejected", "source", "confidence"}
-        assert isinstance(result["answer"], str)
-        assert isinstance(result["searches"], list)
-        assert isinstance(result["iterations"], int)
-        assert isinstance(result["rejected"], bool)
-        assert result["source"] in ("local", "web", None)
-        assert isinstance(result["confidence"], (int, float)) or result["confidence"] is None
-
-    def test_search_record_analysis_fields(self, monkeypatch):
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        verdict = self.verdict("answer", confidence=0.95, answer="Pikachu is Electric.")
-        agent = self.agent(self.judge_client(verdict))
-        result = agent.run("Tell me about Pikachu")
-
-        analysis = result["searches"][0].analysis
-        assert analysis["sufficient"] is True
-        assert analysis["verdict"] == "answer"
-        assert analysis["confidence"] == 0.95
-
-    # --- judge text fallback (servers that ignore structured output) ---
-
-    def test_judge_parse_failure_falls_back_to_raw_text(self, monkeypatch):
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        mock_client = MagicMock()
-        mock_client.client.responses.parse.side_effect = [Exception("server ignored structured output")]
-        raw = MagicMock()
-        raw.output_text = (
-            "answer: Pikachu's base stats are HP 35, Attack 55, Speed 90.\n\n"
-            "confidence: 0.9"
-        )
-        mock_client.client.responses.create.return_value = raw
-        agent = self.agent(mock_client)
-        result = agent.run("What are Pikachu's stats?")
-
-        assert result["rejected"] is False
-        assert result["source"] == "local"
-        assert result["confidence"] == 0.9
-        assert "HP 35" in result["answer"]
-        assert web_fake.calls == []
-
-    def test_judge_text_fallback_parses_fenced_json(self, monkeypatch):
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        mock_client = MagicMock()
-        mock_client.client.responses.parse.side_effect = [Exception("schema not enforced")]
-        raw = MagicMock()
-        raw.output_text = (
-            '```json\n{"verdict": "answer", "confidence": 0.85, '
-            '"answer": "Pikachu is an Electric type."}\n```'
-        )
-        mock_client.client.responses.create.return_value = raw
-        agent = self.agent(mock_client)
-        result = agent.run("What type is Pikachu?")
-
-        assert result["rejected"] is False
-        assert result["source"] == "local"
-        assert result["answer"] == "Pikachu is an Electric type."
-        assert result["confidence"] == 0.85
-
-    def test_judge_parse_and_text_fallback_fail_rejects(self, monkeypatch):
-        from src.rag.agent import REJECTION_MESSAGE
-
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        mock_client = MagicMock()
-        mock_client.client.responses.parse.side_effect = [Exception("parse fail"), Exception("parse fail")]
-        raw = MagicMock()
-        raw.output_text = "I cannot answer that in a structured way."
-        mock_client.client.responses.create.return_value = raw
-        agent = self.agent(mock_client)
-        result = agent.run("What are Pikachu's stats?")
-
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
-        assert len(result["searches"]) == 2  # local escalated, then web
-
-    # --- escalate path ------------------------------------------------
-
-    def test_local_escalates_to_web(self, monkeypatch):
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        local = self.verdict("escalate", confidence=0.5)
-        web = self.verdict("answer", confidence=0.9, answer="From Bulbapedia.")
-        agent = self.agent(self.judge_client(local, web))
-        result = agent.run("Something beyond the local index")
+        agent = self.agent(self.script_client(
+            self.turn("", self.function_call(self.LOCAL, {"query": "pikachu"})),
+            self.turn("", self.function_call(self.WEB, {"query": "Pikachu voice actor anime"})),
+            self.turn(text="Ikue Otani voiced Pikachu."),
+        ))
+        result = agent.run("Who voiced Pikachu?")
 
         assert result["source"] == "web"
-        assert result["answer"] == "From Bulbapedia."
-        assert result["rejected"] is False
         assert result["iterations"] == 2
-        assert len(result["searches"]) == 2
-        assert result["searches"][0].source == "local"  # local always first
-        assert result["searches"][1].source == "web"
-        assert web_fake.calls != []
+        assert [s.source for s in result["searches"]] == ["local", "web"]
+        assert result["searches"][1].reformulated_query == "Pikachu voice actor anime"
+        assert web_fake.calls[0][0] == "Pikachu voice actor anime"
+        assert result["confidence"] is not None  # grounded via the snippet record
+        assert result["relevance"] is not None
 
-    def test_empty_local_results_skip_judge(self, monkeypatch):
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        web = self.verdict("answer", confidence=0.9, answer="From Bulbapedia.")
-        agent = self.agent(self.judge_client(web), search_index=EmptySearchIndex())
-        result = agent.run("A question with no local hits")
-
-        assert result["source"] == "web"
-        assert result["rejected"] is False
-        assert result["iterations"] == 2
-        # Empty local results skip the local judge entirely.
-        assert agent.llm_client.client.responses.parse.call_count == 1
-        assert web_fake.calls != []
-
-    def test_local_below_threshold_escalates_to_web(self, monkeypatch):
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        local = self.verdict("answer", confidence=0.5, answer="Guess.")  # below 0.7
-        web = self.verdict("answer", confidence=0.95, answer="Confirmed.")
-        agent = self.agent(self.judge_client(local, web))
-        result = agent.run("Borderline question")
-
-        assert result["source"] == "web"
-        assert result["answer"] == "Confirmed."
-        assert result["iterations"] == 2
-
-    def test_local_judge_failure_escalates_to_web(self, monkeypatch):
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        web = self.verdict("answer", confidence=0.95, answer="Fallback answer.")
-        agent = self.agent(self.judge_client(RuntimeError("judge down"), web))
-        result = agent.run("Question where the judge fails locally")
-
-        assert result["source"] == "web"
-        assert result["answer"] == "Fallback answer."
-        assert result["rejected"] is False
-
-    # --- partial answer -> web completion path -------------------------
-
-    def test_local_partial_routes_to_web_and_web_completes(self, monkeypatch):
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        local = self.verdict("answer_partial", confidence=0.9, answer="Local partial.")
-        web = self.verdict("answer", confidence=0.95, answer="Bulbapedia complete.")
-        agent = self.agent(self.judge_client(local, web))
-        result = agent.run("Partial locally, complete on Bulbapedia")
-
-        assert result["source"] == "web"
-        assert result["answer"] == "Bulbapedia complete."
-        assert result["rejected"] is False
-        assert result["iterations"] == 2
-        assert web_fake.calls != []
-
-    def test_local_partial_web_failure_keeps_partial(self, monkeypatch):
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        local = self.verdict("answer_partial", confidence=0.9, answer="Local partial.")
-        web = self.verdict("escalate", confidence=0.5)
-        agent = self.agent(self.judge_client(local, web))
-        result = agent.run("Partial locally, web cannot complete")
-
-        assert result["rejected"] is False
-        assert result["answer"] == "Local partial."
-        assert result["source"] == "local"
-        assert result["confidence"] == 0.9
-
-    def test_local_partial_below_threshold_rejects_on_web_failure(self, monkeypatch):
-        from src.rag.agent import REJECTION_MESSAGE
-
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        local = self.verdict("answer_partial", confidence=0.5, answer="Weak partial.")
-        web = self.verdict("escalate", confidence=0.5)
-        agent = self.agent(self.judge_client(local, web))
-        result = agent.run("Partial but not confident, web cannot complete")
-
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
-
-    def test_web_answer_partial_surfaces(self, monkeypatch):
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        local = self.verdict("escalate", confidence=0.5)
-        web = self.verdict("answer_partial", confidence=0.9, answer="Web partial.")
-        agent = self.agent(self.judge_client(local, web))
-        result = agent.run("Only Bulbapedia has anything")
-
-        assert result["source"] == "web"
-        assert result["answer"] == "Web partial."
-        assert result["rejected"] is False
-
-    def test_judge_text_fallback_parses_answer_partial(self, monkeypatch):
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        mock_client = MagicMock()
-        mock_client.client.responses.parse.side_effect = [Exception("schema not enforced")]
-        raw = MagicMock()
-        raw.output_text = "answer_partial: Pikachu is Electric-type.\n\nconfidence: 0.8"
-        mock_client.client.responses.create.return_value = raw
-        agent = self.agent(mock_client)
-        result = agent.run("Partial question")
-
-        assert result["rejected"] is False
-        assert result["answer"] == "Pikachu is Electric-type."
-        assert result["source"] == "web"
-
-    # --- web failure / reject path ------------------------------------
-
-    def test_web_search_failure_rejects(self, monkeypatch):
+    def test_web_tool_failure_returns_empty_results(self, monkeypatch):
         from src.rag.agent import REJECTION_MESSAGE
 
         def raise_error(query, num_results=5):
             raise RuntimeError("Tavily down")
 
         monkeypatch.setattr("src.rag.agent.web.web_search", raise_error)
-        local = self.verdict("escalate", confidence=0.5)
-        agent = self.agent(self.judge_client(local))
+        agent = self.agent(self.script_client(
+            self.turn("", self.function_call(self.WEB, {"query": "pikachu"})),
+            self.turn(text="No answer found."),
+        ))
         result = agent.run("Needs web")
 
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
-        assert result["source"] is None
-        assert result["confidence"] is None
-
-    def test_web_below_threshold_rejects(self, monkeypatch):
-        from src.rag.agent import REJECTION_MESSAGE
-
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        local = self.verdict("answer", confidence=0.5, answer="Weak guess.")  # escalates to web
-        web = self.verdict("answer", confidence=0.4, answer="Too weak.")
-        agent = self.agent(self.judge_client(local, web))
-        result = agent.run("Weak confidence on web too")
-
+        assert result["searches"][0].results == []
+        # Empty tool results -> grounding 0 -> gated to rejection.
         assert result["rejected"] is True
         assert result["answer"] == REJECTION_MESSAGE
 
-    def test_web_judge_failure_rejects(self, monkeypatch):
-        from src.rag.agent import REJECTION_MESSAGE
-
-        web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        local = self.verdict("escalate", confidence=0.5)
-        agent = self.agent(self.judge_client(local, RuntimeError("judge down")))
-        result = agent.run("Web judge fails")
-
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
-
-# ===========================================================================
-# PHASE 5b: Agent Guardrails (LLM-judge out-of-scope rejection)
-# ===========================================================================
-
-
-class TestAgentGuardrails:
-
-    @staticmethod
-    def verdict(verdict, confidence=0.9, answer=None):
-        from src.rag.agent import JudgeVerdict
-
-        return JudgeVerdict(verdict=verdict, confidence=confidence, answer=answer)
-
-    @staticmethod
-    def parsed(verdict):
-        response = MagicMock()
-        response.output_parsed = verdict
-        return response
-
-    @staticmethod
-    def web_fake():
-        calls = []
-
-        def fake(query, num_results=5):
-            calls.append((query, num_results))
-            return [{"title": "t", "url": "u", "snippet": "s"}]
-
-        fake.calls = calls
-        return fake
-
-    def judge_client(self, *verdicts):
-        mock_client = MagicMock()
-        mock_client.client.responses.parse.side_effect = [
-            v if isinstance(v, Exception) else self.parsed(v)
-            for v in verdicts
-        ]
-        return mock_client
-
-    def agent(self, llm_client, **kwargs):
-        from src.rag.agent import RAGAgent
-
-        return RAGAgent(search_index=StubSearchIndex(), llm_client=llm_client, **kwargs)
-
-    def test_local_reject_is_out_of_scope(self, monkeypatch):
+    def test_out_of_scope_replies_rejection_without_tools(self, monkeypatch):
         from src.rag.agent import REJECTION_MESSAGE
 
         def no_web(query, num_results=5):
-            raise AssertionError("web_search must never run on an out-of-scope question")
+            raise AssertionError("tools must never run on an out-of-scope question")
 
         monkeypatch.setattr("src.rag.agent.web.web_search", no_web)
-        verdict = self.verdict("reject")
-        agent = self.agent(self.judge_client(verdict))
+        agent = self.agent(self.script_client(self.turn(text=REJECTION_MESSAGE)))
         result = agent.run("Who would win Charizard vs Blastoise?")
 
         assert result["rejected"] is True
         assert result["answer"] == REJECTION_MESSAGE
+        assert result["searches"] == []
+        assert result["source"] is None
 
     @pytest.mark.parametrize("question", [
         "who would come out on top if my Pikachu and Charizard fought in a tournament bracket",
         "can you fix my game save",
         "help me with my Docker homework",
     ])
-    def test_paraphrased_out_of_scope_is_llm_rejected(self, monkeypatch, question):
+    def test_paraphrased_out_of_scope(self, monkeypatch, question):
         from src.rag.agent import REJECTION_MESSAGE
 
-        def no_web(query, num_results=5):
-            raise AssertionError("web_search must never run on an out-of-scope question")
-
-        monkeypatch.setattr("src.rag.agent.web.web_search", no_web)
-        verdict = self.verdict("reject")
-        agent = self.agent(self.judge_client(verdict))
+        agent = self.agent(self.script_client(self.turn(text=REJECTION_MESSAGE)))
         result = agent.run(question)
 
         assert result["rejected"] is True
         assert result["answer"] == REJECTION_MESSAGE
 
-    def test_in_domain_confident_not_rejected(self, monkeypatch):
+    def test_loop_exhaustion_rejects(self):
+        from src.rag.agent import REJECTION_MESSAGE
+
+        turns = [
+            self.turn("", self.function_call(self.LOCAL, {"query": f"q{i}"}, call_id=f"c{i}"))
+            for i in range(4)
+        ]
+        agent = self.agent(self.script_client(*turns), max_iterations=2)
+        result = agent.run("Endless question")
+
+        assert result["rejected"] is True
+        assert result["answer"] == REJECTION_MESSAGE
+
+    def test_empty_final_text_rejects(self):
+        from src.rag.agent import REJECTION_MESSAGE
+
+        agent = self.agent(self.script_client(self.turn(text="   ")))
+        result = agent.run("Question")
+
+        assert result["rejected"] is True
+        assert result["answer"] == REJECTION_MESSAGE
+
+    def test_llm_failure_rejects(self):
+        from src.rag.agent import REJECTION_MESSAGE
+
+        mock_client = MagicMock()
+        mock_client.client.responses.create.side_effect = RuntimeError("server down")
+        agent = self.agent(mock_client)
+        result = agent.run("Question")
+
+        assert result["rejected"] is True
+        assert result["answer"] == REJECTION_MESSAGE
+
+    def test_fabricated_answer_is_gated(self):
+        from src.rag.agent import REJECTION_MESSAGE
+
+        agent = self.agent(self.script_client(
+            self.turn("", self.function_call(self.LOCAL, {"query": "pikachu"})),
+            self.turn(text="Pikachu has 999 attack and can fly and summons rain"),
+        ))
+        result = agent.run("What are Pikachu's stats?")
+
+        # Only pikachu/attack overlap the stub context -> below the gate.
+        assert result["rejected"] is True
+        assert result["answer"] == REJECTION_MESSAGE
+
+    def test_confidence_threshold_param_is_enforced(self):
+        from src.rag.agent import REJECTION_MESSAGE
+
+        agent = self.agent(self.script_client(
+            self.turn("", self.function_call(self.LOCAL, {"query": "pikachu"})),
+            self.turn(text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90."),
+        ), confidence_threshold=0.9)
+        result = agent.run("What are Pikachu's stats?")
+
+        # Grounding cosine ~0.78 < 0.9 -> rejected.
+        assert result["rejected"] is True
+        assert result["answer"] == REJECTION_MESSAGE
+
+    def test_web_tool_unlocks_after_first_turn(self, monkeypatch):
+        from src.rag.agent import LOCAL_SEARCH_TOOL, TOOLS
+
         web_fake = self.web_fake()
         monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
-        verdict = self.verdict("answer", confidence=0.95, answer="Pikachu is Electric.")
-        agent = self.agent(self.judge_client(verdict))
-        result = agent.run("Tell me about Pikachu")
+        mock_client = MagicMock()
+        mock_client.client.responses.create.side_effect = [
+            self.turn("", self.function_call(self.LOCAL, {"query": "pikachu"})),
+            self.turn("", self.function_call(self.WEB, {"query": "Pikachu voice actor"})),
+            self.turn(text="Ikue Otani voiced Pikachu in the anime"),
+        ]
+        agent = self.agent(mock_client)
+        result = agent.run("Who voiced Pikachu?")
 
-        assert result.get("rejected", False) is False
-        assert result["source"] == "local"
-        assert result["answer"] == "Pikachu is Electric."
-        assert web_fake.calls == []
+        calls = mock_client.client.responses.create.call_args_list
+        assert [c.kwargs["tools"] for c in calls] == [
+            [LOCAL_SEARCH_TOOL],   # turn 0: local only
+            TOOLS,                 # turn 1+: both
+            TOOLS,
+        ]
+        assert result["rejected"] is False
+
+    def test_empty_or_punctuation_input_rejected_without_llm_call(self):
+        from src.rag.agent import REJECTION_MESSAGE
+
+        mock_client = MagicMock()
+        mock_client.client.responses.create.side_effect = AssertionError("LLM must not be called")
+        agent = self.agent(mock_client)
+
+        for bad in ("", "   ", "???!!!", "....", "---"):
+            result = agent.run(bad)
+            assert result["rejected"] is True, repr(bad)
+            assert result["answer"] == REJECTION_MESSAGE
+            assert result["searches"] == []
+            assert result["iterations"] == 0
+
+    def test_single_word_query_reaches_llm(self):
+        agent = self.agent(self.script_client(
+            self.turn("", self.function_call(self.LOCAL, {"query": "Pikachu"})),
+            self.turn(text="Pikachu is an Electric Pokémon."),
+        ))
+
+        result = agent.run("Pikachu")
+
+        assert agent.llm_client.client.responses.create.called
+        assert result["rejected"] is False
 
     def test_instructions_cover_capabilities_limitations_and_rejection(self):
         from src.rag.agent import INSTRUCTIONS, REJECTION_MESSAGE
@@ -920,85 +717,8 @@ class TestAgentGuardrails:
             assert phrase in INSTRUCTIONS
         assert "never guess" in INSTRUCTIONS
         assert REJECTION_MESSAGE in INSTRUCTIONS
-
-
-
-class RecordingSearchIndex(StubSearchIndex):
-    """Stub that records which search backend method was invoked.
-
-    ``keyword_search`` / ``vector_search`` / ``search`` all satisfy the
-    ``(query, num_results) -> list[dict]`` contract; the recorded call tuple
-    proves the agent/pipeline dispatched to the right one.
-    """
-
-    def __init__(self, documents=None):
-        super().__init__(documents=documents)
-        self.calls: list[tuple[str, str, int]] = []
-
-    def search(self, query, num_results=5):
-        self.calls.append(("search", query, num_results))
-        return super().search(query, num_results=num_results)
-
-    def keyword_search(self, query, num_results=5):
-        self.calls.append(("keyword_search", query, num_results))
-        return [dict(doc) for doc in self.documents[:num_results]]
-
-    def vector_search(self, query, num_results=5):
-        self.calls.append(("vector_search", query, num_results))
-        return [dict(doc) for doc in self.documents[:num_results]]
-
-
-class TestSearchTypeDispatch:
-
-    @staticmethod
-    def rag(search_type=None):
-        from src.rag.RAGBase import RAGBase
-
-        index = RecordingSearchIndex()
-        kwargs = {"llm_client": MagicMock()}
-        if search_type is not None:
-            kwargs["search_type"] = search_type
-        return RAGBase(search_index=index, **kwargs), index
-
-    @staticmethod
-    def agent(search_type):
-        from src.rag.agent import RAGAgent
-
-        index = RecordingSearchIndex()
-        agent = RAGAgent(
-            search_index=index, llm_client=MagicMock(), search_type=search_type
-        )
-        return agent, index
-
-    def test_ragbase_keyword_dispatches_to_keyword_search(self):
-        rag, index = self.rag("keyword")
-        rag.search("pikachu", num_results=3)
-        assert index.calls == [("keyword_search", "pikachu", 3)]
-
-    def test_ragbase_vector_dispatches_to_vector_search(self):
-        rag, index = self.rag("vector")
-        rag.search("pikachu", num_results=3)
-        assert index.calls == [("vector_search", "pikachu", 3)]
-
-    def test_ragbase_default_hybrid_dispatches_to_search(self):
-        rag, index = self.rag()
-        rag.search("pikachu", num_results=3)
-        assert index.calls == [("search", "pikachu", 3)]
-
-    def test_agent_keyword_dispatches_to_keyword_search(self):
-        agent, index = self.agent("keyword")
-        agent.perform_search("pikachu")
-        assert index.calls[0][0] == "keyword_search"
-
-    def test_agent_vector_dispatches_to_vector_search(self):
-        agent, index = self.agent("vector")
-        agent.perform_search("pikachu")
-        assert index.calls[0][0] == "vector_search"
-
-    def test_agent_hybrid_dispatches_to_search(self):
-        agent, index = self.agent("hybrid")
-        agent.perform_search("pikachu")
-        assert index.calls[0][0] == "search"
+        assert "search_local_knowledge_base" in INSTRUCTIONS
+        assert "search_bulbapedia" in INSTRUCTIONS
 
 
 # ===========================================================================
@@ -1735,21 +1455,24 @@ class TestFullPipeline:
         assert len(answer) > 0
 
     def test_full_agent_loop(self, full_pipeline, monkeypatch):
-        from src.rag.agent import JudgeVerdict
-
         def fake_web(query, num_results=5):
             return [{"title": "t", "url": "u", "snippet": "s"}]
 
         monkeypatch.setattr("src.rag.agent.web.web_search", fake_web)
 
         mock_client = MagicMock()
-        response = MagicMock()
-        response.output_parsed = JudgeVerdict(
-            verdict="answer",
-            confidence=0.95,
-            answer="Pikachu is an electric type Pokémon known for high speed.",
-        )
-        mock_client.client.responses.parse.return_value = response
+        local_call = MagicMock()
+        local_call.type = "function_call"
+        local_call.name = "search_local_knowledge_base"
+        local_call.arguments = json.dumps({"query": "pikachu stats"})
+        local_call.call_id = "c1"
+        final = MagicMock()
+        final.output = []
+        final.output_text = "Pikachu is an Electric Pokémon with high speed."
+        mock_client.client.responses.create.side_effect = [
+            MagicMock(output=[local_call], output_text=""),
+            final,
+        ]
 
         from src.rag.agent import RAGAgent
 
@@ -1762,7 +1485,7 @@ class TestFullPipeline:
         assert "iterations" in result
         assert len(result["answer"]) > 0
         assert result["iterations"] >= 1
-        assert result["searches"][0].analysis is not None
+        assert result["searches"][0].source == "local"
 
     def test_full_agent_with_feedback(self, full_pipeline):
         import tempfile
@@ -1867,10 +1590,10 @@ class TestWebSearch:
 
         fake = self.fake_client({
             "results": [
-                {"title": "Pikachu (Pokémon)", "url": "https://bulbapedia.bulbagarden.net/wiki/Pikachu_(Pok%C3%A9mon)", "content": "s1"},
-                {"title": "User:Landfish7/Overview/Pikachu", "url": "https://bulbapedia.bulbagarden.net/wiki/User:Landfish7/Overview/Pikachu", "content": "s2"},
-                {"title": "Volt Tackle (move)", "url": "https://bulbapedia.bulbagarden.net/wiki/Volt_Tackle_(move)", "content": "s3"},
-                {"title": "Talk page", "url": "https://bulbapedia.bulbagarden.net/wiki/User_talk:Someone", "content": "s4"},
+                {"title": "Pikachu (Pokémon)", "url": "https://bulbapedia.bulbagarden.net/wiki/Pikachu_(Pok%C3%A9mon)", "content": "s1", "score": 0.91},
+                {"title": "User:Landfish7/Overview/Pikachu", "url": "https://bulbapedia.bulbagarden.net/wiki/User:Landfish7/Overview/Pikachu", "content": "s2", "score": 0.9},
+                {"title": "Volt Tackle (move)", "url": "https://bulbapedia.bulbagarden.net/wiki/Volt_Tackle_(move)", "content": "s3", "score": 0.85},
+                {"title": "Talk page", "url": "https://bulbapedia.bulbagarden.net/wiki/User_talk:Someone", "content": "s4", "score": 0.8},
             ]
         })
         monkeypatch.setattr(web, "TavilyClient", lambda api_key=None: fake)
@@ -1882,6 +1605,7 @@ class TestWebSearch:
             "https://bulbapedia.bulbagarden.net/wiki/Pikachu_(Pok%C3%A9mon)",
             "https://bulbapedia.bulbagarden.net/wiki/Volt_Tackle_(move)",
         ]
+        assert [r["score"] for r in results] == [0.91, 0.85]
         fake.search.assert_called_once()
 
     def test_missing_api_key_raises(self, monkeypatch):
@@ -1890,3 +1614,10 @@ class TestWebSearch:
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         with pytest.raises(RuntimeError):
             web.web_search("pikachu")
+
+
+# ===========================================================================
+# Query reformulation (web-search step)
+# ===========================================================================
+
+

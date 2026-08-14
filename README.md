@@ -1,6 +1,6 @@
 # LLM Zoomcamp 2026 Capstone Project
 
-An agentic RAG assistant for Pokémon knowledge, built for the DataTalksClub LLM Zoomcamp 2026 cohort. Ask about a Pokémon's stats, types, weaknesses, evolution line, or abilities and the system retrieves the right Pokédex entries, grounds its answer in them, and shows you the whole process. Combines hybrid search (keyword + vector with Reciprocal Rank Fusion), LLM-driven query reformulation, and a Streamlit chat interface with full agent transparency.
+An agentic RAG assistant for Pokémon knowledge, built for the DataTalksClub LLM Zoomcamp 2026 cohort. Ask about a Pokémon's stats, types, weaknesses, evolution line, or abilities and the system retrieves the right Pokédex entries, grounds its answer in them, and shows you the whole process. Combines hybrid search (keyword + vector with Reciprocal Rank Fusion), LLM-driven tool use (local + Bulbapedia search), and a Streamlit chat interface with full agent transparency.
 
 ## Project Goal
 
@@ -36,10 +36,10 @@ The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle
 │  0. Guardrails: reject out-of-scope queries                 │
 │  1. perform_search(query)  ──────────────────┐              │
 │  2. analyze_results(query, results) ◄────────┘              │
-│  3. if not sufficient: reformulate_query() ──► go to 1      │
+│  3. if insufficient: call search_bulbapedia() ──► go to 1   │
 │  4. generate_answer(query, all_results)                     │
 │                                                             │
-│  Max 3 iterations, LLM-driven query reformulation           │
+│  Max 3 iterations, LLM decides when to call the tools       │
 └────────────────────────┬────────────────────────────────────┘
                          │
                          ▼
@@ -135,9 +135,9 @@ See [docs/usage.md](docs/usage.md) for the complete usage guide.
 
 ## Capabilities
 
-- **Hybrid search** — keyword (minsearch) + vector (local ONNX MiniLM) fused with Reciprocal Rank Fusion, selectable as hybrid / keyword / vector in the sidebar.
-- **Agentic loop** — up to 3 iterations of LLM-driven query reformulation when the first search is insufficient.
-- **Guardrails** — out-of-scope rejection (battle simulation/prediction, save files, cheats, non-Pokémon topics) with a deterministic fail-safe; in-domain low-confidence questions get a graceful "couldn't find a confident answer" response instead.
+- **Hybrid search** — keyword (minsearch) + vector (local ONNX MiniLM) fused with Reciprocal Rank Fusion.
+- **Agentic loop** — the LLM decides when to call its tools (`search_local_knowledge_base`, `search_bulbapedia`), up to 3 iterations, and writes its own web keyword queries.
+- **Guardrails** — out-of-scope rejection (battle simulation/prediction, save files, cheats, non-Pokémon topics); the model refuses without calling tools, and the loop never fabricates an answer when searches fail.
 - **Pokémon cards** — retrieved documents render as cards with official artwork (PokeAPI sprites), types, and a stats excerpt.
 - **Feedback capture** — thumbs up/down per answer, recorded in monitoring for continuous improvement.
 
@@ -172,7 +172,7 @@ The with-examples judge prompt scores best overall.
 | Latency/Query (LLM)         | 19.26s     | 39.99s      | +20.73s    |
 | Answer Quality (LLM Judge)  | 3.9/5      | 3.65/5      | -0.25      |
 
-Both pipelines sit at a ~98% retrieval ceiling on the 50-doc dev subset, so the agent's reformulation adds latency without a hit-rate gain here; it is expected to help on the full corpus where single-shot retrieval is weaker.
+Both pipelines sit at a ~98% retrieval ceiling on the 50-doc dev subset, so the agent loop adds latency without a hit-rate gain here; it is expected to help on the full corpus where single-shot retrieval is weaker.
 
 ## Monitoring
 
@@ -231,10 +231,10 @@ project/
 │   │   └── hybrid.py       # Hybrid search (keyword + vector + RRF)
 │   ├── rag/
 │   │   ├── RAGBase.py       # Base RAG pipeline
-│   │   └── agent.py        # Agentic RAG + guardrails + reformulation
+│   │   └── agent.py        # Agentic RAG: LLM tool calls + guardrails
 │   └── interface/
 │       └── app.py          # Streamlit chat UI
-├── tests/                  # Test suite (116 tests)
+├── tests/                  # Test suite (115 tests)
 └── notebooks/              # Exploration notebooks
 ```
 
