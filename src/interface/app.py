@@ -29,7 +29,7 @@ def parse_cli_flags(argv):
     return args.show_confidence
 
 
-# Read once at import; --show-confidence toggles the LLM-judge confidence bar.
+# Read once at import; --show-confidence toggles the grounding-confidence bar.
 SHOW_CONFIDENCE = parse_cli_flags(sys.argv[1:])
 
 # ---------------------------------------------------------------------------
@@ -95,9 +95,12 @@ def get_agent():
 # Helper functions
 # ---------------------------------------------------------------------------
 
-def unique_docs(searches):
+def pokemon_doc(searches, question):
+    """Docs for Pokémon named in the question, deduped by id — the identity
+    key shared by Pokémon and docs (alternate forms have distinct ids)."""
+    question_lower = question.lower()
     seen_ids = set()
-    unique_docs = []
+    docs = []
 
     for search in searches:
         for doc in search.results:
@@ -106,45 +109,30 @@ def unique_docs(searches):
             if not isinstance(doc, dict) or "id" not in doc:
                 continue
             doc_id = doc.get("id", "")
-            if doc_id and doc_id not in seen_ids:
+            name = doc.get("name", "")
+            if name and name.lower() in question_lower and doc_id not in seen_ids:
                 seen_ids.add(doc_id)
-                unique_docs.append(doc)
+                docs.append(doc)
 
-    return unique_docs
-
-
-def filter_docs_by_question(unique_docs, question):
-    if not question:
-        return []
-
-    question_lower = question.lower()
-    matched = []
-
-    for doc in unique_docs:
-        name = doc.get("name", "")
-        if name and name.lower() in question_lower:
-            matched.append(doc)
-
-    return matched
+    return docs
 
 
 def doc_artwork_url(doc):
-    sprite_url = doc.get("sprite_url")
-    if sprite_url:
-        return sprite_url
-    # Fallback: build the PokeAPI official-artwork URL from the numeric part of
-    # the id (used when a doc has no sprite_url, e.g. type-chart docs).
     doc_id = str(doc.get("id", ""))
     pokemon_id = re.sub(r"\D", "", doc_id)
-    if not pokemon_id:
-        return ""
-    return (
-        "https://raw.githubusercontent.com/PokeAPI/sprites/master/"
-        f"sprites/pokemon/other/official-artwork/{pokemon_id}.png"
-    )
+    if pokemon_id:
+        # High-res 475x475 official artwork — the dataset sprite_url is a
+        # small 96x96 image. Missing artwork (404) degrades to no image
+        # via the caller's suppress.
+        return (
+            "https://raw.githubusercontent.com/PokeAPI/sprites/master/"
+            f"sprites/pokemon/other/official-artwork/{pokemon_id}.png"
+        )
+    # Non-numeric ids (type-chart docs) have no artwork; keep any sprite.
+    return doc.get("sprite_url") or ""
 
 
-def stats_excerpt(doc, limit=200):
+def stats_summary(doc, limit=200):
     # Type-chart docs carry no stats.
     if doc.get("kind") == "type_chart":
         return ""
@@ -200,9 +188,9 @@ def pokemon_card_grid(docs):
                 caption = card_caption(doc)
                 if caption:
                     st.caption(caption)
-                excerpt = stats_excerpt(doc)
-                if excerpt:
-                    st.caption(excerpt)
+                summary = stats_summary(doc)
+                if summary:
+                    st.caption(summary)
 
 
 def record_feedback(span_id, feedback):
@@ -247,11 +235,9 @@ def render_message_body(msg):
         elif source == "web":
             st.caption("Source: Bulbapedia (web)")
 
-        unique_docs = unique_docs(searches)
-        question = msg.get("question", "")
-        matched_docs = filter_docs_by_question(unique_docs, question) if question else []
-        if matched_docs:
-            pokemon_card_grid(matched_docs)
+        docs = pokemon_doc(searches, msg.get("question", ""))
+        if docs:
+            pokemon_card_grid(docs)
 
         if SHOW_CONFIDENCE:
             confidence = result.get("confidence")

@@ -9,7 +9,7 @@ The Streamlit app at `http://localhost:8501` provides a conversational interface
 Type a question in the chat input at the bottom of the page. The system will:
 
 1. **Let the LLM decide** — the model receives two tools (`search_local_knowledge_base`, `search_bulbapedia`) and decides itself when and what to search
-2. **Search locally** — the model typically starts with hybrid search (keyword + vector) over the Pokédex corpus
+2. **Search locally** — the model typically starts with hybrid search (keyword + vector) over the Pokédex dataset
 3. **Escalate** — only when the model judges local results insufficient: web search restricted to Bulbapedia (Tavily), with the model writing its own keyword query
 4. **Answer or reject** — the model answers grounded in the retrieved tool results; out-of-scope or unanswerable questions get the rejection message
 5. **Display** — answer with source caption, Pokémon cards, and feedback buttons
@@ -39,7 +39,7 @@ Each response includes:
 
 **Confidence Score** — An optional progress bar showing the grounding score (0–100%): the maximum embedding-cosine similarity between the answer and any single retrieved record — how semantically close the answer is to its source. Hidden by default; launch the app with `--show-confidence` to display it. Answers below `CONFIDENCE_THRESHOLD` (default 0.65) are rejected instead of shown.
 
-**Pokémon Cards** — Retrieved documents render as cards with official artwork (sprite URLs from the dataset, PokeAPI fallback), the Pokémon's name and types, and a stats excerpt. Only Pokémon named in the question are shown — questions that name no Pokémon get no cards. Artwork that fails to load degrades gracefully — the card still shows the title.
+**Pokémon Cards** — Retrieved documents render as cards with official artwork (sprite URLs from the dataset, PokeAPI fallback), the Pokémon's name and types, and a stats summary. Only Pokémon named in the question are shown — questions that name no Pokémon get no cards. Artwork that fails to load degrades gracefully — the card still shows the title.
 
 **Feedback Buttons** — Thumbs up/down to record whether the answer was helpful. Feedback is attached to the exact tracing span for the message and shows up in monitoring.
 
@@ -60,8 +60,8 @@ print(f"Source: {result['source']}")            # 'local' or 'web' (or None for 
 print(f"Iterations: {result['iterations']}")
 for i, search in enumerate(result['searches']):
     print(f"  Search {i+1}: query='{search.query}', source={search.source}, results={len(search.results)}")
-    if search.reformulated_query:
-        print(f"    tool query: {search.reformulated_query}")
+    if search.search_query:
+        print(f"    tool query: {search.search_query}")
 ```
 
 ### Single Query (Simple RAG)

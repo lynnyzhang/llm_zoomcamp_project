@@ -22,7 +22,7 @@ CANONICAL_MAX_ID = 1025
 
 # Curated evolution overrides for chains where dex-id order != evolution
 # order: baby Pokémon introduced after their parents, branched chains, and
-# cross-generation evolutions. Keyed by canonical corpus name →
+# cross-generation evolutions. Keyed by canonical Pokémon name →
 # (evolves_from, evolves_into). The dex-order fallback below only handles
 # linear chains (where dex order == evolution order).
 EVOLUTION_OVERRIDES = {
@@ -145,7 +145,7 @@ EVOLUTION_OVERRIDES = {
 }
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CORPUS_PATH = PROJECT_ROOT / "data" / "corpus.jsonl"
+POKEMON_PATH = PROJECT_ROOT / "data" / "pokemon.jsonl"
 TYPES_CSV_PATH = PROJECT_ROOT / "data" / "raw" / "pokemon_types.csv"
 OUTPUT_PATH = PROJECT_ROOT / "data" / "chunks" / "documents.jsonl"
 
@@ -203,14 +203,14 @@ def type_chart_doc(chart, t):
     return doc
 
 
-def build_evolution_map(corpus):
+def build_evolution_map(records):
     """Map evolution_chain_id -> sorted list of canonical member records.
 
     Only canonical dex ids (<= CANONICAL_MAX_ID) are considered members, and
     members are ordered by dex id ascending.
     """
     chains = defaultdict(list)
-    for record in corpus:
+    for record in records:
         if record["id"] > CANONICAL_MAX_ID:
             continue
         chains[record["evolution_chain_id"]].append(record)
@@ -219,7 +219,7 @@ def build_evolution_map(corpus):
     return chains
 
 
-def evolution_linkage(record, chain):
+def evolution_link(record, chain):
     """Return (evolves_from, evolves_into) for a record within its chain.
 
     Curated overrides first (baby/branched chains where dex order !=
@@ -352,7 +352,7 @@ def build_search_text(record, chart, chain):
 
 
 def build_pokemon_doc(record, chart, chain):
-    evolves_from, evolves_into = evolution_linkage(record, chain)
+    evolves_from, evolves_into = evolution_link(record, chain)
     doc = dict(record)
     doc["evolves_from"] = evolves_from
     doc["evolves_into"] = evolves_into
@@ -362,9 +362,9 @@ def build_pokemon_doc(record, chart, chain):
 
 
 def main():
-    if not CORPUS_PATH.exists():
+    if not POKEMON_PATH.exists():
         raise FileNotFoundError(
-            f"Missing corpus at {CORPUS_PATH}. "
+            f"Missing dataset at {POKEMON_PATH}. "
             "Run `uv run python -m src.data.ingest` first."
         )
     if not TYPES_CSV_PATH.exists():
@@ -373,15 +373,15 @@ def main():
             "Run `uv run python -m src.data.ingest` first."
         )
 
-    with open(CORPUS_PATH, encoding="utf-8") as f:
-        corpus = [json.loads(line) for line in f if line.strip()]
+    with open(POKEMON_PATH, encoding="utf-8") as f:
+        records = [json.loads(line) for line in f if line.strip()]
 
     chart = load_type_chart(TYPES_CSV_PATH)
-    chains = build_evolution_map(corpus)
+    chains = build_evolution_map(records)
 
     docs = [
         build_pokemon_doc(record, chart, chains.get(record["evolution_chain_id"]))
-        for record in corpus
+        for record in records
     ]
     # Part B: 18 type-chart docs appended after the 1,350 Pokémon docs,
     # in the order the rows appear in pokemon_types.csv (dict preserves order).
@@ -392,7 +392,7 @@ def main():
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         f.writelines(json.dumps(doc, ensure_ascii=False) + "\n" for doc in docs)
 
-    print(f"Processed {CORPUS_PATH}")
+    print(f"Processed {POKEMON_PATH}")
     print(f"Saved {len(docs)} docs to {OUTPUT_PATH}")
 
     with open(OUTPUT_PATH, encoding="utf-8") as f:

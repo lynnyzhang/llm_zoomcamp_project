@@ -4,7 +4,7 @@ An agentic RAG assistant for Pokémon knowledge, built for the DataTalksClub LLM
 
 ## Project Goal
 
-Given a corpus of Pokédex records (dev subset: coverage-sampled 50 Pokémon, 250 ground-truth questions) from the [Kaggle Pokémon dataset](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types), build a question-answering system that:
+Given a dataset of Pokédex records (dev subset: coverage-sampled 50 Pokémon, 250 ground-truth questions) from the [Kaggle Pokémon dataset](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types), build a question-answering system that:
 
 1. Retrieves relevant Pokémon entries using hybrid search
 2. Uses an agentic loop to reformulate queries when results are insufficient
@@ -15,9 +15,9 @@ Given a corpus of Pokédex records (dev subset: coverage-sampled 50 Pokémon, 25
 
 ## Data
 
-The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle ([`patelris/pokemon-dataset-with-stats-and-types`](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types), download endpoint `https://www.kaggle.com/api/v1/datasets/download/patelris/pokemon-dataset-with-stats-and-types`). The two raw CSVs (`pokemon_complete.csv`, `pokemon_types.csv`) ship bundled in `data/raw/` — Kaggle's anonymous download endpoint is bot-blocked, so the repo carries its own copy and no login is needed. `src/data/ingest.py` only attempts a download when they are missing, and builds `data/corpus.jsonl` with one structured record per Pokémon (full: 1,350 — 1,025 canonical + 325 alternate forms).
+The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle ([`patelris/pokemon-dataset-with-stats-and-types`](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types), download endpoint `https://www.kaggle.com/api/v1/datasets/download/patelris/pokemon-dataset-with-stats-and-types`). The two raw CSVs (`pokemon_complete.csv`, `pokemon_types.csv`) ship bundled in `data/raw/` — Kaggle's anonymous download endpoint is bot-blocked, so the repo carries its own copy and no login is needed. `src/data/ingest.py` only attempts a download when they are missing, and builds `data/pokemon.jsonl` with one structured record per Pokémon (full: 1,350 — 1,025 canonical + 325 alternate forms).
 
-**Development subset:** `src/data/ingest.py` builds the full 1,350-record corpus by default; `evaluation/generate_qa.py` defaults to a deterministic coverage-sampled dev subset of 50 Pokémon (250 ground-truth questions). This is a user directive: dev subset for all automated test/eval runs, full-data QA runs manual only. See [docs/setup.md](docs/setup.md).
+**Development subset:** `src/data/ingest.py` builds the full 1,350-record dataset by default; `evaluation/generate_qa.py` defaults to a deterministic coverage-sampled dev subset of 50 Pokémon (250 ground-truth questions). This is a user directive: dev subset for all automated test/eval runs, full-data QA runs manual only. See [docs/setup.md](docs/setup.md).
 
 ## Architecture
 
@@ -63,7 +63,7 @@ The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle
 ┌─────────────────────────────────────────────────────────────┐
 │              Data Pipeline                                  │
 │                                                             │
-│ Kaggle API ──► raw CSVs ──► corpus.jsonl                   │
+│ Kaggle API ──► raw CSVs ──► pokemon.jsonl                   │
 │  (patelris/     (1,350 records,          (one record per    │
 │   pokemon-       cached, idempotent)      Pokémon, 1,350)   │
 │   dataset)                                                  │
@@ -96,7 +96,7 @@ cp .env.example .env
 docker-compose up --build
 ```
 
-The app runs at `http://localhost:8501`, Postgres on port 5433, and Grafana at `http://localhost:3000`. The entrypoint ingests the full corpus, chunks it, and starts the app.
+The app runs at `http://localhost:8501`, Postgres on port 5433, and Grafana at `http://localhost:3000`. The entrypoint ingests the full dataset, chunks it, and starts the app.
 
 ### Local Development
 
@@ -104,7 +104,7 @@ The app runs at `http://localhost:8501`, Postgres on port 5433, and Grafana at `
 uv sync
 cp .env.example .env              # then edit the LLM vars
 uv run python -m src.data.download_model   # fetches ONNX embedder (tokenizer.json + model.onnx)
-uv run python -m src.data.ingest           # downloads Kaggle dataset, builds data/corpus.jsonl (full dataset, 1,350)
+uv run python -m src.data.ingest           # downloads Kaggle dataset, builds data/pokemon.jsonl (full dataset, 1,350)
 uv run python -m src.data.chunker          # builds data/chunks/documents.jsonl
 uv run streamlit run src/interface/app.py  # chat UI at :8501
 ```
@@ -138,7 +138,7 @@ See [docs/usage.md](docs/usage.md) for the complete usage guide.
 - **Hybrid search** — keyword (minsearch) + vector (local ONNX MiniLM) fused with Reciprocal Rank Fusion.
 - **Agentic loop** — the LLM decides when to call its tools (`search_local_knowledge_base`, `search_bulbapedia`), up to 3 iterations, and writes its own web keyword queries.
 - **Guardrails** — out-of-scope rejection (battle simulation/prediction, save files, cheats, non-Pokémon topics); the model refuses without calling tools, and the loop never fabricates an answer when searches fail.
-- **Pokémon cards** — retrieved documents render as cards with official artwork (PokeAPI sprites), types, and a stats excerpt.
+- **Pokémon cards** — retrieved documents render as cards with official artwork (PokeAPI sprites), types, and a stats summary.
 - **Feedback capture** — thumbs up/down per answer, recorded in monitoring for continuous improvement.
 
 ## Evaluation Results
@@ -172,7 +172,7 @@ The with-examples judge prompt scores best overall.
 | Latency/Query (LLM)         | 19.26s     | 39.99s      | +20.73s    |
 | Answer Quality (LLM Judge)  | 3.9/5      | 3.65/5      | -0.25      |
 
-Both pipelines sit at a ~98% retrieval ceiling on the 50-doc dev subset, so the agent loop adds latency without a hit-rate gain here; it is expected to help on the full corpus where single-shot retrieval is weaker.
+Both pipelines sit at a ~98% retrieval ceiling on the 50-doc dev subset, so the agent loop adds latency without a hit-rate gain here; it is expected to help on the full dataset where single-shot retrieval is weaker.
 
 ## Monitoring
 
@@ -192,7 +192,7 @@ project/
 ├── .env.example            # Environment template
 ├── data/
 │   ├── raw/pokemon_complete.csv + pokemon_types.csv  # Cached raw CSVs
-│   ├── corpus.jsonl        # One structured record per Pokémon (full: 1,350; --limit for subset)
+│   ├── pokemon.jsonl        # One structured record per Pokémon (full: 1,350; --limit for subset)
 │   └── chunks/documents.jsonl     # 1,350 Pokémon docs + 18 type-chart docs (indexed)
 ├── models/
 │   └── Xenova/all-MiniLM-L6-v2/   # ONNX embedder (tokenizer.json + model.onnx)
@@ -223,7 +223,7 @@ project/
 │       └── final_report.md     # Final evaluation report
 ├── src/
 │   ├── data/
-│   │   ├── ingest.py       # Kaggle dataset download → corpus.jsonl
+│   │   ├── ingest.py       # Kaggle dataset download → pokemon.jsonl
 │   │   ├── chunker.py      # Pokémon-native docs (1 per Pokémon + 18 type-chart docs)
 │   │   └── download_model.py   # ONNX embedding model download
 │   ├── search/

@@ -11,7 +11,7 @@ deployment.
 The knowledge base is the Kaggle Pokémon Dataset with Stats and Types
 (`patelris/pokemon-dataset-with-stats-and-types`, 1,350 records: 1,025
 canonical Pokémon + 325 alternate forms) fetched by `src/data/ingest.py`,
-which builds the full 1,350-record corpus by default. The **dev subset** — a
+which builds the full 1,350-record dataset by default. The **dev subset** — a
 deterministic coverage-sampled 50 Pokémon (250 ground-truth questions) — is the default for
 ground-truth generation (`evaluation/generate_qa.py`) and all automated eval
 runs; full-data QA runs are manual (see `docs/setup.md`).
@@ -53,6 +53,10 @@ course parity / test seam / dead — and remove the last category.
   comments describing what the code does.
 - **Most common word naming** — name variables and functions with the most
   commonly used word for the meaning (e.g. `test` instead of `probe`).
+- **Plain names for files and folders** — file and folder names must also
+  use plain, everyday words (e.g. `data/pokemon.jsonl` not
+  `data/corpus.jsonl`). This project is a demo; anyone should be able to
+  understand it at a glance.
 - **Comments only for "why"** — add comments solely for edge cases,
   workarounds, and patches, explaining why they exist. Minimize comment
   presence.
@@ -71,7 +75,7 @@ course parity / test seam / dead — and remove the last category.
 uv sync                          # install deps into .venv (Python 3.13+)
 cp .env.example .env             # then edit the LLM vars (see below)
 uv run python -m src.data.download_model   # fetch ONNX embedder artifacts
-uv run python -m src.data.ingest           # fetch Kaggle dataset, build corpus.jsonl (dev subset: 50)
+uv run python -m src.data.ingest           # fetch Kaggle dataset, build pokemon.jsonl (dev subset: 50)
 uv run python -m src.data.chunker          # build chunks/documents.jsonl (indexed)
 uv run streamlit run src/interface/app.py  # dev app on :8501
 ```
@@ -138,6 +142,6 @@ set -a; source .env; set +a; uv run pytest -q   # 115 tests
   `MODEL_ID`; there is no default model. LLM calls fail lazily at first use.
 - **`.env` must never be committed** — it holds the LLM API key (ignored via a global gitignore rule; no repo `.gitignore` exists — add one).
 - `uv.lock` and `.python-version` are committed in this repo; `evaluation/results/` eval outputs are committed too.
-- `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/corpus.jsonl`, `data/chunks/documents.jsonl`, ONNX embedder under `models/`); the two raw CSVs under `data/raw/` are **bundled and committed** (Kaggle anonymous downloads are bot-blocked, so the repo ships its own copy — no login needed); `evaluation/data/qa.jsonl` is an LLM-generated eval artifact; the span store lives at `monitoring/traces.db`.
+- `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/pokemon.jsonl`, `data/chunks/documents.jsonl`, ONNX embedder under `models/`); the two raw CSVs under `data/raw/` are **bundled and committed** (Kaggle anonymous downloads are bot-blocked, so the repo ships its own copy — no login needed); `evaluation/data/qa.jsonl` is an LLM-generated eval artifact; the span store lives at `monitoring/traces.db`.
 - Keep the project self-contained: no imports from external reference
   material (docstring attributions are comments only, never dependencies).

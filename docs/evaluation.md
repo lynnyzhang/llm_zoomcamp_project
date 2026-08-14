@@ -153,7 +153,7 @@ Refresh of 2026-08-10 on the regenerated ground-truth set (questions-only):
 
 - **Both pipelines sit at a ~98% retrieval ceiling** on the 50-document type-tagged index. Single-shot retrieval is already near-perfect, so the agent loop no longer adds retrieval value on this subset (the wiki corpus showed a +809% agentic advantage because its single-shot retrieval was near zero).
 - **The agent loop costs +20.7s/query** (extra LLM tool-call rounds) for a -0.4pp hit-rate regression and a slightly lower judge score (3.65 vs 3.9).
-- **The loop still has a reason to exist**: multi-hop and edge questions on the full corpus (manual full-data run) where single-shot retrieval is weaker.
+- **The loop still has a reason to exist**: multi-hop and edge questions on the full dataset (manual full-data run) where single-shot retrieval is weaker.
 
 ### Key Numbers
 
@@ -193,12 +193,12 @@ uv run python -m evaluation.agent_eval
 # → evaluation/results/agent_eval.json, evaluation/results/agent_eval_comparison.png
 ```
 
-Full-data QA runs are manual: regenerate chunk → QA with `--full` first (see [docs/setup.md](setup.md), Manual full-data runs); ingest already builds the full corpus by default.
+Full-data QA runs are manual: regenerate chunk → QA with `--full` first (see [docs/setup.md](setup.md), Manual full-data runs); ingest already builds the full dataset by default.
 
 ## Limitations
 
 1. **Small judge sample** — 10 questions for LLM answer quality, 20 for agent answer quality. A larger sample would give tighter estimates.
-2. **Dev subset is at a retrieval ceiling** — the ~98% hit rate says little about the full 1,025-Pokémon corpus. The manual full-data run is the real test of the agent loop.
+2. **Dev subset is at a retrieval ceiling** — the ~98% hit rate says little about the full 1,025-Pokémon dataset. The manual full-data run is the real test of the agent loop.
 3. **Faithfulness gap** — answers add details beyond the single retrieved document; retrieving more context or tightening the answer prompt would raise faithfulness.
 4. **Single model** — all evaluations use the configured model (`MODEL_ID` from `.env`, required — no default). Results may differ with larger or different models.
 5. **No end-to-end metric** — retrieval and answer quality were evaluated separately. A combined metric (e.g., answer correctness given retrieved context) would be more informative.

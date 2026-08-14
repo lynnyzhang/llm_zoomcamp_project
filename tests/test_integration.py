@@ -157,24 +157,24 @@ class StubSearchIndex:
 
 class TestDataIngestion:
 
-    def test_corpus_file_exists(self):
-        corpus_path = DATA_DIR / "corpus.jsonl"
-        assert corpus_path.exists(), f"Missing {corpus_path}"
+    def test_pokemon_file_exists(self):
+        pokemon_path = DATA_DIR / "pokemon.jsonl"
+        assert pokemon_path.exists(), f"Missing {pokemon_path}"
 
     def test_qa_file_exists(self):
         qa_path = EVAL_QA
         assert qa_path.exists(), f"Missing {qa_path}"
 
-    def test_corpus_records_are_valid(self):
-        corpus_path = DATA_DIR / "corpus.jsonl"
+    def test_pokemon_records_are_valid(self):
+        pokemon_path = DATA_DIR / "pokemon.jsonl"
         records = []
-        with open(corpus_path) as f:
+        with open(pokemon_path) as f:
             for i, line in enumerate(f):
                 line = line.strip()
                 if not line:
                     continue
                 record = json.loads(line)
-                # New corpus schema: full native record (no 'passage' wrapper).
+                # New record schema: full native record (no 'passage' wrapper).
                 assert "id" in record, f"Record {i} missing 'id' field"
                 assert "name" in record, f"Record {i} missing 'name' field"
                 assert "types" in record, f"Record {i} missing 'types' field"
@@ -244,8 +244,8 @@ class TestDataIngestion:
 class TestChunkingPipeline:
 
     @staticmethod
-    def corpus_records():
-        with open(DATA_DIR / "corpus.jsonl", encoding="utf-8") as f:
+    def pokemon_records():
+        with open(DATA_DIR / "pokemon.jsonl", encoding="utf-8") as f:
             return [json.loads(line) for line in f if line.strip()]
 
     @staticmethod
@@ -262,38 +262,38 @@ class TestChunkingPipeline:
         from src.data.chunker import type_effectiveness
 
         chart = self.chart()
-        bulbasaur = self.record_by_id(self.corpus_records(), 1)
+        bulbasaur = self.record_by_id(self.pokemon_records(), 1)
         eff = type_effectiveness(bulbasaur, chart)
         assert eff["fire"] == 2.0
         assert eff["grass"] == 0.25
         assert eff["water"] == 0.5
 
-    def test_evolution_linkage_ivysaur(self):
+    def test_evolution_link_ivysaur(self):
         from src.data.chunker import build_evolution_map
 
-        records = self.corpus_records()
+        records = self.pokemon_records()
         chains = build_evolution_map(records)
         ivysaur = self.record_by_id(records, 2)
         chain = chains[ivysaur["evolution_chain_id"]]
-        from src.data.chunker import evolution_linkage
+        from src.data.chunker import evolution_link
 
-        evolves_from, evolves_into = evolution_linkage(ivysaur, chain)
+        evolves_from, evolves_into = evolution_link(ivysaur, chain)
         assert evolves_from == "Bulbasaur"
         assert evolves_into == ["Venusaur"]
 
-    def test_alt_form_has_no_evolution_linkage(self):
-        from src.data.chunker import evolution_linkage
+    def test_alt_form_has_no_evolution_link(self):
+        from src.data.chunker import evolution_link
 
-        records = self.corpus_records()
+        records = self.pokemon_records()
         alt = self.record_by_id(records, 10001)
-        evolves_from, evolves_into = evolution_linkage(alt, None)
+        evolves_from, evolves_into = evolution_link(alt, None)
         assert evolves_from is None
         assert evolves_into == []
 
     def test_build_pokemon_doc_derives_keys(self):
         from src.data.chunker import build_evolution_map, build_pokemon_doc
 
-        records = self.corpus_records()
+        records = self.pokemon_records()
         chart = self.chart()
         chains = build_evolution_map(records)
         ivysaur = self.record_by_id(records, 2)
@@ -550,7 +550,7 @@ class TestAgentToolLoop:
         assert result["source"] == "web"
         assert result["iterations"] == 2
         assert [s.source for s in result["searches"]] == ["local", "web"]
-        assert result["searches"][1].reformulated_query == "Pikachu voice actor anime"
+        assert result["searches"][1].search_query == "Pikachu voice actor anime"
         assert web_fake.calls[0][0] == "Pikachu voice actor anime"
         assert result["confidence"] is not None  # grounded via the snippet record
         assert result["relevance"] is not None
@@ -1413,7 +1413,7 @@ class TestFullPipeline:
 
     def test_data_to_search_pipeline(self, full_pipeline):
         # Verify data exists
-        assert (DATA_DIR / "corpus.jsonl").exists()
+        assert (DATA_DIR / "pokemon.jsonl").exists()
         assert EVAL_QA.exists()
         assert (CHUNKS_DIR / "documents.jsonl").exists()
 

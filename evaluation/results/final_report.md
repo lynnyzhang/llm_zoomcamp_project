@@ -51,7 +51,7 @@
 **Key findings:**
 - Both pipelines sit at a ~98% retrieval ceiling on the 50-doc type-tagged index (wiki was 0.44% vs 4.0%, +809% agentic advantage) — single-shot retrieval is already near-perfect, so the agent's reformulation no longer adds retrieval value on this subset
 - Agentic RAG costs +20.7s/query (reformulation LLM calls) for a -0.4pp hit-rate regression and a slightly lower judge score (3.65 vs 3.9)
-- The agent loop still adds value for multi-hop/edge questions on the full corpus (manual full-data run) where single-shot retrieval is weaker
+- The agent loop still adds value for multi-hop/edge questions on the full dataset (manual full-data run) where single-shot retrieval is weaker
 
 ---
 
@@ -74,7 +74,7 @@
 | Full Pipeline Integration   | 7     | PASS   |
 
 **Test coverage includes:**
-- Data validation (corpus.jsonl, qa.jsonl, documents.jsonl — 50 Pokémon / 250 QA dev subset)
+- Data validation (pokemon.jsonl, qa.jsonl, documents.jsonl — 50 Pokémon / 250 QA dev subset)
 - Chunking logic (token estimation, re-chunking, Pokémon-aware metadata)
 - Search functions (keyword, vector, hybrid, RRF fusion)
 - RAG pipeline (search → context → prompt → LLM)
@@ -120,7 +120,7 @@ Data Ingestion (PokeAPI/Kaggle) → Chunking → Hybrid Search (RRF)
 
 ## 7. Recommendations
 
-1. **Full-corpus validation:** The dev subset (50 docs) is at a retrieval ceiling; run the manual full-data evaluation (1025 Pokémon / 5,125 QA) to measure whether the agent loop's reformulation pays off where single-shot retrieval is weaker.
+1. **Full-dataset validation:** The dev subset (50 docs) is at a retrieval ceiling; run the manual full-data evaluation (1025 Pokémon / 5,125 QA) to measure whether the agent loop's reformulation pays off where single-shot retrieval is weaker.
 2. **Faithfulness gap:** The judge rates faithfulness 3.0-3.9 because generated answers add details beyond the single retrieved doc — tighten the answer prompt to stay strictly within retrieved context, or retrieve top-3 docs to give the answer generator more support.
 3. **Production readiness:**
    - Docker configuration is complete and validated

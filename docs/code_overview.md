@@ -8,7 +8,7 @@ section notes the functions it calls into.
 
 ```
 download_model ──► models/ (ONNX embedder)
-ingest ──────────► data/corpus.jsonl
+ingest ──────────► data/pokemon.jsonl
 chunker ─────────► data/documents.jsonl ──► HybridSearch (index in memory)
                                                     │
                       ┌──────────────────────────────┤
@@ -31,10 +31,10 @@ Three layers: **data** (build the index), **runtime** (answer questions),
 | Module | Function | Job |
 |---|---|---|
 | `src/data/download_model.py` | `download()` | Fetch ONNX tokenizer + model into `models/` |
-| `src/data/ingest.py` | `download_archive()`, `extract_raw_csvs()`, `parse_row()`, `load_raw_rows()`, `build_corpus()`, `main()` | Fetch Kaggle Pokémon dataset (patelris/pokemon-dataset-with-stats-and-types), cache both raw CSVs (`pokemon_complete.csv`, `pokemon_types.csv`), write one structured record per Pokémon to `data/corpus.jsonl` (full dataset: all 1,350 by default; `--limit N` for a subset) |
+| `src/data/ingest.py` | `download_archive()`, `extract_raw_csvs()`, `parse_row()`, `load_raw_rows()`, `build_dataset()`, `main()` | Fetch Kaggle Pokémon dataset (patelris/pokemon-dataset-with-stats-and-types), cache both raw CSVs (`pokemon_complete.csv`, `pokemon_types.csv`), write one structured record per Pokémon to `data/pokemon.jsonl` (full dataset: all 1,350 by default; `--limit N` for a subset) |
 | `src/data/chunker.py` | `load_type_chart()`, `build_evolution_map()`, `type_effectiveness()`, `build_search_text()`, `build_pokemon_doc()`, `type_chart_doc()`, `main()` | Build one Pokémon-native document per record with pure-int `id` linkage (eval depends on exact ids), derive `type_effectiveness` (18 multipliers from the type chart) and `evolves_from`/`evolves_into` (chain id + dex order), append 18 type-chart documents, write `data/chunks/documents.jsonl` |
 
-**Call chain:** `ingest.main()` writes `corpus.jsonl` → `chunker.main()` reads it
+**Call chain:** `ingest.main()` writes `pokemon.jsonl` → `chunker.main()` reads it
 and writes `documents.jsonl`. Both are one-shot CLI scripts (`python -m
 src.data.ingest`); the docker entrypoint runs them in sequence on boot.
 
@@ -65,10 +65,10 @@ evaluation for comparison.
 
 | Module | Function | Job |
 |---|---|---|
-| `src/interface/app.py` | `make_agent()`, `maybe_trace()`, `render_message()`, `render_message_body()`, `filter_docs_by_question()`, `pokemon_card_grid()`, `record_feedback()`, `parse_cli_flags()` | Streamlit chat: agent answers with source caption (local knowledge base / Bulbapedia), optional LLM-judge confidence bar (`--show-confidence` launch flag), Pokémon cards (only Pokémon named in the question) with artwork, rejection banners, thumbs up/down feedback |
+| `src/interface/app.py` | `make_agent()`, `maybe_trace()`, `render_message()`, `render_message_body()`, `pokemon_doc()`, `pokemon_card_grid()`, `record_feedback()`, `parse_cli_flags()` | Streamlit chat: agent answers with source caption (local knowledge base / Bulbapedia), optional grounding-confidence bar (`--show-confidence` launch flag), Pokémon cards (only Pokémon named in the question) with artwork, rejection banners, thumbs up/down feedback |
 
 **Call chain:** `render_message` is the single path for both history and live
-replies; `render_message_body` → `unique_docs` → `filter_docs_by_question` →
+replies; `render_message_body` → `pokemon_doc` →
 `pokemon_card_grid`; feedback goes to `record_feedback` (monitoring).
 
 ## 5. Monitoring layer
@@ -107,7 +107,7 @@ spans → exporters persist → `dashboard.py` reads back via `get_traces_db_pat
 3. **Feedback round-trip:** UI → `record_feedback(span_id)` → span store →
    dashboard "feedback distribution" panel — the only user input that flows
    back into monitoring.
-4. **Dev subset discipline:** `ingest.py` builds the full 1,350-record corpus by default; `generate_qa.py`'s coverage-sampled dev subset (50 records → 250 questions) keeps every automated run cheap; full-data QA runs are manual (`--full`), per user directive.
+4. **Dev subset discipline:** `ingest.py` builds the full 1,350-record dataset by default; `generate_qa.py`'s coverage-sampled dev subset (50 records → 250 questions) keeps every automated run cheap; full-data QA runs are manual (`--full`), per user directive.
 5. **Ground truth = question → document:** `generate_qa.py` writes only questions (`{"question", "document"}`); the LLM never writes answers — `llm_eval`/`agent_eval` resolve the ground-truth answer from the linked document's `search_text`, keeping the judge honest.
 6. **Guardrail contract:** `RAGAgent` returns `rejected:true` with the
    rejection message when the model refuses (out-of-scope), the grounding

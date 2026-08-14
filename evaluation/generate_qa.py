@@ -5,7 +5,7 @@
 # itself, looked up by id at eval time — the LLM never writes answers.
 #
 # Records come from the INDEXED documents (data/chunks/documents.jsonl) — the
-# same corpus the retrievers index — so questions are grounded in exactly what
+# same dataset the retrievers index — so questions are grounded in exactly what
 # retrieval sees (search_text, type_effectiveness, evolution links), not in the
 # raw CSVs.
 
@@ -141,7 +141,7 @@ def load_pokemon_documents():
     """data/chunks/documents.jsonl → {int id: Pokémon document}.
 
     The indexed documents are the ground truth for question generation (the
-    course's pattern generates questions from the indexed corpus, not from raw
+    course's pattern generates questions from the indexed dataset, not from raw
     data). Type-chart docs (kind == "type_chart", string ids) are excluded —
     QA is per Pokémon.
     """
@@ -234,7 +234,7 @@ def main(argv=None):
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--full", action="store_true", help="All 1,350 Pokémon documents × N questions (MANUAL only — slow/costly)")
     group.add_argument("--limit", type=int, default=DEV_SUBSET_SIZE,
-                       help=f"Coverage-sampled N Pokémon documents from the indexed corpus (default: {DEV_SUBSET_SIZE})")
+                       help=f"Coverage-sampled N Pokémon documents from the indexed dataset (default: {DEV_SUBSET_SIZE})")
     parser.add_argument("--questions", type=int, default=TARGET_QUESTIONS_PER_RECORD,
                         help="Target questions per record (default: 5; fewer = cheaper but weaker stats)")
     parser.add_argument("--seed", type=int, default=DEV_SUBSET_SEED,

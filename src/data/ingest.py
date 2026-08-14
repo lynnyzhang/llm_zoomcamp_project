@@ -25,7 +25,7 @@ DATA_DIR = Path(os.environ.get("DATASET_PATH", PROJECT_ROOT / "data"))
 RAW_DIR = DATA_DIR / "raw"
 POKEMON_CSV = RAW_DIR / "pokemon_complete.csv"
 TYPES_CSV = RAW_DIR / "pokemon_types.csv"
-CORPUS_FILE = DATA_DIR / "corpus.jsonl"
+POKEMON_FILE = DATA_DIR / "pokemon.jsonl"
 
 # The 18 canonical types, in the order used for the "Type effectiveness"
 # rendering (standard gen-1 ordering).
@@ -83,7 +83,7 @@ def download_archive(url=KAGGLE_DATASET_URL):
 
 
 def extract_raw_csvs():
-    # Idempotent on the raw cache: corpus.jsonl is a derived slice of it and is
+    # Idempotent on the raw cache: pokemon.jsonl is a derived slice of it and is
     # never a re-download, so the raw CSVs are the deterministic source.
     if POKEMON_CSV.exists() and TYPES_CSV.exists():
         print(f"Using cached raw CSVs: {POKEMON_CSV}, {TYPES_CSV}")
@@ -178,7 +178,7 @@ def load_raw_rows():
         return list(csv.DictReader(f))
 
 
-def build_corpus(rows, limit):
+def build_records(rows, limit):
     parsed = [parse_row(r) for r in rows]
     parsed.sort(key=lambda r: r["id"])
     if limit is not None:
@@ -189,7 +189,7 @@ def build_corpus(rows, limit):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description=(
-            "Build data/corpus.jsonl from the Pokémon CSV dataset "
+            "Build data/pokemon.jsonl from the Pokémon CSV dataset "
             "(patelris/pokemon-dataset-with-stats-and-types). "
             "Defaults to the FULL 1,350-record dataset."
         )
@@ -202,14 +202,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     rows = load_raw_rows()
-    corpus = build_corpus(rows, args.limit)
+    records = build_records(rows, args.limit)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CORPUS_FILE, "w", encoding="utf-8") as f:
+    with open(POKEMON_FILE, "w", encoding="utf-8") as f:
         f.writelines(
-            json.dumps(record, ensure_ascii=False) + "\n" for record in corpus
+            json.dumps(record, ensure_ascii=False) + "\n" for record in records
         )
-    print(f"Wrote {len(corpus)} records to {CORPUS_FILE}")
+    print(f"Wrote {len(records)} records to {POKEMON_FILE}")
     return 0
 
 

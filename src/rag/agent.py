@@ -97,7 +97,7 @@ class SearchRecord:
     query: str
     results: list[dict]
     source: str | None = None
-    reformulated_query: str | None = None
+    search_query: str | None = None
 
 
 def get_confidence_threshold():
@@ -188,7 +188,7 @@ class RAGAgent:
                 query=question,
                 results=results,
                 source="web",
-                reformulated_query=query,
+                search_query=query,
             )
             return record, self.format_tool_results(results)
         return None, json.dumps({"error": f"unknown tool: {name}"})

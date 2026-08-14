@@ -9,7 +9,7 @@ set -euo pipefail
 PROJECT_ROOT="/app"
 DATA_DIR="${PROJECT_ROOT}/data"
 CHUNKS_DIR="${DATA_DIR}/chunks"
-CORPUS_FILE="${DATA_DIR}/corpus.jsonl"
+POKEMON_FILE="${DATA_DIR}/pokemon.jsonl"
 DOCUMENTS_FILE="${CHUNKS_DIR}/documents.jsonl"
 TRACES_DB="${PROJECT_ROOT}/monitoring/traces.db"
 MODELS_DIR="${DATA_DIR}/models"
@@ -60,7 +60,7 @@ fi
 # Step 1: Download Pokémon dataset
 echo ""
 echo "[1/7] Downloading Pokémon dataset..."
-if [ -f "$CORPUS_FILE" ]; then
+if [ -f "$POKEMON_FILE" ]; then
     echo "  Dataset already exists, skipping download."
 else
     uv run python -c "
