@@ -11,7 +11,6 @@ DATA_DIR="${PROJECT_ROOT}/data"
 CHUNKS_DIR="${DATA_DIR}/chunks"
 POKEMON_FILE="${DATA_DIR}/pokemon.jsonl"
 DOCUMENTS_FILE="${CHUNKS_DIR}/documents.jsonl"
-TRACES_DB="${PROJECT_ROOT}/monitoring/traces.db"
 MODELS_DIR="${DATA_DIR}/models"
 EMBEDDER_MODEL_PATH="${MODELS_DIR}/Xenova/all-MiniLM-L6-v2"
 export EMBEDDER_MODEL_PATH
@@ -117,36 +116,10 @@ else:
 # Step 5: Initialize monitoring database
 echo ""
 echo "[5/7] Initializing monitoring database..."
-mkdir -p "$DATA_DIR"
 uv run python -c "
-import sqlite3
-from pathlib import Path
-
-db_path = Path('${TRACES_DB}')
-db_path.parent.mkdir(parents=True, exist_ok=True)
-
-conn = sqlite3.connect(str(db_path))
-cursor = conn.cursor()
-
-# Create spans table if it doesn't exist (matching tracer.py schema)
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS spans (
-        name TEXT,
-        start_time INTEGER,
-        end_time INTEGER,
-        input_tokens INTEGER,
-        output_tokens INTEGER,
-        cost REAL,
-        feedback TEXT,
-        agent_iterations INTEGER,
-        query TEXT,
-        search_queries TEXT
-    )
-''')
-
-conn.commit()
-conn.close()
-print('  Monitoring database initialized.')
+from monitoring.db_init import init_db, init_feedback
+init_db()
+init_feedback()
 "
 
 # Step 6: Launch Streamlit app
@@ -157,8 +130,10 @@ echo " Pipeline complete! Starting Streamlit..."
 echo "============================================="
 echo ""
 
-exec uv run streamlit run src/interface/app.py \
+exec uv run streamlit run \
     --server.port=8501 \
     --server.address=0.0.0.0 \
     --server.headless=true \
-    --browser.gatherUsageStats=false
+    --browser.gatherUsageStats=false \
+    src/interface/app.py \
+    -- --show-confidence

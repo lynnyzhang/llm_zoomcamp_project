@@ -9,11 +9,16 @@
 # returns output_parsed directly, without manual JSON parsing, because the
 # one-time text_format test + llama.cpp patch run at first client access.
 
-import os
-import types
+import importlib.util, types
+from pathlib import Path
 
 from openai import OpenAI
 from pydantic import BaseModel
+
+spec = importlib.util.spec_from_file_location(
+    "src.llm.env", Path(__file__).resolve().parent / "llm" / "env.py")
+env = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(env)  # src/llm.py shadows the src/llm/ package
 
 
 class Test(BaseModel):
@@ -34,51 +39,12 @@ class LLMClient:
 
     default_client = None  # process-wide singleton instance
 
-    @staticmethod
-    def env(name):
-        value = os.environ.get(name)
-        if value is None or not value.strip():
-            return None
-        return value
-
-    @staticmethod
-    def get_api_key():
-        key = LLMClient.env("OPENAI_API_KEY")
-        if key is None:
-            raise RuntimeError(
-                "OPENAI_API_KEY is not set or is empty in .env. Set it in project/.env (see .env.example)."
-            )
-        return key
-
-    @staticmethod
-    def get_base_url():
-        url = LLMClient.env("OPENAI_API_BASE_URL") or LLMClient.env("OPENAI_BASE_URL")
-        if url is None:
-            raise RuntimeError(
-                "OPENAI_API_BASE_URL is not set or is empty in .env. Set it in project/.env (see .env.example)."
-            )
-        return url
-
-    @staticmethod
-    def get_model():
-        model = LLMClient.env("MODEL_ID")
-        if model is None:
-            raise RuntimeError(
-                "MODEL_ID is not set or is empty in .env. Set it in project/.env (see .env.example)."
-            )
-        return model
-
-    # Per-call-type temperatures, env-overridable: the agent loop must be
-    # deterministic (greedy) so tool decisions are stable; the RAG answer
-    # step keeps slight variety. Reasoning models (e.g. o1/o3) reject
-    # temperature != 1 — set both vars to "1".
-    @staticmethod
-    def get_agent_temperature():
-        return float(os.environ.get("AGENT_TEMPERATURE", "0.0"))
-
-    @staticmethod
-    def get_answer_temperature():
-        return float(os.environ.get("ANSWER_TEMPERATURE", "0.3"))
+    # Greedy agent for stable tool calls; reasoning models reject temp != 1.
+    get_api_key = staticmethod(env.get_api_key)
+    get_base_url = staticmethod(env.get_base_url)
+    get_model = staticmethod(env.get_model)
+    get_agent_temperature = staticmethod(env.get_agent_temperature)
+    get_answer_temperature = staticmethod(env.get_answer_temperature)
 
     @classmethod
     def get(cls):
@@ -106,9 +72,7 @@ class LLMClient:
         return self.openai_client
 
     def test_text_format(self):
-        # Local servers (e.g. llama.cpp) accept the request but return plain
-        # text (output_parsed=None), silently wasting a generation — test
-        # once at client creation and patch if unsupported.
+        # llama.cpp may return plain text (output_parsed=None) — test once.
         try:
             test = self.openai_client.responses.parse(
                 model=self.model,

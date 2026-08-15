@@ -75,13 +75,29 @@ replies; `render_message_body` → `pokemon_doc` →
 
 | Module | Function | Job |
 |---|---|---|
-| `monitoring/tracer.py` | `TracerSetup`, `SQLiteSpanExporter`, `PostgresSpanExporter`, `TracedRAGAgent.run()`, `.run_with_feedback()`, `record_feedback()`, `get_trace_stats()` | OpenTelemetry spans for every agent run/search/LLM call; SQLite always-on, Postgres dual-write when configured; feedback attaches to the exact `span_id` |
-| `monitoring/dashboard.py` | `load_dataframe()`, `main()` | Streamlit dashboard over `monitoring/traces.db` (fresh SQLite connection per query — thread-bound) |
+| `monitoring/db_init.py` | `get_db_connection()`, `init_db()`, `init_feedback()` | psycopg connection to the capstone Postgres (env-configurable host/port/db/user/password) and idempotent schema creation |
+| `monitoring/metrics.py` | `LLMCallRecord`, `calculate_cost()` | Course-shaped per-call record (model, tokens, response time, cost, source, rejection flag, span_id) and cost from usage (qwen pricing) |
+| `monitoring/tracer.py` | `TracerSetup`, `PostgresSpanExporter`, `TracedRAGAgent.run()`, `.run_with_feedback()`, `record_feedback()`, `get_trace_stats()`, `tracing_enabled()` | OpenTelemetry spans for every agent run/search/LLM call, stored in the same Postgres DB; feedback attaches to the exact `span_id` |
+| `monitoring/db_save.py` | `save_conversation()`, `save_search()`, `save_llm_call()` | Persist one `LLMCallRecord` per assistant turn (question, answer, model, tokens, cost, response time, source, rejection flag, span_id, error) plus per-search results (JSON) and per-LLM-call usage/latency/error to Postgres |
+| `monitoring/db_feedback.py` | `save_feedback()` | Persist course-shaped user feedback (source, score, relevance, explanation) keyed by conversation id |
+| `monitoring/db_query.py` | `get_conversations()`, `get_stats()`, `get_user_feedback_stats()`, `get_feedback_for_conversations()` | Read conversations (optionally session-scoped), aggregate stats, and feedback for the UI and dashboard; never raises, safe defaults |
+| `monitoring/dashboard.py` | `load_dataframe()`, `main()` | Streamlit dashboard over the Postgres store (fresh psycopg connection per query — thread-bound) |
 
 **Call chain:** `app` wraps the agent in `TracedRAGAgent` → every `run()` emits
-spans → exporters persist → `dashboard.py` reads back via `get_traces_db_path`.
-`record_feedback(span_id, feedback)` updates the exact span row (SQLite
-`UPDATE ... WHERE span_id = ?`, Postgres equivalent).
+spans → `PostgresSpanExporter` persists to Postgres; each turn is also saved as
+a conversation via `db_save.save_conversation`, tagged with a per-browser-session
+`session_id` (a uuid kept in `st.session_state`) and an `error` field (failed
+turns are persisted as rejected rows for back-trace, not shown in chat history).
+The turn's per-search results and per-LLM-call usage are written to the
+`searches` and `llm_calls` tables via `db_save.save_search` and
+`save_llm_call`. The UI restores the current session's recent history via
+`db_query.get_conversations(session_id=...)`, and `dashboard.py` reads spans
+through `load_dataframe` and conversations through `db_query`.
+`record_feedback(span_id, feedback)` updates the exact span row (Postgres
+`UPDATE ... WHERE span_id = ?`) and the button also writes a course-shaped
+feedback row via `db_feedback.save_feedback`. All monitoring data — spans,
+conversations, searches, llm_calls, and feedback — lives in the same Postgres
+database.
 
 ## 6. Evaluation layer
 
@@ -104,9 +120,10 @@ spans → exporters persist → `dashboard.py` reads back via `get_traces_db_pat
 2. **`TracedRAGAgent`** wraps, not replaces, `RAGAgent` — monitoring is
    transparent to the RAG logic (a `RAGWithUsage`-style wrapper around
    `RAGBase`).
-3. **Feedback round-trip:** UI → `record_feedback(span_id)` → span store →
-   dashboard "feedback distribution" panel — the only user input that flows
-   back into monitoring.
+3. **Feedback round-trip:** UI → `record_feedback(span_id)` (span store, feeds
+   the dashboard "feedback distribution" panel) and `save_feedback` (course-shaped
+   feedback row, feeds the dashboard "User feedback" thumbs metrics) — the user
+   input that flows back into monitoring.
 4. **Dev subset discipline:** `ingest.py` builds the full 1,350-record dataset by default; `generate_qa.py`'s coverage-sampled dev subset (50 records → 250 questions) keeps every automated run cheap; full-data QA runs are manual (`--full`), per user directive.
 5. **Ground truth = question → document:** `generate_qa.py` writes only questions (`{"question", "document"}`); the LLM never writes answers — `llm_eval`/`agent_eval` resolve the ground-truth answer from the linked document's `search_text`, keeping the judge honest.
 6. **Guardrail contract:** `RAGAgent` returns `rejected:true` with the

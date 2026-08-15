@@ -42,7 +42,7 @@ This starts three services:
 | Service    | Container           | Port  | Description                           |
 |------------|---------------------|-------|---------------------------------------|
 | `app`      | `capstone-app`      | 8501  | Streamlit RAG interface               |
-| `postgres` | `capstone-postgres` | 5433  | PostgreSQL (persistent span storage)  |
+| `postgres` | `capstone-postgres` | 5433  | PostgreSQL (monitoring: spans, conversations, searches, llm_calls, feedback) |
 | `grafana`  | `capstone-grafana`  | 3000  | Monitoring dashboard ("Pokemon RAG Monitoring") |
 
 ### 3. Wait for pipeline
@@ -51,7 +51,7 @@ On first run, the entrypoint script:
 1. Seeds the bundled dataset CSVs into the data volume (they ship in the image — no Kaggle login needed; `ingest.py` falls back to a download only if they are missing)
 2. Builds `data/pokemon.jsonl` (full dataset: 1,350 records)
 3. Chunks documents and builds hybrid search indices (keyword + vector)
-4. Initializes the monitoring SQLite database (and Postgres schema)
+4. Initializes the Postgres monitoring schema (spans, conversations, searches, llm_calls, feedback)
 5. Launches Streamlit
 
 Watch the logs for `Pipeline complete! Starting Streamlit...`.
@@ -136,7 +136,7 @@ uv run python -m evaluation.agent_eval
 docker-compose up -d postgres grafana
 # then open http://localhost:3000
 
-# Or the Streamlit dashboard (reads the SQLite store directly)
+# Or the Streamlit dashboard (reads the Postgres store directly)
 uv run streamlit run monitoring/dashboard.py
 ```
 
@@ -191,7 +191,7 @@ Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took 
 | `POSTGRES_USER`    | `capstone`                       | PostgreSQL username                  |
 | `POSTGRES_PASSWORD`| `capstone_secret`                | PostgreSQL password                  |
 | `POSTGRES_PORT`    | `5433`                           | PostgreSQL host port                |
-| `POSTGRES_HOST`    | (unset)                          | When set, spans also export to Postgres |
+| `POSTGRES_HOST`    | `localhost`                      | Postgres host for monitoring (spans, conversations, searches, llm_calls, feedback) |
 | `APP_PORT`         | `8501`                           | Streamlit app port                  |
 
 ### Docker Compose Ports
@@ -223,7 +223,7 @@ repo bundle (fallback: Kaggle API) ──► data/raw/pokemon_complete.csv + pok
               Streamlit UI (chat + Pokémon cards + feedback)
                     │
                     ▼
-              Monitoring (OpenTelemetry → SQLite + Postgres → Grafana)
+              Monitoring (OpenTelemetry → Postgres → Grafana)
 ```
 
 ## Troubleshooting
@@ -255,4 +255,4 @@ docker-compose ps
 docker-compose logs postgres
 ```
 
-The app degrades gracefully when Postgres is down — spans fall back to SQLite and nothing crashes.
+Monitoring requires Postgres — spans, conversations, and feedback all live in the same database. For local development, run `docker-compose up postgres` (or point `POSTGRES_HOST`/`POSTGRES_PORT` at a local server); the app and dashboard degrade gracefully when Postgres is down, but no monitoring data is recorded until it is reachable.

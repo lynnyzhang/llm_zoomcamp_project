@@ -3,8 +3,6 @@ volumes:
     driver: local
   app_data:
     driver: local
-  monitoring_data:
-    driver: local
   grafana_data:
     driver: local
 
@@ -37,7 +35,6 @@ services:
       - "${APP_PORT:-8501}:8501"
     volumes:
       - app_data:/app/data
-      - monitoring_data:/app/monitoring
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-http://host.docker.internal:9101/v1}

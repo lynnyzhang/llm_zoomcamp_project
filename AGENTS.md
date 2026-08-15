@@ -46,6 +46,25 @@ for infrastructure — e.g. `db_path` for tmp-dir isolation — are the
 exception). When auditing, classify parameters into: real production use /
 course parity / test seam / dead — and remove the last category.
 
+## Code Organization
+
+- **Layers, one concern per file** — `src/` owns domain logic,
+  `monitoring/` owns persistence/tracing, `src/interface/` owns UI. No
+  mixing: no SQL in UI code, no UI layout in domain classes, no record
+  construction in the UI layer.
+- **Encapsulation** — objects own their state; callers read it, never
+  mutate it from outside. State changes go through the owning object's
+  methods (e.g. the agent's records are updated by the agent, not by the
+  app).
+- **File cap** — no implementation file exceeds 120 lines. When a file
+  grows past it, split by responsibility: one class per concern, one
+  module per layer. Do not grow the file.
+- **Records live beside their domain** — value objects (LLMCallRecord,
+  SearchRecord) sit with the classes that produce them, not in the layer
+  that persists them.
+- **Inheritance vs composition** — prefer composition; use inheritance
+  when a class is genuinely a specialization (RAGAgent is-a RAGBase).
+
 ## Code Style
 
 - **No "what" comments** — code should be self-explanatory: keep functions
@@ -60,14 +79,16 @@ course parity / test seam / dead — and remove the last category.
 - **Comments only for "why"** — add comments solely for edge cases,
   workarounds, and patches, explaining why they exist. Minimize comment
   presence.
-- **Docstrings only when mandatory** — add a docstring only where it is
-  required for understanding (e.g. a function the LLM needs to understand
-  what it does).
+- **API documentation only when mandatory** — add a doc comment only where
+  it is required for understanding (e.g. a function the LLM needs to
+  understand what it does). Use the language's native doc-comment
+  convention (docstrings in Python, JSDoc in JS/TS, doc comments in
+  Go/Rust/Swift/Kotlin, Javadoc in Java).
 - **No leading-underscore names** — never prefix variables, functions,
   methods, classes, or module-level constants with a single underscore
   (e.g. write `judge` not `_judge`, `DB_PATH` not `_DB_PATH`). This
   project does not use Python's private-marking convention; drop the
-  underscore everywhere.
+  underscore everywhere (Rust's `_unused` idiom is the exception).
 
 ## Setup
 
@@ -110,7 +131,7 @@ unchanged).
   no torch) via `src/search/embedder.py`
 - **openai** — LLM calls (Responses API)
 - **streamlit** — chat UI (`src/interface/app.py`) + monitoring dashboards
-- **opentelemetry** — tracing with SQLite/Postgres storage (`monitoring/`)
+- **opentelemetry** — tracing with Postgres storage (`monitoring/`)
 - **grafana** — dashboards on top of the Postgres span store (`monitoring/dashboards/`)
 
 ## Structure
@@ -123,7 +144,7 @@ unchanged).
 | `src/rag/` | `RAGBase.py` (RAGBase), `agent.py` (manual agentic loop: LLM tool calls, guardrails) |
 | `src/interface/app.py` | Streamlit chat UI (Pokémon cards, feedback) |
 | `evaluation/` | offline eval (pre-deployment): `generate_qa.py` (QA set), `retrieval_eval.py`, `llm_eval.py`, `agent_eval.py`; `data/` (qa.jsonl), `results/` |
-| `monitoring/` | `tracer.py` (SQLiteSpanExporter + PostgresSpanExporter), `dashboard.py` (Streamlit); runtime `traces.db`; `grafana/` + `dashboards/` configs |
+| `monitoring/` | `tracer.py` (PostgresSpanExporter), `db_init.py` (connection + schema), `metrics.py` (LLMCallRecord + cost), `db_save.py` (save_conversation, save_search, save_llm_call), `db_feedback.py` (save_feedback), `db_query.py` (stats/queries), `dashboard.py` (Streamlit); `grafana/` + `dashboards/` configs on the same Postgres |
 | `tests/` | pytest suite (`conftest.py`, `test_integration.py`) |
 | `docs/` | `setup.md`, `usage.md`, `evaluation.md`, `code_overview.md` |
 | `deployment/` | `Dockerfile`, `.dockerignore`, `entrypoint.sh` (pipeline orchestration + URL rewrite) |
@@ -133,7 +154,7 @@ unchanged).
 ## Testing
 
 ```bash
-set -a; source .env; set +a; uv run pytest -q   # 115 tests
+set -a; source .env; set +a; uv run pytest -q   # 142 tests
 ```
 
 ## Gotchas
@@ -142,6 +163,6 @@ set -a; source .env; set +a; uv run pytest -q   # 115 tests
   `MODEL_ID`; there is no default model. LLM calls fail lazily at first use.
 - **`.env` must never be committed** — it holds the LLM API key (ignored via a global gitignore rule; no repo `.gitignore` exists — add one).
 - `uv.lock` and `.python-version` are committed in this repo; `evaluation/results/` eval outputs are committed too.
-- `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/pokemon.jsonl`, `data/chunks/documents.jsonl`, ONNX embedder under `models/`); the two raw CSVs under `data/raw/` are **bundled and committed** (Kaggle anonymous downloads are bot-blocked, so the repo ships its own copy — no login needed); `evaluation/data/qa.jsonl` is an LLM-generated eval artifact; the span store lives at `monitoring/traces.db`.
+- `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/pokemon.jsonl`, `data/chunks/documents.jsonl`, ONNX embedder under `models/`); the two raw CSVs under `data/raw/` are **bundled and committed** (Kaggle anonymous downloads are bot-blocked, so the repo ships its own copy — no login needed); `evaluation/data/qa.jsonl` is an LLM-generated eval artifact; all monitoring data (spans + conversations + searches + llm_calls + feedback) lives in Postgres (`docker-compose up postgres`, or a local server on localhost:5432 with the capstone defaults; set `POSTGRES_HOST` etc. to override).
 - Keep the project self-contained: no imports from external reference
   material (docstring attributions are comments only, never dependencies).

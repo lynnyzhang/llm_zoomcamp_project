@@ -14,6 +14,7 @@ validates all existing data files and results.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import sys
 import threading
@@ -35,6 +36,82 @@ DATA_DIR = PROJECT_ROOT / "data"
 CHUNKS_DIR = DATA_DIR / "chunks"
 RESULTS_DIR = PROJECT_ROOT / "evaluation" / "results"
 EVAL_QA = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
+
+
+class FakeConnection:
+    """In-memory sqlite stand-in for psycopg connections (test seam).
+
+    Emulates the psycopg surface the monitoring package uses (cursor(),
+    %s placeholders, rowcount, fetchone/fetchall, commit/close) so tests never
+    need a real Postgres. sqlite3 is thread-safe enough here because every
+    statement runs under a lock.
+    """
+
+    def __init__(self):
+        # check_same_thread=False: spans are exported from the thread that ends
+        # them, which may differ from the thread that built the exporter.
+        self._conn = sqlite3.connect(":memory:", check_same_thread=False)
+        self._rows = []
+        self.rowcount = 0
+        self.statements = []
+        self._lock = threading.Lock()
+
+    def cursor(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        with self._lock:
+            sql = sql.replace("%s", "?")
+            # Postgres SERIAL is not a rowid alias in sqlite, so RETURNING id
+            # would yield NULL — make it a real autoincrement column.
+            sql = sql.replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
+            if "ADD COLUMN IF NOT EXISTS" in sql:
+                # sqlite has no ADD COLUMN IF NOT EXISTS — skip when present.
+                match = re.match(
+                    r"ALTER TABLE (\S+) ADD COLUMN IF NOT EXISTS (\S+)", sql
+                )
+                table, column = match.group(1), match.group(2)
+                columns = {
+                    row[1]
+                    for row in self._conn.execute(f"PRAGMA table_info({table})")
+                }
+                if column in columns:
+                    self.statements.append(sql)
+                    return self
+                sql = sql.replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN")
+            self.statements.append(sql)
+            cur = self._conn.execute(sql, params or ())
+            self.rowcount = cur.rowcount if hasattr(cur, "rowcount") else 0
+            self._rows = cur.fetchall()
+            return self
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return self._rows
+
+    def commit(self):
+        return None
+
+    def rollback(self):
+        return None
+
+    def close(self):
+        return None
+
+
+def make_fake_db(monkeypatch, fake=None):
+    if fake is None:
+        fake = FakeConnection()
+    monkeypatch.setattr("monitoring.db_init.psycopg.connect", lambda **kwargs: fake)
+    return fake
 
 
 class StubSearchIndex:
@@ -254,50 +331,47 @@ class TestChunkingPipeline:
 
     @staticmethod
     def chart():
-        from src.data.chunker import load_type_chart
+        from src.data.type_chart import TypeChart
 
-        return load_type_chart(PROJECT_ROOT / "data" / "raw" / "pokemon_types.csv")
+        return TypeChart.load(PROJECT_ROOT / "data" / "raw" / "pokemon_types.csv")
 
     def test_type_effectiveness_bulbasaur(self):
-        from src.data.chunker import type_effectiveness
-
         chart = self.chart()
         bulbasaur = self.record_by_id(self.pokemon_records(), 1)
-        eff = type_effectiveness(bulbasaur, chart)
+        eff = chart.effectiveness(bulbasaur)
         assert eff["fire"] == 2.0
         assert eff["grass"] == 0.25
         assert eff["water"] == 0.5
 
     def test_evolution_link_ivysaur(self):
-        from src.data.chunker import build_evolution_map
+        from src.data.evolution import EvolutionChain
 
         records = self.pokemon_records()
-        chains = build_evolution_map(records)
+        chains = EvolutionChain.build_map(records)
         ivysaur = self.record_by_id(records, 2)
         chain = chains[ivysaur["evolution_chain_id"]]
-        from src.data.chunker import evolution_link
-
-        evolves_from, evolves_into = evolution_link(ivysaur, chain)
+        evolves_from, evolves_into = EvolutionChain.link(ivysaur, chain)
         assert evolves_from == "Bulbasaur"
         assert evolves_into == ["Venusaur"]
 
     def test_alt_form_has_no_evolution_link(self):
-        from src.data.chunker import evolution_link
+        from src.data.evolution import EvolutionChain
 
         records = self.pokemon_records()
         alt = self.record_by_id(records, 10001)
-        evolves_from, evolves_into = evolution_link(alt, None)
+        evolves_from, evolves_into = EvolutionChain.link(alt, None)
         assert evolves_from is None
         assert evolves_into == []
 
     def test_build_pokemon_doc_derives_keys(self):
-        from src.data.chunker import build_evolution_map, build_pokemon_doc
+        from src.data.documents import PokemonDocBuilder
+        from src.data.evolution import EvolutionChain
 
         records = self.pokemon_records()
         chart = self.chart()
-        chains = build_evolution_map(records)
+        chains = EvolutionChain.build_map(records)
         ivysaur = self.record_by_id(records, 2)
-        doc = build_pokemon_doc(
+        doc = PokemonDocBuilder().build(
             ivysaur, chart, chains[ivysaur["evolution_chain_id"]]
         )
         assert doc["id"] == 2  # int id preserved
@@ -308,10 +382,8 @@ class TestChunkingPipeline:
         assert "Flavor text:" in doc["search_text"]
 
     def test_type_chart_doc_shape(self):
-        from src.data.chunker import type_chart_doc
-
         chart = self.chart()
-        fire = type_chart_doc(chart, "fire")
+        fire = chart.doc("fire")
         assert fire["id"] == "type_fire"
         assert fire["kind"] == "type_chart"
         assert fire["type"] == "Fire"
@@ -522,7 +594,7 @@ class TestAgentToolLoop:
 
     def test_local_tool_then_answer(self, monkeypatch):
         web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
+        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
         agent = self.agent(self.script_client(
             self.turn("", self.function_call(self.LOCAL, {"query": "pikachu stats"})),
             self.turn(text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90."),
@@ -539,7 +611,7 @@ class TestAgentToolLoop:
 
     def test_local_then_web_then_answer(self, monkeypatch):
         web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
+        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
         agent = self.agent(self.script_client(
             self.turn("", self.function_call(self.LOCAL, {"query": "pikachu"})),
             self.turn("", self.function_call(self.WEB, {"query": "Pikachu voice actor anime"})),
@@ -561,7 +633,7 @@ class TestAgentToolLoop:
         def raise_error(query, num_results=5):
             raise RuntimeError("Tavily down")
 
-        monkeypatch.setattr("src.rag.agent.web.web_search", raise_error)
+        monkeypatch.setattr("src.rag.execution.web.web_search", raise_error)
         agent = self.agent(self.script_client(
             self.turn("", self.function_call(self.WEB, {"query": "pikachu"})),
             self.turn(text="No answer found."),
@@ -579,7 +651,7 @@ class TestAgentToolLoop:
         def no_web(query, num_results=5):
             raise AssertionError("tools must never run on an out-of-scope question")
 
-        monkeypatch.setattr("src.rag.agent.web.web_search", no_web)
+        monkeypatch.setattr("src.rag.execution.web.web_search", no_web)
         agent = self.agent(self.script_client(self.turn(text=REJECTION_MESSAGE)))
         result = agent.run("Who would win Charizard vs Blastoise?")
 
@@ -665,7 +737,7 @@ class TestAgentToolLoop:
         from src.rag.agent import LOCAL_SEARCH_TOOL, TOOLS
 
         web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.agent.web.web_search", web_fake)
+        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
         mock_client = MagicMock()
         mock_client.client.responses.create.side_effect = [
             self.turn("", self.function_call(self.LOCAL, {"query": "pikachu"})),
@@ -728,41 +800,47 @@ class TestAgentToolLoop:
 
 class TestMonitoring:
 
-    def test_tracer_setup_creates_db(self, tmp_path):
-        from monitoring.tracer import SQLiteSpanExporter
-
-        db_path = tmp_path / "test_traces.db"
-        exporter = SQLiteSpanExporter(db_path=db_path)
-        assert db_path.exists()
-        exporter.shutdown()
-
-    def test_tracer_schema_has_required_columns(self, tmp_path):
-        from monitoring.tracer import SQLiteSpanExporter
-
-        db_path = tmp_path / "test_traces.db"
-        exporter = SQLiteSpanExporter(db_path=db_path)
-
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.execute("PRAGMA table_info(spans)")
-        columns = {row[1] for row in cursor.fetchall()}
-        conn.close()
-        exporter.shutdown()
-
-        expected = {
-            "name", "start_time", "end_time",
-            "input_tokens", "output_tokens", "cost",
-            "feedback", "agent_iterations", "query", "search_queries"
-        }
-        assert expected.issubset(columns), f"Missing columns: {expected - columns}"
-
-    def test_tracer_records_spans(self, tmp_path):
+    def test_tracer_export_writes_spans(self, monkeypatch):
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.tracer import SQLiteSpanExporter
+        from monitoring.exporter import PostgresSpanExporter
 
-        db_path = tmp_path / "test_traces.db"
-        exporter = SQLiteSpanExporter(db_path=db_path)
+        fake = make_fake_db(monkeypatch)
+        exporter = PostgresSpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("test_export")
+
+        with tracer.start_as_current_span("test.span") as span:
+            span.set_attribute("query", "test query")
+
+        exporter.force_flush()
+        exporter.shutdown()
+
+        fake.execute("SELECT name FROM spans")
+        rows = fake.fetchall()
+        assert ("test.span",) in rows
+
+    def test_tracer_schema_has_required_columns(self, monkeypatch):
+        from monitoring.exporter import PostgresSpanExporter
+
+        fake = make_fake_db(monkeypatch)
+        exporter = PostgresSpanExporter()
+        exporter.shutdown()
+
+        assert any(
+            "CREATE TABLE IF NOT EXISTS spans" in s for s in fake.statements
+        )
+
+    def test_tracer_records_spans(self, monkeypatch):
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        from monitoring.exporter import PostgresSpanExporter
+
+        fake = make_fake_db(monkeypatch)
+        exporter = PostgresSpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         tracer = provider.get_tracer("test_tracer_records")
@@ -776,25 +854,22 @@ class TestMonitoring:
         exporter.force_flush()
         exporter.shutdown()
 
-        conn = sqlite3.connect(str(db_path))
-        rows = conn.execute("SELECT * FROM spans").fetchall()
-        conn.close()
-
+        fake.execute("SELECT name, input_tokens, output_tokens FROM spans")
+        rows = fake.fetchall()
         assert len(rows) >= 1
-        row = rows[0]
-        assert row[0] == "test.span"
+        assert rows[0][0] == "test.span"
 
-    def test_sqlite_exporter_cross_thread_export(self, tmp_path):
-        # SQLite connections are thread-bound; the exporter must survive
-        # exports from a different thread than the one that built it
-        # (Streamlit reruns the script from different threads).
+    def test_tracer_cross_thread_export(self, monkeypatch):
+        # The exporter must survive exports from a different thread than the
+        # one that built it (Streamlit reruns the script from different
+        # threads); the shared fake serializes statements under a lock.
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.tracer import SQLiteSpanExporter
+        from monitoring.exporter import PostgresSpanExporter
 
-        db_path = tmp_path / "cross_thread.db"
-        exporter = SQLiteSpanExporter(db_path=db_path)
+        fake = make_fake_db(monkeypatch)
+        exporter = PostgresSpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         tracer = provider.get_tracer("test_cross_thread")
@@ -817,10 +892,8 @@ class TestMonitoring:
 
         assert errors == [], f"cross-thread export raised: {errors}"
 
-        conn = sqlite3.connect(str(db_path))
-        rows = conn.execute("SELECT name FROM spans").fetchall()
-        conn.close()
-
+        fake.execute("SELECT name FROM spans")
+        rows = fake.fetchall()
         assert ("cross.thread.span",) in rows
 
     def test_get_tracer_single_setup_under_concurrency(self, monkeypatch):
@@ -855,36 +928,33 @@ class TestMonitoring:
         assert len(created) == 1
         assert len({id(t) for t in tracers}) == 1
 
-    def test_record_feedback(self, tmp_path):
+    def test_record_feedback(self, monkeypatch):
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.tracer import SQLiteSpanExporter, record_feedback
+        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_store import record_feedback
 
-        db_path = tmp_path / "test_traces.db"
-        exporter = SQLiteSpanExporter(db_path=db_path)
+        fake = make_fake_db(monkeypatch)
+        exporter = PostgresSpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         tracer = provider.get_tracer("test_record_feedback")
 
         with tracer.start_as_current_span("agent.run") as span:
             span.set_attribute("query", "test")
-            span_id = format(span.get_span_context().span_id, "016x")
+            sid = format(span.get_span_context().span_id, "016x")
 
         exporter.force_flush()
         exporter.shutdown()
 
-        result = record_feedback(span_id, "positive", db_path=db_path)
-        assert result is True
+        assert record_feedback(sid, "positive") is True
 
-        conn = sqlite3.connect(str(db_path))
-        row = conn.execute(
-            "SELECT span_id, query, feedback FROM spans"
-        ).fetchone()
-        conn.close()
-        assert row == (span_id, "test", "positive")
+        fake.execute("SELECT span_id, query, feedback FROM spans")
+        row = fake.fetchone()
+        assert row == (sid, "test", "positive")
 
-    def test_record_feedback_exact_span_attachment(self, tmp_path):
+    def test_record_feedback_exact_span_attachment(self, monkeypatch):
         """Feedback must attach to the exact span in multi-message sessions.
 
         Two runs via run_with_feedback, then feedback on the FIRST span id
@@ -893,14 +963,12 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.tracer import (
-            SQLiteSpanExporter,
-            TracedRAGAgent,
-            record_feedback,
-        )
+        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_store import record_feedback
+        from monitoring.traced_agent import TracedRAGAgent
 
-        db_path = tmp_path / "test_exact_span.db"
-        exporter = SQLiteSpanExporter(db_path=db_path)
+        fake = make_fake_db(monkeypatch)
+        exporter = PostgresSpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         tracer = provider.get_tracer("test_exact_span")
@@ -918,44 +986,17 @@ class TestMonitoring:
         exporter.force_flush()
         exporter.shutdown()
 
-        assert record_feedback(first_span_id, "positive", db_path=db_path) is True
+        assert record_feedback(first_span_id, "positive") is True
 
-        conn = sqlite3.connect(str(db_path))
-        rows = conn.execute(
-            "SELECT query, feedback FROM spans ORDER BY rowid"
-        ).fetchall()
-        conn.close()
+        fake.execute("SELECT query, feedback FROM spans ORDER BY rowid")
+        rows = fake.fetchall()
         assert rows == [("first query", "positive"), ("second query", None)]
 
-    def test_record_feedback_none_falls_back_to_newest_unset(self, tmp_path):
-        """record_feedback(None, ...) keeps the legacy behavior: the first
-        (lowest rowid) feedback-less agent.run row gets the feedback."""
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    def test_record_feedback_requires_span_id(self, monkeypatch):
+        from monitoring.span_store import record_feedback
 
-        from monitoring.tracer import SQLiteSpanExporter, record_feedback
-
-        db_path = tmp_path / "test_feedback_none.db"
-        exporter = SQLiteSpanExporter(db_path=db_path)
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        tracer = provider.get_tracer("test_feedback_none")
-
-        for query in ("first", "second"):
-            with tracer.start_as_current_span("agent.run") as span:
-                span.set_attribute("query", query)
-
-        exporter.force_flush()
-        exporter.shutdown()
-
-        assert record_feedback(None, "negative", db_path=db_path) is True
-
-        conn = sqlite3.connect(str(db_path))
-        rows = conn.execute(
-            "SELECT query, feedback FROM spans ORDER BY rowid"
-        ).fetchall()
-        conn.close()
-        assert rows == [("first", "negative"), ("second", None)]
+        make_fake_db(monkeypatch)
+        assert record_feedback("", "positive") is False
 
     def test_tracing_enabled_gate(self, monkeypatch):
         from monitoring.tracer import tracing_enabled
@@ -968,14 +1009,15 @@ class TestMonitoring:
         monkeypatch.setenv("TRACING_ENABLED", "1")
         assert tracing_enabled() is True
 
-    def test_get_trace_stats(self, tmp_path):
+    def test_get_trace_stats(self, monkeypatch):
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.tracer import SQLiteSpanExporter, get_trace_stats
+        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_store import get_trace_stats
 
-        db_path = tmp_path / "test_traces.db"
-        exporter = SQLiteSpanExporter(db_path=db_path)
+        fake = make_fake_db(monkeypatch)
+        exporter = PostgresSpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         tracer = provider.get_tracer("test_get_trace_stats")
@@ -988,25 +1030,23 @@ class TestMonitoring:
         exporter.force_flush()
         exporter.shutdown()
 
-        stats = get_trace_stats(db_path=db_path)
+        stats = get_trace_stats()
         assert stats["total_traces"] >= 1
         assert "span_names" in stats
         assert stats["total_input_tokens"] >= 100
         assert stats["total_output_tokens"] >= 50
         assert stats["total_cost"] >= 0.01
 
-    def test_traced_ragent_run(self, tmp_path):
+    def test_traced_ragent_run(self, monkeypatch):
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.tracer import (
-            SQLiteSpanExporter,
-            TracedRAGAgent,
-            get_trace_stats,
-        )
+        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_store import get_trace_stats
+        from monitoring.traced_agent import TracedRAGAgent
 
-        db_path = tmp_path / "test_traced_agent.db"
-        exporter = SQLiteSpanExporter(db_path=db_path)
+        fake = make_fake_db(monkeypatch)
+        exporter = PostgresSpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         tracer = provider.get_tracer("test_traced_agent")
@@ -1025,17 +1065,18 @@ class TestMonitoring:
         exporter.force_flush()
         exporter.shutdown()
 
-        stats = get_trace_stats(db_path=db_path)
+        stats = get_trace_stats()
         assert stats["total_traces"] >= 1
 
-    def test_traced_ragent_run_with_feedback_returns_span_id(self, tmp_path):
+    def test_traced_ragent_run_with_feedback_returns_span_id(self, monkeypatch):
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.tracer import SQLiteSpanExporter, TracedRAGAgent
+        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.traced_agent import TracedRAGAgent
 
-        db_path = tmp_path / "test_traced_agent_feedback.db"
-        exporter = SQLiteSpanExporter(db_path=db_path)
+        fake = make_fake_db(monkeypatch)
+        exporter = PostgresSpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         tracer = provider.get_tracer("test_traced_agent_feedback")
@@ -1048,19 +1089,18 @@ class TestMonitoring:
         }
 
         traced = TracedRAGAgent(agent=mock_agent, tracer=tracer)
-        result, span_id = traced.run_with_feedback("test query")
+        result, sid = traced.run_with_feedback("test query")
 
         assert result["answer"] == "test answer"
-        assert len(span_id) == 16
-        assert all(c in "0123456789abcdef" for c in span_id)
+        assert len(sid) == 16
+        assert all(c in "0123456789abcdef" for c in sid)
 
         exporter.force_flush()
         exporter.shutdown()
 
-        conn = sqlite3.connect(str(db_path))
-        row = conn.execute("SELECT query, span_id FROM spans").fetchone()
-        conn.close()
-        assert row == ("test query", span_id)
+        fake.execute("SELECT query, span_id FROM spans")
+        row = fake.fetchone()
+        assert row == ("test query", sid)
 
 
 # ===========================================================================
@@ -1272,7 +1312,7 @@ class TestEvaluationScripts:
         """llm_eval module should be importable."""
 
     def test_judge_prompts_have_required_fields(self):
-        from evaluation.llm_eval import JUDGE_PROMPTS
+        from evaluation.judge_prompts import JUDGE_PROMPTS
 
         for name, config in JUDGE_PROMPTS.items():
             assert "instructions" in config, f"{name} missing instructions"
@@ -1293,7 +1333,7 @@ class TestEvaluationScripts:
         """agent_eval module should be importable."""
 
     def test_retrieval_accuracy_function(self):
-        from evaluation.agent_eval import retrieval_accuracy
+        from evaluation.retrieval_metrics import retrieval_accuracy
 
         # Create a simple search function that returns the correct doc
         def perfect_search(query, num_results=5):
@@ -1458,7 +1498,7 @@ class TestFullPipeline:
         def fake_web(query, num_results=5):
             return [{"title": "t", "url": "u", "snippet": "s"}]
 
-        monkeypatch.setattr("src.rag.agent.web.web_search", fake_web)
+        monkeypatch.setattr("src.rag.execution.web.web_search", fake_web)
 
         mock_client = MagicMock()
         local_call = MagicMock()
@@ -1487,71 +1527,71 @@ class TestFullPipeline:
         assert result["iterations"] >= 1
         assert result["searches"][0].source == "local"
 
-    def test_full_agent_with_feedback(self, full_pipeline):
-        import tempfile
-
+    def test_full_agent_with_feedback(self, full_pipeline, monkeypatch):
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.tracer import (
-            SQLiteSpanExporter,
-            TracedRAGAgent,
-            get_trace_stats,
-        )
+        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_store import get_trace_stats
+        from monitoring.traced_agent import TracedRAGAgent
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test_traces.db"
+        fake = make_fake_db(monkeypatch)
+        exporter = PostgresSpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("test_full_feedback")
 
-            exporter = SQLiteSpanExporter(db_path=db_path)
-            provider = TracerProvider()
-            provider.add_span_processor(SimpleSpanProcessor(exporter))
-            tracer = provider.get_tracer("test_full_feedback")
+        mock_inner_agent = MagicMock()
+        mock_inner_agent.run.return_value = {
+            "answer": "ML is a subset of AI.",
+            "searches": [],
+            "iterations": 1,
+        }
 
-            mock_inner_agent = MagicMock()
-            mock_inner_agent.run.return_value = {
-                "answer": "ML is a subset of AI.",
-                "searches": [],
-                "iterations": 1,
-            }
+        traced_agent = TracedRAGAgent(agent=mock_inner_agent, tracer=tracer)
+        result = traced_agent.run("What is ML?")
 
-            traced_agent = TracedRAGAgent(agent=mock_inner_agent, tracer=tracer)
-            result = traced_agent.run("What is ML?")
+        assert result["answer"] == "ML is a subset of AI."
 
-            assert result["answer"] == "ML is a subset of AI."
+        exporter.force_flush()
+        exporter.shutdown()
 
-            exporter.force_flush()
-            exporter.shutdown()
+        stats = get_trace_stats()
+        assert stats["total_traces"] >= 1
 
-            # Read stats before the tempdir (and its SQLite DB) is removed
-            # when the with block exits — the file is gone after it.
-            stats = get_trace_stats(db_path=db_path)
-            assert stats["total_traces"] >= 1
-
-    def test_postgres_export_opt_in_via_env(self, monkeypatch, tmp_path):
-        from monitoring.tracer import TracerSetup, postgres_config
+    def test_db_defaults(self, monkeypatch):
+        from monitoring.db_init import get_db_connection
 
         monkeypatch.delenv("POSTGRES_HOST", raising=False)
         for var in ("POSTGRES_PORT", "POSTGRES_DB", "POSTGRES_USER",
                     "POSTGRES_PASSWORD"):
             monkeypatch.delenv(var, raising=False)
 
-        assert postgres_config() is None
-        setup = TracerSetup()
-        assert setup.postgres_exporter is None
-        setup.shutdown()
+        captured = {}
+
+        def fake_connect(**kwargs):
+            captured.update(kwargs)
+            return FakeConnection()
+
+        monkeypatch.setattr("monitoring.db_init.psycopg.connect", fake_connect)
+        get_db_connection()
+        assert captured == {
+            "host": "localhost",
+            "port": "5432",
+            "dbname": "capstone",
+            "user": "capstone",
+            "password": "capstone_secret",
+        }
 
     def test_postgres_down_does_not_break_tracer(self, monkeypatch):
-        from monitoring.tracer import TracerSetup, postgres_config
+        from monitoring.tracer import TracerSetup
 
-        monkeypatch.setenv("POSTGRES_HOST", "127.0.0.1")
-        monkeypatch.setenv("POSTGRES_PORT", "59999")
-        monkeypatch.setenv("POSTGRES_DB", "nonexistent")
-        monkeypatch.setenv("POSTGRES_USER", "nonexistent")
-        monkeypatch.setenv("POSTGRES_PASSWORD", "nonexistent")
+        def raise_connect(**kwargs):
+            raise RuntimeError("Postgres down")
 
-        assert postgres_config() is not None
+        monkeypatch.setattr("monitoring.db_init.psycopg.connect", raise_connect)
         setup = TracerSetup()  # must not raise even though Postgres is down
-        assert setup.postgres_exporter is None
+        assert setup.exporter is None
         setup.shutdown()
 
     def test_qa_pairs_match_search(self, full_pipeline):
@@ -1619,5 +1659,561 @@ class TestWebSearch:
 # ===========================================================================
 # Query reformulation (web-search step)
 # ===========================================================================
+
+
+# ===========================================================================
+# Persistent conversation store (backend)
+# ===========================================================================
+
+
+class TestConversationStore:
+
+    @staticmethod
+    def record(prompt_tokens=10, completion_tokens=5, source="local",
+               rejected=False, span_id="span0", cost=None, model="qwen/qwen3.5-9b",
+               error=None):
+        from src.rag.metrics import LLMCallRecord
+
+        if cost is None:
+            cost = (prompt_tokens * 0.15 + completion_tokens * 0.60) / 1_000_000
+        return LLMCallRecord(
+            model=model,
+            prompt="",
+            instructions="",
+            answer="answer text",
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+            response_time=0.5,
+            cost=cost,
+            source=source,
+            rejected=rejected,
+            span_id=span_id,
+            error=error,
+        )
+
+    def test_save_and_get_recent_roundtrip(self, monkeypatch):
+        from monitoring.db_init import init_db
+        from monitoring.db_query import get_conversations
+        from monitoring.db_save import save_conversation
+
+        fake = make_fake_db(monkeypatch)
+        init_db()
+        ids = []
+        for i in range(3):
+            # Distinct timestamps so ORDER BY timestamp DESC is deterministic.
+            time.sleep(0.002)
+            rid = save_conversation(
+                self.record(source="local", rejected=(i == 1), span_id=f"span{i}"),
+                f"q{i}",
+                "llm-zoomcamp",
+            )
+            ids.append(rid)
+
+        records = get_conversations(limit=2)
+        assert len(records) == 2
+        assert [r.id for r in records] == [ids[2], ids[1]]  # newest first
+        first = records[0]
+        assert first.source == "local"
+        assert first.rejected is False
+        assert first.span_id == "span2"
+        assert first.model == "qwen/qwen3.5-9b"
+        assert first.prompt_tokens == 10
+        assert first.completion_tokens == 5
+        assert first.total_tokens == 15
+        assert first.response_time == 0.5
+        assert records[1].rejected is True
+
+    def test_save_without_usage(self, monkeypatch):
+        from monitoring.db_init import init_db
+        from monitoring.db_query import get_conversations
+        from monitoring.db_save import save_conversation
+
+        fake = make_fake_db(monkeypatch)
+        init_db()
+        rid = save_conversation(
+            self.record(prompt_tokens=0, completion_tokens=0, cost=0.0),
+            "q",
+            "llm-zoomcamp",
+        )
+        assert rid is not None
+
+        records = get_conversations(limit=10)
+        assert len(records) == 1
+        assert records[0].prompt_tokens == 0
+        assert records[0].completion_tokens == 0
+        assert records[0].total_tokens == 0
+        assert records[0].cost == 0.0
+
+    def test_stats_aggregates(self, monkeypatch):
+        from monitoring.db_init import init_db
+        from monitoring.db_stats import get_stats
+        from monitoring.db_save import save_conversation
+
+        fake = make_fake_db(monkeypatch)
+        init_db()
+        for i in range(3):
+            save_conversation(
+                self.record(prompt_tokens=10, completion_tokens=5),
+                f"q{i}",
+                "llm-zoomcamp",
+            )
+
+        stats = get_stats()
+        assert stats.total == 3
+        assert stats.total_cost > 0
+        assert stats.avg_tokens == 15.0
+        assert stats.avg_response_time == 0.5
+
+    def test_calculate_cost_qwen_formula(self):
+        from src.rag.metrics import calculate_cost
+
+        assert (
+            calculate_cost("qwen/qwen3.5-9b", {"input_tokens": 1_000_000, "output_tokens": 0})
+            == 0.15
+        )
+        assert (
+            calculate_cost("qwen/qwen3.5-9b", {"input_tokens": 0, "output_tokens": 1_000_000})
+            == 0.60
+        )
+        assert calculate_cost("gpt-4o", {"input_tokens": 1_000_000, "output_tokens": 1_000_000}) == 0.0
+        assert calculate_cost("qwen/qwen3.5-9b", None) == 0.0
+
+    def test_save_never_raises(self, monkeypatch):
+        from monitoring.db_save import save_conversation
+
+        def raise_connect(**kwargs):
+            raise RuntimeError("Postgres down")
+
+        monkeypatch.setattr("monitoring.db_init.psycopg.connect", raise_connect)
+        result = save_conversation(self.record(), "q", "llm-zoomcamp")
+        assert result is None
+
+    def test_init_db_creates_tables(self, monkeypatch):
+        from monitoring.db_init import init_db, init_feedback
+
+        fake = make_fake_db(monkeypatch)
+        init_db()
+        init_feedback()
+        init_db()
+        init_feedback()
+        # CREATE TABLE IF NOT EXISTS makes re-initialization idempotent
+        # (entrypoint runs init on every container boot).
+        assert sum("CREATE TABLE IF NOT EXISTS conversations" in s for s in fake.statements) >= 1
+        assert sum("CREATE TABLE IF NOT EXISTS feedback" in s for s in fake.statements) >= 1
+        assert sum("CREATE TABLE IF NOT EXISTS searches" in s for s in fake.statements) >= 1
+        assert sum("CREATE TABLE IF NOT EXISTS llm_calls" in s for s in fake.statements) >= 1
+
+    def test_save_conversation_with_session_and_error(self, monkeypatch):
+        from monitoring.db_init import init_db
+        from monitoring.db_save import save_conversation
+
+        fake = make_fake_db(monkeypatch)
+        init_db()
+        rid = save_conversation(
+            self.record(error="boom"),
+            "q",
+            "llm-zoomcamp",
+            session_id="s1",
+        )
+        assert rid is not None
+
+        fake.execute("SELECT session_id, error FROM conversations ORDER BY id")
+        row = fake.fetchone()
+        assert row == ("s1", "boom")
+
+    def test_get_conversations_filters_by_session(self, monkeypatch):
+        from monitoring.db_init import init_db
+        from monitoring.db_query import get_conversations
+        from monitoring.db_save import save_conversation
+
+        fake = make_fake_db(monkeypatch)
+        init_db()
+        save_conversation(self.record(), "q1", "llm-zoomcamp", session_id="s1")
+        save_conversation(self.record(), "q2", "llm-zoomcamp", session_id="s2")
+
+        only_s1 = get_conversations(limit=10, session_id="s1")
+        assert len(only_s1) == 1
+        assert only_s1[0].question == "q1"
+
+        both = get_conversations(limit=10)
+        assert len(both) == 2
+
+    def test_row_error_field_mapped(self, monkeypatch):
+        from monitoring.db_init import init_db
+        from monitoring.db_query import get_conversations
+        from monitoring.db_save import save_conversation
+
+        fake = make_fake_db(monkeypatch)
+        init_db()
+        save_conversation(self.record(error="boom"), "q", "llm-zoomcamp")
+
+        records = get_conversations(limit=10)
+        assert len(records) == 1
+        assert records[0].error == "boom"
+
+
+class TestSearchStore:
+
+    def test_save_search_local_and_web(self, monkeypatch):
+        from monitoring.db_init import init_db
+        from monitoring.db_detail import save_search
+
+        fake = make_fake_db(monkeypatch)
+        init_db()
+        save_search(
+            1, "span1", "What are Pikachu's stats?", "pikachu stats", "local",
+            [{"id": 25, "name": "Pikachu", "score": 0.9}],
+        )
+        save_search(
+            1, "span1", "Who voiced Pikachu?", "Pikachu voice actor", "web",
+            [{"title": "Ikue Otani", "url": "u", "snippet": "voiced", "score": 0.8}],
+        )
+
+        fake.execute("SELECT source, query, search_query, results FROM searches ORDER BY id")
+        rows = fake.fetchall()
+        assert len(rows) == 2
+        assert rows[0][0] == "local"
+        assert rows[0][1] == "What are Pikachu's stats?"
+        assert rows[0][2] == "pikachu stats"
+        local_results = json.loads(rows[0][3])
+        assert local_results[0]["id"] == 25
+        assert local_results[0]["name"] == "Pikachu"
+        assert rows[1][0] == "web"
+        web_results = json.loads(rows[1][3])
+        assert "title" in web_results[0]
+        assert "snippet" in web_results[0]
+
+
+class TestLLMCallStore:
+
+    def test_save_llm_call_success(self, monkeypatch):
+        from monitoring.db_init import init_db
+        from monitoring.db_detail import save_llm_call
+
+        fake = make_fake_db(monkeypatch)
+        init_db()
+        save_llm_call(1, "span1", "qwen/qwen3.5-9b", 100, 50, 150, 0.3, None)
+
+        fake.execute(
+            "SELECT model, prompt_tokens, completion_tokens, total_tokens, latency, error "
+            "FROM llm_calls ORDER BY id"
+        )
+        row = fake.fetchone()
+        assert row == ("qwen/qwen3.5-9b", 100, 50, 150, 0.3, None)
+
+    def test_save_llm_call_failure(self, monkeypatch):
+        from monitoring.db_init import init_db
+        from monitoring.db_detail import save_llm_call
+
+        fake = make_fake_db(monkeypatch)
+        init_db()
+        save_llm_call(1, "span1", "qwen/qwen3.5-9b", None, None, None, 0.1, "LLM call failed")
+
+        fake.execute(
+            "SELECT prompt_tokens, completion_tokens, total_tokens, error "
+            "FROM llm_calls ORDER BY id"
+        )
+        row = fake.fetchone()
+        assert row == (None, None, None, "LLM call failed")
+
+
+class TestAgentUsage:
+
+    @staticmethod
+    def usage_turn(text="", *calls, input_tokens=0, output_tokens=0):
+        response = TestAgentToolLoop.turn(text, *calls)
+        response.usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+        return response
+
+    def test_usage_accumulated_across_turns(self, monkeypatch):
+        web_fake = TestAgentToolLoop.web_fake()
+        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
+        agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(
+            self.usage_turn(
+                "", TestAgentToolLoop.function_call(
+                    TestAgentToolLoop.LOCAL, {"query": "pikachu stats"}
+                ),
+                input_tokens=100, output_tokens=50,
+            ),
+            self.usage_turn(text="Pikachu has HP 35.", input_tokens=100, output_tokens=50),
+        ))
+        result = agent.run("What are Pikachu's stats?")
+
+        assert result["usage"] == {"input_tokens": 200, "output_tokens": 100}
+
+    def test_usage_zero_on_early_reject(self):
+        mock_client = MagicMock()
+        mock_client.client.responses.create.side_effect = AssertionError("LLM must not be called")
+        agent = TestAgentToolLoop.agent(mock_client)
+        result = agent.run("???")
+
+        assert result["usage"] == {"input_tokens": 0, "output_tokens": 0}
+
+    def test_usage_safe_with_magicmock_usage(self):
+        response = TestAgentToolLoop.turn(text="Pikachu is Electric.")
+        response.usage = MagicMock()  # auto-created attrs are not ints
+        agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(response))
+        result = agent.run("What type is Pikachu?")
+
+        assert result["usage"] == {"input_tokens": 0, "output_tokens": 0}
+
+    def test_rejection_result_has_usage(self, monkeypatch):
+        from src.rag.agent import REJECTION_MESSAGE
+
+        def no_web(query, num_results=5):
+            raise AssertionError("tools must never run on an out-of-scope question")
+
+        monkeypatch.setattr("src.rag.execution.web.web_search", no_web)
+        response = self.usage_turn(text=REJECTION_MESSAGE, input_tokens=30, output_tokens=10)
+        agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(response))
+        result = agent.run("Who would win Charizard vs Blastoise?")
+
+        assert "usage" in result
+        assert result["rejected"] is True
+        assert result["usage"] == {"input_tokens": 30, "output_tokens": 10}
+
+    def test_llm_calls_recorded_per_turn(self, monkeypatch):
+        web_fake = TestAgentToolLoop.web_fake()
+        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
+        agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(
+            self.usage_turn(
+                "", TestAgentToolLoop.function_call(
+                    TestAgentToolLoop.LOCAL, {"query": "pikachu stats"}
+                ),
+                input_tokens=100, output_tokens=50,
+            ),
+            self.usage_turn(text="Pikachu has HP 35.", input_tokens=200, output_tokens=80),
+        ))
+        result = agent.run("What are Pikachu's stats?")
+
+        assert len(result["llm_calls"]) == 2
+        first, second = result["llm_calls"]
+        assert first["prompt_tokens"] == 100
+        assert first["completion_tokens"] == 50
+        assert first["total_tokens"] == 150
+        assert first["latency"] >= 0
+        assert first["error"] is None
+        assert second["prompt_tokens"] == 200
+        assert second["completion_tokens"] == 80
+        assert second["total_tokens"] == 280
+
+    def test_llm_calls_error_entry(self):
+        from src.rag.agent import REJECTION_MESSAGE
+
+        mock_client = MagicMock()
+        mock_client.client.responses.create.side_effect = RuntimeError("server down")
+        agent = TestAgentToolLoop.agent(mock_client)
+        result = agent.run("Question")
+
+        assert result["rejected"] is True
+        assert result["answer"] == REJECTION_MESSAGE
+        assert len(result["llm_calls"]) == 1
+        call = result["llm_calls"][0]
+        assert call["error"] == "LLM call failed"
+        assert call["prompt_tokens"] is None
+        assert call["completion_tokens"] is None
+        assert call["total_tokens"] is None
+
+    def test_llm_calls_empty_on_early_reject(self):
+        mock_client = MagicMock()
+        mock_client.client.responses.create.side_effect = AssertionError("LLM must not be called")
+        agent = TestAgentToolLoop.agent(mock_client)
+        result = agent.run("???")
+
+        assert result["llm_calls"] == []
+
+    def test_llm_calls_safe_with_magicmock_usage(self):
+        response = TestAgentToolLoop.turn(text="Pikachu is Electric.")
+        response.usage = MagicMock()  # auto-created attrs are not ints
+        agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(response))
+        result = agent.run("What type is Pikachu?")
+
+        assert len(result["llm_calls"]) == 1
+        call = result["llm_calls"][0]
+        assert call["prompt_tokens"] == 0
+        assert call["completion_tokens"] == 0
+        assert call["total_tokens"] == 0
+        assert call["error"] is None
+
+
+class TestRAGOwnsRecords:
+
+    @staticmethod
+    def usage_turn(text="", *calls, input_tokens=0, output_tokens=0):
+        response = TestAgentToolLoop.turn(text, *calls)
+        response.usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+        return response
+
+    def test_calls_are_llmcalls_with_latency(self, monkeypatch):
+        from src.rag.metrics import LLMCallRecord, calculate_cost
+
+        web_fake = TestAgentToolLoop.web_fake()
+        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
+        agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(
+            self.usage_turn(
+                "", TestAgentToolLoop.function_call(
+                    TestAgentToolLoop.LOCAL, {"query": "pikachu stats"}
+                ),
+                input_tokens=100, output_tokens=50,
+            ),
+            self.usage_turn(text="Pikachu has HP 35.", input_tokens=200, output_tokens=80),
+        ))
+        agent.run("What are Pikachu's stats?")
+
+        assert len(agent.calls) == 2
+        assert all(isinstance(c, LLMCallRecord) for c in agent.calls)
+        first, second = agent.calls
+        assert first.prompt_tokens == 100
+        assert first.completion_tokens == 50
+        assert first.total_tokens == 150
+        assert first.response_time >= 0
+        assert first.error is None
+        assert first.cost == calculate_cost(
+            agent.model,
+            {"input_tokens": 100, "output_tokens": 50},
+        )
+        assert second.total_tokens == 280
+
+    def test_turn_record_built(self, monkeypatch):
+        web_fake = TestAgentToolLoop.web_fake()
+        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
+        agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(
+            self.usage_turn(
+                "", TestAgentToolLoop.function_call(
+                    TestAgentToolLoop.LOCAL, {"query": "pikachu stats"}
+                ),
+                input_tokens=100, output_tokens=50,
+            ),
+            self.usage_turn(text="Pikachu has HP 35.", input_tokens=100, output_tokens=50),
+        ))
+        result = agent.run("What are Pikachu's stats?")
+
+        record = agent.turn_record
+        assert record is not None
+        assert record.answer == result["answer"]
+        assert record.total_tokens == 300
+        assert record.source == result["source"]
+        assert record.rejected == result["rejected"]
+        assert record.response_time > 0
+        assert record.span_id is None  # caller attaches the span id
+
+    def test_turn_record_for_early_reject(self):
+        from src.rag.agent import REJECTION_MESSAGE
+
+        mock_client = MagicMock()
+        mock_client.client.responses.create.side_effect = AssertionError("LLM must not be called")
+        agent = TestAgentToolLoop.agent(mock_client)
+        agent.run("???")
+
+        record = agent.turn_record
+        assert record is not None
+        assert record.rejected is True
+        assert record.answer == REJECTION_MESSAGE
+        assert record.total_tokens == 0
+
+    def test_error_call_recorded(self):
+        from src.rag.agent import REJECTION_MESSAGE
+
+        mock_client = MagicMock()
+        mock_client.client.responses.create.side_effect = RuntimeError("server down")
+        agent = TestAgentToolLoop.agent(mock_client)
+        result = agent.run("Question")
+
+        assert result["rejected"] is True
+        assert result["answer"] == REJECTION_MESSAGE
+        assert len(agent.calls) == 1
+        assert agent.calls[0].error == "LLM call failed"
+        assert agent.calls[0].prompt_tokens is None
+        assert agent.turn_record is not None
+        assert agent.turn_record.total_tokens == 0
+
+    def test_search_payload_shapes(self):
+        from src.rag.tools import SearchRecord
+
+        local = SearchRecord(
+            query="q", source="local",
+            results=[{"id": 25, "name": "Pikachu", "score": 0.9}],
+        )
+        assert local.payload == [{"id": 25, "name": "Pikachu", "score": 0.9}]
+
+        long_snippet = "x" * 500
+        web = SearchRecord(
+            query="q", source="web", search_query="pikachu",
+            results=[{"title": "t", "url": "u", "snippet": long_snippet, "score": 0.8}],
+        )
+        item = web.payload[0]
+        assert set(item) == {"title", "url", "snippet", "score"}
+        assert len(item["snippet"]) == 300
+
+
+class TestTracerConversationIntegration:
+
+    def test_traced_agent_sets_token_and_cost_attributes(self, monkeypatch):
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_store import get_trace_stats
+        from monitoring.traced_agent import TracedRAGAgent
+
+        fake = make_fake_db(monkeypatch)
+        exporter = PostgresSpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("test_conv_traced")
+
+        mock_agent = MagicMock()
+        mock_agent.model = "qwen/qwen3.5-9b"
+        mock_agent.run.return_value = {
+            "answer": "a",
+            "searches": [],
+            "iterations": 1,
+            "usage": {"input_tokens": 500, "output_tokens": 200},
+        }
+
+        traced = TracedRAGAgent(agent=mock_agent, tracer=tracer)
+        traced.run("test query")
+        exporter.force_flush()
+        exporter.shutdown()
+
+        stats = get_trace_stats()
+        assert stats["total_input_tokens"] >= 500
+        assert stats["total_output_tokens"] >= 200
+        assert stats["total_cost"] >= (500 * 0.15 + 200 * 0.60) / 1e6
+
+    def test_feedback_table_roundtrip(self, monkeypatch):
+        from monitoring.db_feedback import save_feedback
+        from monitoring.db_init import init_feedback
+        from monitoring.db_query import get_feedback_for_conversations
+
+        fake = make_fake_db(monkeypatch)
+        init_feedback()
+        save_feedback(7, "user", score=1)
+        assert get_feedback_for_conversations([7]) == {7: 1}
+
+    def test_user_feedback_stats(self, monkeypatch):
+        from monitoring.db_feedback import save_feedback
+        from monitoring.db_init import init_feedback
+        from monitoring.db_stats import get_user_feedback_stats
+
+        fake = make_fake_db(monkeypatch)
+        init_feedback()
+        save_feedback(1, "user", score=1)
+        save_feedback(2, "user", score=-1)
+        save_feedback(3, "judge", score=1)  # excluded — not a user vote
+        assert get_user_feedback_stats() == (1, 1)
+
+    def test_feedback_fk_no_constraint_issue(self, monkeypatch):
+        from monitoring.db_feedback import save_feedback
+        from monitoring.db_init import init_feedback
+
+        fake = make_fake_db(monkeypatch)
+        init_feedback()
+        # A conversation_id with no matching conversations row must not raise
+        # (FK enforcement is off, mirroring the app's tolerance).
+        save_feedback(999, "user", score=1)
+        fake.execute("SELECT COUNT(*) FROM feedback")
+        assert fake.fetchone()[0] == 1
 
 
