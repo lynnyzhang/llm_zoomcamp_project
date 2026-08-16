@@ -1,40 +1,46 @@
 import streamlit as st
 
+from src.interface.agent_loop_saver import AgentLoopSaver
+from src.interface.card_renderer import CardRenderer
+from src.interface.chat_message import ChatMessage
+
 
 class MessageRenderer:
-    def __init__(self, cards, saver, show_confidence=False):
+    def __init__(
+        self, cards: CardRenderer, saver: AgentLoopSaver, show_confidence: bool = False
+    ):
         self.cards = cards
         self.saver = saver
         self.show_confidence = show_confidence
 
-    def render_message_body(self, msg):
+    def render_message_body(self, msg: ChatMessage):
         """Render the *inner* content of an assistant message (no outer bubble)."""
-        if msg["role"] != "assistant" or "agent_result" not in msg:
-            st.markdown(msg["content"])
+        if msg.role != "assistant" or msg.agent_result is None:
+            st.markdown(msg.content)
             return
 
-        result = msg["agent_result"]
-        answer = result.get("answer", msg.get("content", ""))
-        searches = result.get("searches", [])
-        msg_id = msg.get("msg_id", "")
+        result = msg.agent_result
+        answer = result.answer
+        searches = result.searches
+        msg_id = msg.msg_id
 
-        if result.get("rejected", False):
+        if result.rejected:
             st.warning(answer)
         else:
             st.markdown(answer)
 
-            source = result.get("source")
+            source = result.source
             if source == "local":
                 st.caption("Source: Local knowledge base")
             elif source == "web":
                 st.caption("Source: Bulbapedia (web)")
 
-            docs = self.cards.pokemon_doc(searches, msg.get("question", ""))
+            docs = self.cards.pokemon_doc(searches, msg.question)
             if docs:
                 self.cards.pokemon_card_grid(docs)
 
             if self.show_confidence:
-                confidence = result.get("confidence")
+                confidence = result.confidence
                 if confidence is not None:
                     st.progress(confidence, text=f"Confidence: {confidence:.0%}")
 
@@ -45,14 +51,18 @@ class MessageRenderer:
             if st.button("👍", key=f"up_{msg_id}"):
                 st.session_state.feedback[msg_id] = "positive"
                 self.saver.save_feedback_status(
-                    msg.get("span_id"), msg.get("conversation_id"), 1,
+                    msg.span_id,
+                    msg.conversation_id,
+                    1,
                 )
                 st.toast("Thanks for the feedback!")
         with col2:
             if st.button("👎", key=f"down_{msg_id}"):
                 st.session_state.feedback[msg_id] = "negative"
                 self.saver.save_feedback_status(
-                    msg.get("span_id"), msg.get("conversation_id"), -1,
+                    msg.span_id,
+                    msg.conversation_id,
+                    -1,
                 )
                 st.toast("Thanks for the feedback!")
 
@@ -64,6 +74,6 @@ class MessageRenderer:
             else:
                 st.warning("👎 Negative feedback recorded")
 
-    def render_message(self, msg):
-        with st.chat_message(msg["role"]):
+    def render_message(self, msg: ChatMessage):
+        with st.chat_message(msg.role):
             self.render_message_body(msg)

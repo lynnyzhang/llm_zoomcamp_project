@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 from evaluation.answer_judge import JudgeScore
-from src.llm import LLMClient
+from src.llm_client import LLMClient
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))

@@ -1,10 +1,10 @@
 import logging
 
 from .db_init import get_db_connection
-from src.rag.metrics import LLMCallRecord
+from src.rag.llm_call_record import LLMCallRecord
 
 
-def row_to_record(row):
+def row_to_record(row) -> LLMCallRecord:
     return LLMCallRecord(
         id=row[0],
         question=row[1],
@@ -25,7 +25,7 @@ def row_to_record(row):
     )
 
 
-def get_conversations(limit=10, session_id=None):
+def get_conversations(limit: int = 10, session_id: str | None = None) -> list[LLMCallRecord]:
     conn = None
     try:
         conn = get_db_connection()
@@ -57,7 +57,7 @@ def get_conversations(limit=10, session_id=None):
     return [row_to_record(row) for row in rows]
 
 
-def get_feedback_for_conversations(conversation_ids):
+def get_feedback_for_conversations(conversation_ids: list[int]) -> dict[int, int]:
     if not conversation_ids:
         return {}
     conn = None

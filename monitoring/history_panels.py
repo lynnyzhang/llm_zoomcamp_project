@@ -17,18 +17,20 @@ class HistoryCharts:
             rows = []
             for record in records:
                 question = getattr(record, "question", None) or record.prompt or ""
-                rows.append({
-                    "question": question[:200],
-                    "answer": record.answer[:200] + "...",
-                    "model": record.model,
-                    "tokens": record.total_tokens,
-                    "response_time": round(record.response_time or 0, 2),
-                    "cost": round(record.cost or 0, 4),
-                    "source": record.source,
-                    "rejected": record.rejected,
-                    "error": getattr(record, "error", None) or "",
-                    "timestamp": record.timestamp,
-                })
+                rows.append(
+                    {
+                        "question": question[:200],
+                        "answer": record.answer[:200] + "...",
+                        "model": record.model,
+                        "tokens": record.total_tokens,
+                        "response_time": round(record.response_time or 0, 2),
+                        "cost": round(record.cost or 0, 4),
+                        "source": record.source,
+                        "rejected": record.rejected,
+                        "error": getattr(record, "error", None) or "",
+                        "timestamp": record.timestamp,
+                    }
+                )
             st.dataframe(
                 pd.DataFrame(rows),
                 use_container_width=True,
@@ -48,11 +50,13 @@ class HistoryCharts:
             gated = df_gated.iloc[0]["gated"]
             errors = df_gated.iloc[0]["errors"]
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Total turns", total)
-            col2.metric("Gated turns", gated)
+            col1.metric("Total agent loops", total)
+            col2.metric("Gated agent loops", gated)
             col3.metric("Gated rate", f"{gated / total * 100:.1f}%")
-            col4.metric("Error turns", errors)
-            st.caption("Gated = out-of-scope rejections and failed turns — the guardrail layer.")
+            col4.metric("Error agent loops", errors)
+            st.caption(
+                "Gated = out-of-scope rejections and failed agent loops — the guardrail layer."
+            )
             df_gated_rate = self.load_dataframe("""
                 SELECT date_trunc('hour', timestamp) AS bucket,
                        COUNT(*) FILTER (WHERE rejected = 1 OR error IS NOT NULL)::float
@@ -82,7 +86,9 @@ class HistoryCharts:
             FROM conversations
             WHERE source IS NULL
         """)
-        if not df_path.empty or (not df_rejected.empty and df_rejected.iloc[0]["rejected"] > 0):
+        if not df_path.empty or (
+            not df_rejected.empty and df_rejected.iloc[0]["rejected"] > 0
+        ):
             local_count = 0
             web_count = 0
             if not df_path.empty:
@@ -96,12 +102,18 @@ class HistoryCharts:
             col1.metric("Hybrid only (local)", local_count)
             col2.metric("Local + web", web_count)
             col3.metric("Rejected", rejected_count)
-            st.caption("source='local' means the local hybrid search alone answered; source='web' means the agent used local + Bulbapedia.")
+            st.caption(
+                "source='local' means the local hybrid search alone answered; source='web' means the agent used local + Bulbapedia."
+            )
             path_data = {"Hybrid only": local_count, "Local + web": web_count}
             if rejected_count:
                 path_data["Rejected"] = rejected_count
             if path_data:
-                st.bar_chart(pd.DataFrame(list(path_data.items()), columns=["path", "count"]).set_index("path")["count"])
+                st.bar_chart(
+                    pd.DataFrame(
+                        list(path_data.items()), columns=["path", "count"]
+                    ).set_index("path")["count"]
+                )
         else:
             st.info("No conversations yet.")
 

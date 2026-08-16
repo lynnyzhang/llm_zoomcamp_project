@@ -3,7 +3,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from src.llm import LLMClient
+from src.llm_client import LLMClient
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -25,7 +25,7 @@ def evaluate_with_prompt(
     sample_size=50,
     doc_idx=None,
 ):
-    from evaluation.documents import ground_truth_answer
+    from evaluation.document_index import ground_truth_answer
     from evaluation.llm_judge import evaluate_single
 
     model = model or LLMClient.get_model()

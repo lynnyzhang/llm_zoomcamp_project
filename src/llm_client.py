@@ -16,9 +16,9 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 spec = importlib.util.spec_from_file_location(
-    "src.llm.env", Path(__file__).resolve().parent / "llm" / "env.py")
+    "src.llm_client.env", Path(__file__).resolve().parent / "llm" / "env.py")
 env = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(env)  # src/llm.py shadows the src/llm/ package
+spec.loader.exec_module(env)  # src/llm_client.py shadows the src/llm/ package
 
 
 class Test(BaseModel):

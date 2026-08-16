@@ -1,6 +1,6 @@
 import time
 
-from src.llm import LLMClient
+from src.llm_client import LLMClient
 
 
 def llm_judge(client, instructions, user_prompt, model=None):

@@ -23,14 +23,14 @@ from evaluation.dev_subset import (
     coverage_summary,
     resolve_ids,
 )
-from evaluation.documents import load_pokemon_documents
+from evaluation.document_index import load_pokemon_documents
 from evaluation.evaluation_utils import map_progress
 from evaluation.question_generator import (
     MAX_WORKERS,
     TARGET_QUESTIONS_PER_RECORD,
     generate_questions_for_record,
 )
-from src.llm import LLMClient
+from src.llm_client import LLMClient
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 QA_FILE = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"

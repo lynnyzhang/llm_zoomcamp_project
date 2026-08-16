@@ -1,8 +1,8 @@
-"""Unit tests for the src.llm LLMClient.
+"""Unit tests for the src.llm_client LLMClient.
 
 All LLM calls are mocked — no real network, no real .env needed (conftest.py
 sets MODEL_ID="test-model"). The process-wide singleton is reset between tests
-via monkeypatch.setattr("src.llm.LLMClient.default_client", None).
+via monkeypatch.setattr("src.llm_client.LLMClient.default_client", None).
 """
 
 import sys
@@ -15,7 +15,7 @@ from pydantic import BaseModel
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-import src.llm as llm
+import src.llm_client as llm
 
 
 class Answer(BaseModel):
@@ -35,7 +35,7 @@ def make_fake_openai(test_supported=True):
 
 
 def reset_singleton(monkeypatch):
-    monkeypatch.setattr("src.llm.LLMClient.default_client", None)
+    monkeypatch.setattr("src.llm_client.LLMClient.default_client", None)
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ def test_get_returns_singleton(monkeypatch):
 
 def test_client_created_exactly_once(monkeypatch):
     fake = make_fake_openai(test_supported=True)
-    monkeypatch.setattr("src.llm.OpenAI", lambda **kw: fake)
+    monkeypatch.setattr("src.llm_client.OpenAI", lambda **kw: fake)
 
     c = llm.LLMClient(api_key="k", base_url="u", model="m")
     assert c.client is fake
@@ -69,7 +69,7 @@ def test_client_created_exactly_once(monkeypatch):
 
 def test_text_format_and_patch_run_once(monkeypatch):
     fake = make_fake_openai(test_supported=False)
-    monkeypatch.setattr("src.llm.OpenAI", lambda **kw: fake)
+    monkeypatch.setattr("src.llm_client.OpenAI", lambda **kw: fake)
     original_parse = fake.responses.parse  # reference before patch
 
     c = llm.LLMClient(api_key="k", base_url="u", model="m")
@@ -93,7 +93,7 @@ def test_text_format_and_patch_run_once(monkeypatch):
 
 def test_patched_parse_keeps_sdk_output_parsed(monkeypatch):
     fake = make_fake_openai(test_supported=False)
-    monkeypatch.setattr("src.llm.OpenAI", lambda **kw: fake)
+    monkeypatch.setattr("src.llm_client.OpenAI", lambda **kw: fake)
     response = MagicMock()
     response.output_parsed = Answer(text="parsed by the SDK")
     fake.responses.parse.side_effect = [RuntimeError("unsupported"), response]
@@ -110,7 +110,7 @@ def test_patched_parse_keeps_sdk_output_parsed(monkeypatch):
 
 def test_parse_with_text_format_unsupported_injects_response_format(monkeypatch):
     fake = make_fake_openai(test_supported=False)
-    monkeypatch.setattr("src.llm.OpenAI", lambda **kw: fake)
+    monkeypatch.setattr("src.llm_client.OpenAI", lambda **kw: fake)
     original_parse = fake.responses.parse  # reference before patch
 
     c = llm.LLMClient(api_key="k", base_url="u", model="m")
@@ -130,7 +130,7 @@ def test_parse_with_text_format_unsupported_injects_response_format(monkeypatch)
 
 def test_parse_without_text_format_passes_through(monkeypatch):
     fake = make_fake_openai(test_supported=False)
-    monkeypatch.setattr("src.llm.OpenAI", lambda **kw: fake)
+    monkeypatch.setattr("src.llm_client.OpenAI", lambda **kw: fake)
     original_parse = fake.responses.parse  # reference before patch
 
     c = llm.LLMClient(api_key="k", base_url="u", model="m")
@@ -146,7 +146,7 @@ def test_parse_without_text_format_passes_through(monkeypatch):
 
 def test_parse_with_text_format_supported_passes_through(monkeypatch):
     fake = make_fake_openai(test_supported=True)
-    monkeypatch.setattr("src.llm.OpenAI", lambda **kw: fake)
+    monkeypatch.setattr("src.llm_client.OpenAI", lambda **kw: fake)
 
     c = llm.LLMClient(api_key="k", base_url="u", model="m")
     c.client.responses.parse(

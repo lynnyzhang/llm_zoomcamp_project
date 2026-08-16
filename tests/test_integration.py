@@ -32,6 +32,10 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.rag.llm_call_record import Usage
+from src.rag.scoring import AgentResult
+from src.search.search_records import PokemonDoc, WebResult
+
 DATA_DIR = PROJECT_ROOT / "data"
 CHUNKS_DIR = DATA_DIR / "chunks"
 RESULTS_DIR = PROJECT_ROOT / "evaluation" / "results"
@@ -78,8 +82,7 @@ class FakeConnection:
                 )
                 table, column = match.group(1), match.group(2)
                 columns = {
-                    row[1]
-                    for row in self._conn.execute(f"PRAGMA table_info({table})")
+                    row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")
                 }
                 if column in columns:
                     self.statements.append(sql)
@@ -123,108 +126,120 @@ class StubSearchIndex:
     """
 
     def __init__(self, documents=None):
-        self.documents = documents if documents is not None else [
-            {
-                "id": 25,
-                "name": "Pikachu",
-                "types": ["Electric"],
-                "generation": "gen-i",
-                "stats": {
-                    "hp": 35, "attack": 55, "defense": 40,
-                    "sp_attack": 50, "sp_defense": 50, "speed": 90,
-                    "base_stat_total": 320,
+        self.documents = (
+            documents
+            if documents is not None
+            else [
+                {
+                    "id": 25,
+                    "name": "Pikachu",
+                    "types": ["Electric"],
+                    "generation": "gen-i",
+                    "stats": {
+                        "hp": 35,
+                        "attack": 55,
+                        "defense": 40,
+                        "sp_attack": 50,
+                        "sp_defense": 50,
+                        "speed": 90,
+                        "base_stat_total": 320,
+                    },
+                    "height_m": 0.4,
+                    "weight_kg": 6.0,
+                    "abilities": ["static"],
+                    "hidden_ability": "lightning-rod",
+                    "egg_groups": ["field", "fairy"],
+                    "color": "yellow",
+                    "shape": "quadruped",
+                    "habitat": "forest",
+                    "growth_rate": "medium",
+                    "capture_rate": 190,
+                    "base_happiness": 70,
+                    "base_experience": 112,
+                    "genus": "Mouse Pokémon",
+                    "is_legendary": False,
+                    "is_mythical": False,
+                    "is_baby": False,
+                    "evolution_chain_id": 10,
+                    "flavor_text": (
+                        "When several of these POKéMON gather, their electricity "
+                        "could build and cause lightning storms."
+                    ),
+                    "sprite_url": (
+                        "https://raw.githubusercontent.com/PokeAPI/sprites/"
+                        "master/sprites/pokemon/25.png"
+                    ),
+                    "evolves_from": None,
+                    "evolves_into": ["Raichu"],
+                    "type_effectiveness": {"electric": 0.5},
+                    "search_text": (
+                        "Pokémon: Pikachu (#25)\n"
+                        "Types: Electric\n"
+                        "Stats: hp 35, attack 55, defense 40, sp. attack 50, "
+                        "sp. defense 50, speed 90, total 320\n"
+                        "Type effectiveness: electric 0.5\n"
+                        "Flavor text: When several of these POKéMON gather, their "
+                        "electricity could build and cause lightning storms."
+                    ),
+                    "score": 1.0,
                 },
-                "height_m": 0.4,
-                "weight_kg": 6.0,
-                "abilities": ["static"],
-                "hidden_ability": "lightning-rod",
-                "egg_groups": ["field", "fairy"],
-                "color": "yellow",
-                "shape": "quadruped",
-                "habitat": "forest",
-                "growth_rate": "medium",
-                "capture_rate": 190,
-                "base_happiness": 70,
-                "base_experience": 112,
-                "genus": "Mouse Pokémon",
-                "is_legendary": False,
-                "is_mythical": False,
-                "is_baby": False,
-                "evolution_chain_id": 10,
-                "flavor_text": (
-                    "When several of these POKéMON gather, their electricity "
-                    "could build and cause lightning storms."
-                ),
-                "sprite_url": (
-                    "https://raw.githubusercontent.com/PokeAPI/sprites/"
-                    "master/sprites/pokemon/25.png"
-                ),
-                "evolves_from": None,
-                "evolves_into": ["Raichu"],
-                "type_effectiveness": {"electric": 0.5},
-                "search_text": (
-                    "Pokémon: Pikachu (#25)\n"
-                    "Types: Electric\n"
-                    "Stats: hp 35, attack 55, defense 40, sp. attack 50, "
-                    "sp. defense 50, speed 90, total 320\n"
-                    "Type effectiveness: electric 0.5\n"
-                    "Flavor text: When several of these POKéMON gather, their "
-                    "electricity could build and cause lightning storms."
-                ),
-                "score": 1.0,
-            },
-            {
-                "id": 6,
-                "name": "Charizard",
-                "types": ["Fire", "Flying"],
-                "generation": "gen-i",
-                "stats": {
-                    "hp": 78, "attack": 84, "defense": 78,
-                    "sp_attack": 109, "sp_defense": 85, "speed": 100,
-                    "base_stat_total": 534,
+                {
+                    "id": 6,
+                    "name": "Charizard",
+                    "types": ["Fire", "Flying"],
+                    "generation": "gen-i",
+                    "stats": {
+                        "hp": 78,
+                        "attack": 84,
+                        "defense": 78,
+                        "sp_attack": 109,
+                        "sp_defense": 85,
+                        "speed": 100,
+                        "base_stat_total": 534,
+                    },
+                    "height_m": 1.7,
+                    "weight_kg": 90.5,
+                    "abilities": ["blaze"],
+                    "hidden_ability": "solar-power",
+                    "egg_groups": ["monster", "dragon"],
+                    "color": "red",
+                    "shape": "upright",
+                    "habitat": "mountain",
+                    "growth_rate": "medium-slow",
+                    "capture_rate": 45,
+                    "base_happiness": 70,
+                    "base_experience": 240,
+                    "genus": "Flame Pokémon",
+                    "is_legendary": False,
+                    "is_mythical": False,
+                    "is_baby": False,
+                    "evolution_chain_id": 2,
+                    "flavor_text": (
+                        "It spits fire that is hot enough to melt boulders."
+                    ),
+                    "sprite_url": (
+                        "https://raw.githubusercontent.com/PokeAPI/sprites/"
+                        "master/sprites/pokemon/6.png"
+                    ),
+                    "evolves_from": "Charmeleon",
+                    "evolves_into": [],
+                    "type_effectiveness": {"rock": 4.0, "ground": 0.0},
+                    "search_text": (
+                        "Pokémon: Charizard (#6)\n"
+                        "Types: Fire, Flying\n"
+                        "Stats: hp 78, attack 84, defense 78, sp. attack 109, "
+                        "sp. defense 85, speed 100, total 534\n"
+                        "Type effectiveness: rock 4.0, ground 0.0\n"
+                        "Flavor text: It spits fire that is hot enough to melt "
+                        "boulders."
+                    ),
+                    "score": 1.0,
                 },
-                "height_m": 1.7,
-                "weight_kg": 90.5,
-                "abilities": ["blaze"],
-                "hidden_ability": "solar-power",
-                "egg_groups": ["monster", "dragon"],
-                "color": "red",
-                "shape": "upright",
-                "habitat": "mountain",
-                "growth_rate": "medium-slow",
-                "capture_rate": 45,
-                "base_happiness": 70,
-                "base_experience": 240,
-                "genus": "Flame Pokémon",
-                "is_legendary": False,
-                "is_mythical": False,
-                "is_baby": False,
-                "evolution_chain_id": 2,
-                "flavor_text": (
-                    "It spits fire that is hot enough to melt boulders."
-                ),
-                "sprite_url": (
-                    "https://raw.githubusercontent.com/PokeAPI/sprites/"
-                    "master/sprites/pokemon/6.png"
-                ),
-                "evolves_from": "Charmeleon",
-                "evolves_into": [],
-                "type_effectiveness": {"rock": 4.0, "ground": 0.0},
-                "search_text": (
-                    "Pokémon: Charizard (#6)\n"
-                    "Types: Fire, Flying\n"
-                    "Stats: hp 78, attack 84, defense 78, sp. attack 109, "
-                    "sp. defense 85, speed 100, total 534\n"
-                    "Type effectiveness: rock 4.0, ground 0.0\n"
-                    "Flavor text: It spits fire that is hot enough to melt "
-                    "boulders."
-                ),
-                "score": 1.0,
-            },
-        ]
+            ]
+        )
 
     def search(self, query, num_results=5):
-        return [dict(doc) for doc in self.documents[:num_results]]
+        return [PokemonDoc.from_dict(doc) for doc in self.documents[:num_results]]
 
 
 # ===========================================================================
@@ -233,7 +248,6 @@ class StubSearchIndex:
 
 
 class TestDataIngestion:
-
     def test_pokemon_file_exists(self):
         pokemon_path = DATA_DIR / "pokemon.jsonl"
         assert pokemon_path.exists(), f"Missing {pokemon_path}"
@@ -276,11 +290,15 @@ class TestDataIngestion:
                 assert "document" in record, f"Record {i} missing 'document' field"
                 # Ground truth links a question to the document containing its
                 # answer; no LLM-written answer field.
-                assert "answer" not in record, f"Record {i} has unexpected 'answer' field"
+                assert "answer" not in record, (
+                    f"Record {i} has unexpected 'answer' field"
+                )
                 records.append(record)
         # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: the default
         # dev subset generates a coverage-sampled 50 records × 5 questions (user directive 2026-08-09).
-        assert len(records) >= 250, f"Expected >= 250 ground-truth questions, got {len(records)}"
+        assert len(records) >= 250, (
+            f"Expected >= 250 ground-truth questions, got {len(records)}"
+        )
 
     def test_chunker_output_exists(self):
         docs_path = CHUNKS_DIR / "documents.jsonl"
@@ -298,16 +316,22 @@ class TestDataIngestion:
                 doc = json.loads(line)
                 assert "id" in doc, f"Doc {i} missing 'id'"
                 assert "search_text" in doc, f"Doc {i} missing 'search_text'"
-                assert isinstance(doc["search_text"], str), f"Doc {i} search_text not a string"
+                assert isinstance(doc["search_text"], str), (
+                    f"Doc {i} search_text not a string"
+                )
                 assert len(doc["search_text"]) > 0, f"Doc {i} has empty search_text"
                 if isinstance(doc["id"], str):
-                    assert doc.get("kind") == "type_chart", f"Chart doc {i} missing kind"
+                    assert doc.get("kind") == "type_chart", (
+                        f"Chart doc {i} missing kind"
+                    )
                     chart_count += 1
                 else:
                     assert "name" in doc, f"Doc {i} missing 'name'"
                     assert "evolves_from" in doc, f"Doc {i} missing 'evolves_from'"
                     assert "evolves_into" in doc, f"Doc {i} missing 'evolves_into'"
-                    assert "type_effectiveness" in doc, f"Doc {i} missing 'type_effectiveness'"
+                    assert "type_effectiveness" in doc, (
+                        f"Doc {i} missing 'type_effectiveness'"
+                    )
                 count += 1
         assert count == 1368, f"Expected 1368 chunked docs, got {count}"
         assert chart_count == 18, f"Expected 18 chart docs, got {chart_count}"
@@ -319,7 +343,6 @@ class TestDataIngestion:
 
 
 class TestChunkingPipeline:
-
     @staticmethod
     def pokemon_records():
         with open(DATA_DIR / "pokemon.jsonl", encoding="utf-8") as f:
@@ -364,7 +387,7 @@ class TestChunkingPipeline:
         assert evolves_into == []
 
     def test_build_pokemon_doc_derives_keys(self):
-        from src.data.documents import PokemonDocBuilder
+        from src.data.pokemon_doc_builder import PokemonDocBuilder
         from src.data.evolution import EvolutionChain
 
         records = self.pokemon_records()
@@ -397,10 +420,9 @@ class TestChunkingPipeline:
 
 
 class TestHybridSearch:
-
     @pytest.fixture(scope="class")
     def search_index(self):
-        from src.search.hybrid import HybridSearch
+        from src.search.hybrid_search import HybridSearch
 
         docs_path = CHUNKS_DIR / "documents.jsonl"
         return HybridSearch(documents_path=docs_path)
@@ -416,35 +438,45 @@ class TestHybridSearch:
         assert len(results) > 0
         assert len(results) <= 5
         for doc in results:
-            assert "id" in doc
-            assert "search_text" in doc
+            assert hasattr(doc, "id")
+            assert hasattr(doc, "search_text")
 
     def test_vector_search_returns_results(self, search_index):
         results = search_index.vector_search("electric pokemon stats", num_results=5)
         assert len(results) > 0
         assert len(results) <= 5
         for doc in results:
-            assert "id" in doc
+            assert hasattr(doc, "id")
 
     def test_hybrid_search_returns_results(self, search_index):
         results = search_index.search("What are Pikachu's stats?", num_results=5)
         assert len(results) > 0
         assert len(results) <= 5
         for doc in results:
-            assert "id" in doc
-            assert "score" in doc, "Hybrid results should have a 'score' field"
-            assert isinstance(doc["score"], (int, float))
+            assert hasattr(doc, "id")
+            assert hasattr(doc, "score"), "Hybrid results should have a 'score' field"
+            assert isinstance(doc.score, (int, float))
 
     def test_hybrid_search_scores_are_ranked(self, search_index):
         results = search_index.search("fire type pokemon", num_results=5)
-        scores = [doc["score"] for doc in results]
-        assert scores == sorted(scores, reverse=True), "Scores should be in descending order"
+        scores = [doc.score for doc in results]
+        assert scores == sorted(scores, reverse=True), (
+            "Scores should be in descending order"
+        )
 
     def test_rrf_fusion(self):
-        from src.search.hybrid import rrf
+        from src.search.hybrid_search import rrf
 
-        list1 = [{"id": "a", "content": "1"}, {"id": "b", "content": "2"}, {"id": "c", "content": "3"}]
-        list2 = [{"id": "a", "content": "1"}, {"id": "d", "content": "4"}, {"id": "e", "content": "5"}]
+        list1 = [
+            {"id": "a", "content": "1"},
+            {"id": "b", "content": "2"},
+            {"id": "c", "content": "3"},
+        ]
+        list2 = [
+            {"id": "a", "content": "1"},
+            {"id": "d", "content": "4"},
+            {"id": "e", "content": "5"},
+        ]
 
         fused = rrf([list1, list2], num_results=3)
         assert len(fused) <= 3
@@ -468,10 +500,9 @@ class TestHybridSearch:
 
 
 class TestRAGPipeline:
-
     @pytest.fixture(scope="class")
     def search_index(self):
-        from src.search.hybrid import HybridSearch
+        from src.search.hybrid_search import HybridSearch
 
         return HybridSearch(documents_path=CHUNKS_DIR / "documents.jsonl")
 
@@ -484,15 +515,15 @@ class TestRAGPipeline:
         return mock_client
 
     def test_rag_base_search(self, search_index):
-        from src.rag.RAGBase import RAGBase
+        from src.rag.rag_base import RAGBase
 
         rag = RAGBase(search_index=search_index)
         results = rag.search("Which Pokémon are weak to fire?")
         assert len(results) > 0
-        assert "search_text" in results[0]
+        assert hasattr(results[0], "search_text")
 
     def test_rag_build_context(self, search_index):
-        from src.rag.RAGBase import RAGBase
+        from src.rag.rag_base import RAGBase
 
         rag = RAGBase(search_index=search_index)
         results = rag.search("grass type pokemon", num_results=3)
@@ -500,10 +531,10 @@ class TestRAGPipeline:
         assert isinstance(context, str)
         assert len(context) > 0
         for doc in results:
-            assert doc["search_text"] in context
+            assert doc.search_text in context
 
     def test_rag_build_prompt(self, search_index):
-        from src.rag.RAGBase import RAGBase
+        from src.rag.rag_base import RAGBase
 
         rag = RAGBase(search_index=search_index)
         results = rag.search("electric pokemon", num_results=3)
@@ -512,7 +543,7 @@ class TestRAGPipeline:
         assert "CONTEXT" in prompt
 
     def test_rag_llm_call(self, search_index, mock_llm_client):
-        from src.rag.RAGBase import RAGBase
+        from src.rag.rag_base import RAGBase
 
         rag = RAGBase(search_index=search_index, llm_client=mock_llm_client)
         answer = rag.llm("Test prompt")
@@ -520,7 +551,7 @@ class TestRAGPipeline:
         mock_llm_client.client.responses.create.assert_called_once()
 
     def test_rag_full_pipeline(self, search_index, mock_llm_client):
-        from src.rag.RAGBase import RAGBase
+        from src.rag.rag_base import RAGBase
 
         rag = RAGBase(search_index=search_index, llm_client=mock_llm_client)
         answer = rag.rag("What are Pikachu's stats?")
@@ -535,7 +566,6 @@ class TestRAGPipeline:
 
 
 class TestAgentToolLoop:
-
     LOCAL = "search_local_knowledge_base"
     WEB = "search_bulbapedia"
 
@@ -549,21 +579,21 @@ class TestAgentToolLoop:
         return item
 
     @staticmethod
-    def turn(text="", *calls):
+    def response(text="", *calls):
         response = MagicMock()
         response.output = list(calls)
         response.output_text = text
         return response
 
     @staticmethod
-    def script_client(*turns):
+    def script_client(*responses):
         mock_client = MagicMock()
-        mock_client.client.responses.create.side_effect = list(turns)
+        mock_client.client.responses.create.side_effect = list(responses)
         return mock_client
 
     @staticmethod
     def agent(llm_client, **kwargs):
-        from src.rag.agent import RAGAgent
+        from src.rag.rag_agent import RAGAgent
         from src.search.embedder import Embedder
 
         index = StubSearchIndex()
@@ -576,212 +606,319 @@ class TestAgentToolLoop:
 
         def fake(query, num_results=5):
             calls.append((query, num_results))
-            return [{"title": "Ikue Otani", "url": "u", "snippet": "Ikue Otani voiced Pikachu in the anime"}]
+            return [
+                WebResult(
+                    title="Ikue Otani",
+                    url="u",
+                    snippet="Ikue Otani voiced Pikachu in the anime",
+                )
+            ]
 
         fake.calls = calls
         return fake
 
-    def test_tool_less_memory_answer_is_gated(self):
-        from src.rag.agent import REJECTION_MESSAGE
+    def test_tool_less_memory_answer_escalates_to_web_search(self, monkeypatch):
+        web_fake = self.web_fake()
+        monkeypatch.setattr("src.search.web_search.web_search", web_fake)
+        agent = self.agent(
+            self.script_client(
+                self.response(text="Pikachu is Electric."),
+                self.response("", self.function_call(self.WEB, {"query": "pikachu"})),
+                self.response(text="Ikue Otani voiced Pikachu in the anime."),
+            )
+        )
+        result = agent.run("Who voiced Pikachu in the anime?")
 
-        agent = self.agent(self.script_client(self.turn(text="Pikachu is Electric.")))
-        result = agent.run("What type is Pikachu?")
+        # The tool-less memory answer was ungrounded (no results to ground
+        # against); the forced web retry grounded the final answer.
+        assert result.rejected is False
+        assert result.answer == "Ikue Otani voiced Pikachu in the anime."
+        assert result.source == "web"
+        assert web_fake.calls == [("pikachu", 5)]
 
-        # No tool results -> grounding 0 -> the gate rejects memory answers.
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
-        assert result["searches"] == []
+    def test_local_only_ungrounded_answer_escalates_to_web_search(self, monkeypatch):
+        web_fake = self.web_fake()
+        monkeypatch.setattr("src.search.web_search.web_search", web_fake)
+        agent = self.agent(
+            self.script_client(
+                self.response(
+                    "", self.function_call(self.LOCAL, {"query": "pikachu stats"})
+                ),
+                self.response(text="Pikachu has 999 attack and can fly"),
+                self.response("", self.function_call(self.WEB, {"query": "pikachu"})),
+                self.response(
+                    text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90."
+                ),
+            )
+        )
+        result = agent.run("What are Pikachu's stats?")
+
+        # The fabricated local-only answer failed the grounding gate; the
+        # forced web retry ran, and the answer now grounds via the local doc.
+        assert result.rejected is False
+        assert result.source == "web"
+        assert web_fake.calls == [("pikachu", 5)]
 
     def test_local_tool_then_answer(self, monkeypatch):
         web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
-        agent = self.agent(self.script_client(
-            self.turn("", self.function_call(self.LOCAL, {"query": "pikachu stats"})),
-            self.turn(text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90."),
-        ))
+        monkeypatch.setattr("src.search.web_search.web_search", web_fake)
+        agent = self.agent(
+            self.script_client(
+                self.response(
+                    "", self.function_call(self.LOCAL, {"query": "pikachu stats"})
+                ),
+                self.response(
+                    text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90."
+                ),
+            )
+        )
         result = agent.run("What are Pikachu's stats?")
 
-        assert result["source"] == "local"
-        assert result["iterations"] == 1
-        assert len(result["searches"]) == 1
-        assert result["searches"][0].source == "local"
-        assert result["confidence"] > 0.65  # grounding cosine vs the Pikachu doc
-        assert result["relevance"] > 0.6   # query-answer cosine
+        assert result.source == "local"
+        assert result.iterations == 1
+        assert len(result.searches) == 1
+        assert result.searches[0].search_query == "pikachu stats"
+        assert result.searches[0].source == "local"
+        assert result.confidence > 0.65  # grounding cosine vs the Pikachu doc
+        assert result.relevance > 0.6  # query-answer cosine
         assert web_fake.calls == []
+
+    def test_local_search_records_query_and_falls_back_to_question(self):
+        agent = self.agent(
+            self.script_client(
+                self.response(
+                    "", self.function_call(self.LOCAL, {"query": "pikachu stats"})
+                ),
+                self.response("", self.function_call(self.LOCAL, {})),
+                self.response(
+                    text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90."
+                ),
+            )
+        )
+        result = agent.run("What are Pikachu's stats?")
+
+        # The model's keyword is recorded per search; a call without a query
+        # argument falls back to the original question.
+        assert result.searches[0].search_query == "pikachu stats"
+        assert result.searches[1].search_query == "What are Pikachu's stats?"
 
     def test_local_then_web_then_answer(self, monkeypatch):
         web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
-        agent = self.agent(self.script_client(
-            self.turn("", self.function_call(self.LOCAL, {"query": "pikachu"})),
-            self.turn("", self.function_call(self.WEB, {"query": "Pikachu voice actor anime"})),
-            self.turn(text="Ikue Otani voiced Pikachu."),
-        ))
+        monkeypatch.setattr("src.search.web_search.web_search", web_fake)
+        agent = self.agent(
+            self.script_client(
+                self.response("", self.function_call(self.LOCAL, {"query": "pikachu"})),
+                self.response(
+                    "",
+                    self.function_call(
+                        self.WEB, {"query": "Pikachu voice actor anime"}
+                    ),
+                ),
+                self.response(text="Ikue Otani voiced Pikachu."),
+            )
+        )
         result = agent.run("Who voiced Pikachu?")
 
-        assert result["source"] == "web"
-        assert result["iterations"] == 2
-        assert [s.source for s in result["searches"]] == ["local", "web"]
-        assert result["searches"][1].search_query == "Pikachu voice actor anime"
+        assert result.source == "web"
+        assert result.iterations == 2
+        assert [s.source for s in result.searches] == ["local", "web"]
+        assert result.searches[1].search_query == "Pikachu voice actor anime"
         assert web_fake.calls[0][0] == "Pikachu voice actor anime"
-        assert result["confidence"] is not None  # grounded via the snippet record
-        assert result["relevance"] is not None
+        assert result.confidence is not None  # grounded via the snippet record
+        assert result.relevance is not None
 
     def test_web_tool_failure_returns_empty_results(self, monkeypatch):
-        from src.rag.agent import REJECTION_MESSAGE
+        from src.rag.prompts import REJECTION_MESSAGE
 
         def raise_error(query, num_results=5):
             raise RuntimeError("Tavily down")
 
-        monkeypatch.setattr("src.rag.execution.web.web_search", raise_error)
-        agent = self.agent(self.script_client(
-            self.turn("", self.function_call(self.WEB, {"query": "pikachu"})),
-            self.turn(text="No answer found."),
-        ))
+        monkeypatch.setattr("src.search.web_search.web_search", raise_error)
+        agent = self.agent(
+            self.script_client(
+                self.response("", self.function_call(self.WEB, {"query": "pikachu"})),
+                self.response(text="No answer found."),
+            )
+        )
         result = agent.run("Needs web")
 
-        assert result["searches"][0].results == []
+        assert result.searches[0].results == []
         # Empty tool results -> grounding 0 -> gated to rejection.
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
+        assert result.rejected is True
+        assert result.answer == REJECTION_MESSAGE
 
     def test_out_of_scope_replies_rejection_without_tools(self, monkeypatch):
-        from src.rag.agent import REJECTION_MESSAGE
+        from src.rag.prompts import REJECTION_MESSAGE
 
         def no_web(query, num_results=5):
             raise AssertionError("tools must never run on an out-of-scope question")
 
-        monkeypatch.setattr("src.rag.execution.web.web_search", no_web)
-        agent = self.agent(self.script_client(self.turn(text=REJECTION_MESSAGE)))
+        monkeypatch.setattr("src.search.web_search.web_search", no_web)
+        agent = self.agent(self.script_client(self.response(text=REJECTION_MESSAGE)))
         result = agent.run("Who would win Charizard vs Blastoise?")
 
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
-        assert result["searches"] == []
-        assert result["source"] is None
+        assert result.rejected is True
+        assert result.answer == REJECTION_MESSAGE
+        assert result.searches == []
+        assert result.source is None
 
-    @pytest.mark.parametrize("question", [
-        "who would come out on top if my Pikachu and Charizard fought in a tournament bracket",
-        "can you fix my game save",
-        "help me with my Docker homework",
-    ])
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "who would come out on top if my Pikachu and Charizard fought in a tournament bracket",
+            "can you fix my game save",
+            "help me with my Docker homework",
+        ],
+    )
     def test_paraphrased_out_of_scope(self, monkeypatch, question):
-        from src.rag.agent import REJECTION_MESSAGE
+        from src.rag.prompts import REJECTION_MESSAGE
 
-        agent = self.agent(self.script_client(self.turn(text=REJECTION_MESSAGE)))
+        agent = self.agent(self.script_client(self.response(text=REJECTION_MESSAGE)))
         result = agent.run(question)
 
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
+        assert result.rejected is True
+        assert result.answer == REJECTION_MESSAGE
 
     def test_loop_exhaustion_rejects(self):
-        from src.rag.agent import REJECTION_MESSAGE
+        from src.rag.prompts import REJECTION_MESSAGE
 
-        turns = [
-            self.turn("", self.function_call(self.LOCAL, {"query": f"q{i}"}, call_id=f"c{i}"))
+        responses = [
+            self.response(
+                "", self.function_call(self.LOCAL, {"query": f"q{i}"}, call_id=f"c{i}")
+            )
             for i in range(4)
         ]
-        agent = self.agent(self.script_client(*turns), max_iterations=2)
+        agent = self.agent(self.script_client(*responses), max_iterations=2)
         result = agent.run("Endless question")
 
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
+        assert result.rejected is True
+        assert result.answer == REJECTION_MESSAGE
 
     def test_empty_final_text_rejects(self):
-        from src.rag.agent import REJECTION_MESSAGE
+        from src.rag.prompts import REJECTION_MESSAGE
 
-        agent = self.agent(self.script_client(self.turn(text="   ")))
+        agent = self.agent(self.script_client(self.response(text="   ")))
         result = agent.run("Question")
 
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
+        assert result.rejected is True
+        assert result.answer == REJECTION_MESSAGE
 
     def test_llm_failure_rejects(self):
-        from src.rag.agent import REJECTION_MESSAGE
+        from src.rag.prompts import REJECTION_MESSAGE
 
         mock_client = MagicMock()
         mock_client.client.responses.create.side_effect = RuntimeError("server down")
         agent = self.agent(mock_client)
         result = agent.run("Question")
 
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
+        assert result.rejected is True
+        assert result.answer == REJECTION_MESSAGE
 
-    def test_fabricated_answer_is_gated(self):
-        from src.rag.agent import REJECTION_MESSAGE
-
-        agent = self.agent(self.script_client(
-            self.turn("", self.function_call(self.LOCAL, {"query": "pikachu"})),
-            self.turn(text="Pikachu has 999 attack and can fly and summons rain"),
-        ))
-        result = agent.run("What are Pikachu's stats?")
-
-        # Only pikachu/attack overlap the stub context -> below the gate.
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
-
-    def test_confidence_threshold_param_is_enforced(self):
-        from src.rag.agent import REJECTION_MESSAGE
-
-        agent = self.agent(self.script_client(
-            self.turn("", self.function_call(self.LOCAL, {"query": "pikachu"})),
-            self.turn(text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90."),
-        ), confidence_threshold=0.9)
-        result = agent.run("What are Pikachu's stats?")
-
-        # Grounding cosine ~0.78 < 0.9 -> rejected.
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
-
-    def test_web_tool_unlocks_after_first_turn(self, monkeypatch):
-        from src.rag.agent import LOCAL_SEARCH_TOOL, TOOLS
+    def test_fabricated_answer_is_gated(self, monkeypatch):
+        from src.rag.prompts import REJECTION_MESSAGE
 
         web_fake = self.web_fake()
-        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
+        monkeypatch.setattr("src.search.web_search.web_search", web_fake)
+        agent = self.agent(
+            self.script_client(
+                self.response("", self.function_call(self.LOCAL, {"query": "pikachu"})),
+                self.response(
+                    text="Pikachu has 999 attack and can fly and summons rain"
+                ),
+                self.response("", self.function_call(self.WEB, {"query": "pikachu"})),
+                self.response(
+                    text="Pikachu has 999 attack and can fly and summons rain"
+                ),
+            )
+        )
+        result = agent.run("What are Pikachu's stats?")
+
+        # Fabricated both times (local and web) -> gated; the single forced
+        # web retry does not loop forever.
+        assert result.rejected is True
+        assert result.answer == REJECTION_MESSAGE
+        assert web_fake.calls == [("pikachu", 5)]
+
+    def test_confidence_threshold_param_is_enforced(self, monkeypatch):
+        from src.rag.prompts import REJECTION_MESSAGE
+
+        web_fake = self.web_fake()
+        monkeypatch.setattr("src.search.web_search.web_search", web_fake)
+        agent = self.agent(
+            self.script_client(
+                self.response("", self.function_call(self.LOCAL, {"query": "pikachu"})),
+                self.response(
+                    text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90."
+                ),
+                self.response("", self.function_call(self.WEB, {"query": "pikachu"})),
+                self.response(
+                    text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90."
+                ),
+            ),
+            confidence_threshold=0.9,
+        )
+        result = agent.run("What are Pikachu's stats?")
+
+        # Grounding cosine ~0.78 < 0.9 even after the web retry -> rejected.
+        assert result.rejected is True
+        assert result.answer == REJECTION_MESSAGE
+        assert web_fake.calls == [("pikachu", 5)]
+
+    def test_web_tool_unlocks_after_first_llm_api_call(self, monkeypatch):
+        from src.rag.tools import LOCAL_SEARCH_TOOL, TOOLS
+
+        web_fake = self.web_fake()
+        monkeypatch.setattr("src.search.web_search.web_search", web_fake)
         mock_client = MagicMock()
         mock_client.client.responses.create.side_effect = [
-            self.turn("", self.function_call(self.LOCAL, {"query": "pikachu"})),
-            self.turn("", self.function_call(self.WEB, {"query": "Pikachu voice actor"})),
-            self.turn(text="Ikue Otani voiced Pikachu in the anime"),
+            self.response("", self.function_call(self.LOCAL, {"query": "pikachu"})),
+            self.response(
+                "", self.function_call(self.WEB, {"query": "Pikachu voice actor"})
+            ),
+            self.response(text="Ikue Otani voiced Pikachu in the anime"),
         ]
         agent = self.agent(mock_client)
         result = agent.run("Who voiced Pikachu?")
 
         calls = mock_client.client.responses.create.call_args_list
         assert [c.kwargs["tools"] for c in calls] == [
-            [LOCAL_SEARCH_TOOL],   # turn 0: local only
-            TOOLS,                 # turn 1+: both
+            [LOCAL_SEARCH_TOOL],  # iteration 0: local only
+            TOOLS,  # iteration 1+: both
             TOOLS,
         ]
-        assert result["rejected"] is False
+        assert result.rejected is False
 
     def test_empty_or_punctuation_input_rejected_without_llm_call(self):
-        from src.rag.agent import REJECTION_MESSAGE
+        from src.rag.prompts import REJECTION_MESSAGE
 
         mock_client = MagicMock()
-        mock_client.client.responses.create.side_effect = AssertionError("LLM must not be called")
+        mock_client.client.responses.create.side_effect = AssertionError(
+            "LLM must not be called"
+        )
         agent = self.agent(mock_client)
 
         for bad in ("", "   ", "???!!!", "....", "---"):
             result = agent.run(bad)
-            assert result["rejected"] is True, repr(bad)
-            assert result["answer"] == REJECTION_MESSAGE
-            assert result["searches"] == []
-            assert result["iterations"] == 0
+            assert result.rejected is True, repr(bad)
+            assert result.answer == REJECTION_MESSAGE
+            assert result.searches == []
+            assert result.iterations == 0
 
     def test_single_word_query_reaches_llm(self):
-        agent = self.agent(self.script_client(
-            self.turn("", self.function_call(self.LOCAL, {"query": "Pikachu"})),
-            self.turn(text="Pikachu is an Electric Pokémon."),
-        ))
+        agent = self.agent(
+            self.script_client(
+                self.response("", self.function_call(self.LOCAL, {"query": "Pikachu"})),
+                self.response(text="Pikachu is an Electric Pokémon."),
+            )
+        )
 
         result = agent.run("Pikachu")
 
         assert agent.llm_client.client.responses.create.called
-        assert result["rejected"] is False
+        assert result.rejected is False
 
     def test_instructions_cover_capabilities_limitations_and_rejection(self):
-        from src.rag.agent import INSTRUCTIONS, REJECTION_MESSAGE
+        from src.rag.prompts import INSTRUCTIONS, REJECTION_MESSAGE
 
         assert "knowledge base" in INSTRUCTIONS
         assert "Bulbapedia" in INSTRUCTIONS
@@ -799,12 +936,11 @@ class TestAgentToolLoop:
 
 
 class TestMonitoring:
-
     def test_tracer_export_writes_spans(self, monkeypatch):
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_exporter import PostgresSpanExporter
 
         fake = make_fake_db(monkeypatch)
         exporter = PostgresSpanExporter()
@@ -823,21 +959,19 @@ class TestMonitoring:
         assert ("test.span",) in rows
 
     def test_tracer_schema_has_required_columns(self, monkeypatch):
-        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_exporter import PostgresSpanExporter
 
         fake = make_fake_db(monkeypatch)
         exporter = PostgresSpanExporter()
         exporter.shutdown()
 
-        assert any(
-            "CREATE TABLE IF NOT EXISTS spans" in s for s in fake.statements
-        )
+        assert any("CREATE TABLE IF NOT EXISTS spans" in s for s in fake.statements)
 
     def test_tracer_records_spans(self, monkeypatch):
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_exporter import PostgresSpanExporter
 
         fake = make_fake_db(monkeypatch)
         exporter = PostgresSpanExporter()
@@ -866,7 +1000,7 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_exporter import PostgresSpanExporter
 
         fake = make_fake_db(monkeypatch)
         exporter = PostgresSpanExporter()
@@ -905,7 +1039,9 @@ class TestMonitoring:
 
         class CountingTracerSetup:
             def __init__(self):
-                time.sleep(0.005)  # model real TracerSetup cost (exporter I/O) so the race window exists
+                time.sleep(
+                    0.005
+                )  # model real TracerSetup cost (exporter I/O) so the race window exists
                 created.append(self)
                 self.tracer = object()
 
@@ -932,7 +1068,7 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_exporter import PostgresSpanExporter
         from monitoring.span_store import record_feedback
 
         fake = make_fake_db(monkeypatch)
@@ -963,9 +1099,9 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_exporter import PostgresSpanExporter
         from monitoring.span_store import record_feedback
-        from monitoring.traced_agent import TracedRAGAgent
+        from monitoring.tracer import TracedRAGAgent
 
         fake = make_fake_db(monkeypatch)
         exporter = PostgresSpanExporter()
@@ -975,8 +1111,24 @@ class TestMonitoring:
 
         mock_agent = MagicMock()
         mock_agent.run.side_effect = [
-            {"answer": "a1", "searches": [], "iterations": 1},
-            {"answer": "a2", "searches": [], "iterations": 1},
+            AgentResult(
+                answer="a1",
+                searches=[],
+                iterations=1,
+                rejected=False,
+                source=None,
+                confidence=None,
+                relevance=None,
+            ),
+            AgentResult(
+                answer="a2",
+                searches=[],
+                iterations=1,
+                rejected=False,
+                source=None,
+                confidence=None,
+                relevance=None,
+            ),
         ]
         traced = TracedRAGAgent(agent=mock_agent, tracer=tracer)
         _, first_span_id = traced.run_with_feedback("first query")
@@ -1013,7 +1165,7 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_exporter import PostgresSpanExporter
         from monitoring.span_store import get_trace_stats
 
         fake = make_fake_db(monkeypatch)
@@ -1041,9 +1193,9 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_exporter import PostgresSpanExporter
         from monitoring.span_store import get_trace_stats
-        from monitoring.traced_agent import TracedRAGAgent
+        from monitoring.tracer import TracedRAGAgent
 
         fake = make_fake_db(monkeypatch)
         exporter = PostgresSpanExporter()
@@ -1052,16 +1204,20 @@ class TestMonitoring:
         tracer = provider.get_tracer("test_traced_agent")
 
         mock_agent = MagicMock()
-        mock_agent.run.return_value = {
-            "answer": "test answer",
-            "searches": [],
-            "iterations": 1,
-        }
+        mock_agent.run.return_value = AgentResult(
+            answer="test answer",
+            searches=[],
+            iterations=1,
+            rejected=False,
+            source=None,
+            confidence=None,
+            relevance=None,
+        )
 
         traced = TracedRAGAgent(agent=mock_agent, tracer=tracer)
         result = traced.run("test query")
 
-        assert result["answer"] == "test answer"
+        assert result.answer == "test answer"
         exporter.force_flush()
         exporter.shutdown()
 
@@ -1072,8 +1228,8 @@ class TestMonitoring:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.exporter import PostgresSpanExporter
-        from monitoring.traced_agent import TracedRAGAgent
+        from monitoring.span_exporter import PostgresSpanExporter
+        from monitoring.tracer import TracedRAGAgent
 
         fake = make_fake_db(monkeypatch)
         exporter = PostgresSpanExporter()
@@ -1082,16 +1238,20 @@ class TestMonitoring:
         tracer = provider.get_tracer("test_traced_agent_feedback")
 
         mock_agent = MagicMock()
-        mock_agent.run.return_value = {
-            "answer": "test answer",
-            "searches": [],
-            "iterations": 1,
-        }
+        mock_agent.run.return_value = AgentResult(
+            answer="test answer",
+            searches=[],
+            iterations=1,
+            rejected=False,
+            source=None,
+            confidence=None,
+            relevance=None,
+        )
 
         traced = TracedRAGAgent(agent=mock_agent, tracer=tracer)
         result, sid = traced.run_with_feedback("test query")
 
-        assert result["answer"] == "test answer"
+        assert result.answer == "test answer"
         assert len(sid) == 16
         assert all(c in "0123456789abcdef" for c in sid)
 
@@ -1109,7 +1269,6 @@ class TestMonitoring:
 
 
 class TestEvaluationResults:
-
     def test_retrieval_eval_file_exists(self):
         path = RESULTS_DIR / "retrieval_eval.json"
         assert path.exists(), f"Missing {path}"
@@ -1212,10 +1371,13 @@ class TestEvaluationResults:
         best = max(
             ["simple", "detailed", "with_examples"],
             key=lambda k: (
-                data[k]["faithfulness"] + data[k]["relevance"] + data[k]["coherence"]
-            ) / 3,
+                (data[k]["faithfulness"] + data[k]["relevance"] + data[k]["coherence"])
+                / 3
+            ),
         )
-        assert best == "with_examples", f"Expected 'with_examples' to be best, got '{best}'"
+        assert best == "with_examples", (
+            f"Expected 'with_examples' to be best, got '{best}'"
+        )
 
     def test_agent_eval_file_exists(self):
         path = RESULTS_DIR / "agent_eval.json"
@@ -1283,7 +1445,6 @@ class TestEvaluationResults:
 
 
 class TestEvaluationScripts:
-
     def test_retrieval_eval_importable(self):
         sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -1325,7 +1486,9 @@ class TestEvaluationScripts:
     def test_judge_scores_model(self):
         from evaluation.llm_eval import JudgeScore
 
-        scores = JudgeScore(faithfulness=5, relevance=4, coherence=5, explanation="Good answer")
+        scores = JudgeScore(
+            faithfulness=5, relevance=4, coherence=5, explanation="Good answer"
+        )
         assert scores.faithfulness == 5
         assert scores.relevance == 4
 
@@ -1366,7 +1529,6 @@ class TestEvaluationScripts:
 
 
 class TestDockerConfiguration:
-
     def test_dockerfile_exists(self):
         assert (PROJECT_ROOT / "deployment" / "Dockerfile").exists()
 
@@ -1443,10 +1605,9 @@ class TestDockerConfiguration:
 
 
 class TestFullPipeline:
-
     @pytest.fixture(scope="class")
     def full_pipeline(self):
-        from src.search.hybrid import HybridSearch
+        from src.search.hybrid_search import HybridSearch
 
         search_index = HybridSearch(documents_path=CHUNKS_DIR / "documents.jsonl")
         return search_index
@@ -1473,7 +1634,7 @@ class TestFullPipeline:
         mock_response.output_text = "Pikachu is an electric type Pokémon."
         mock_client.client.responses.create.return_value = mock_response
 
-        from src.rag.RAGBase import RAGBase
+        from src.rag.rag_base import RAGBase
 
         rag = RAGBase(search_index=full_pipeline, llm_client=mock_client)
 
@@ -1498,7 +1659,7 @@ class TestFullPipeline:
         def fake_web(query, num_results=5):
             return [{"title": "t", "url": "u", "snippet": "s"}]
 
-        monkeypatch.setattr("src.rag.execution.web.web_search", fake_web)
+        monkeypatch.setattr("src.search.web_search.web_search", fake_web)
 
         mock_client = MagicMock()
         local_call = MagicMock()
@@ -1514,26 +1675,26 @@ class TestFullPipeline:
             final,
         ]
 
-        from src.rag.agent import RAGAgent
+        from src.rag.rag_agent import RAGAgent
 
         agent = RAGAgent(search_index=full_pipeline, llm_client=mock_client)
         result = agent.run("What are Pikachu's stats?")
 
         # Verify complete pipeline output.
-        assert "answer" in result
-        assert "searches" in result
-        assert "iterations" in result
-        assert len(result["answer"]) > 0
-        assert result["iterations"] >= 1
-        assert result["searches"][0].source == "local"
+        assert hasattr(result, "answer")
+        assert hasattr(result, "searches")
+        assert hasattr(result, "iterations")
+        assert len(result.answer) > 0
+        assert result.iterations >= 1
+        assert result.searches[0].source == "local"
 
     def test_full_agent_with_feedback(self, full_pipeline, monkeypatch):
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_exporter import PostgresSpanExporter
         from monitoring.span_store import get_trace_stats
-        from monitoring.traced_agent import TracedRAGAgent
+        from monitoring.tracer import TracedRAGAgent
 
         fake = make_fake_db(monkeypatch)
         exporter = PostgresSpanExporter()
@@ -1542,16 +1703,20 @@ class TestFullPipeline:
         tracer = provider.get_tracer("test_full_feedback")
 
         mock_inner_agent = MagicMock()
-        mock_inner_agent.run.return_value = {
-            "answer": "ML is a subset of AI.",
-            "searches": [],
-            "iterations": 1,
-        }
+        mock_inner_agent.run.return_value = AgentResult(
+            answer="ML is a subset of AI.",
+            searches=[],
+            iterations=1,
+            rejected=False,
+            source=None,
+            confidence=None,
+            relevance=None,
+        )
 
         traced_agent = TracedRAGAgent(agent=mock_inner_agent, tracer=tracer)
         result = traced_agent.run("What is ML?")
 
-        assert result["answer"] == "ML is a subset of AI."
+        assert result.answer == "ML is a subset of AI."
 
         exporter.force_flush()
         exporter.shutdown()
@@ -1563,8 +1728,12 @@ class TestFullPipeline:
         from monitoring.db_init import get_db_connection
 
         monkeypatch.delenv("POSTGRES_HOST", raising=False)
-        for var in ("POSTGRES_PORT", "POSTGRES_DB", "POSTGRES_USER",
-                    "POSTGRES_PASSWORD"):
+        for var in (
+            "POSTGRES_PORT",
+            "POSTGRES_DB",
+            "POSTGRES_USER",
+            "POSTGRES_PASSWORD",
+        ):
             monkeypatch.delenv(var, raising=False)
 
         captured = {}
@@ -1609,7 +1778,7 @@ class TestFullPipeline:
             results = full_pipeline.search(q["question"], num_results=5)
             assert len(results) > 0, f"No results for: {q['question'][:60]}"
             for doc in results:
-                assert doc["id"] in valid_doc_ids, f"Doc ID {doc['id']} not in index"
+                assert doc.id in valid_doc_ids, f"Doc ID {doc.id} not in index"
 
 
 # ===========================================================================
@@ -1618,7 +1787,6 @@ class TestFullPipeline:
 
 
 class TestWebSearch:
-
     @staticmethod
     def fake_client(response):
         fake = MagicMock()
@@ -1626,34 +1794,56 @@ class TestWebSearch:
         return fake
 
     def test_user_namespace_results_filtered(self, monkeypatch):
-        from src.search import web
+        from src.search import web_search
 
-        fake = self.fake_client({
-            "results": [
-                {"title": "Pikachu (Pokémon)", "url": "https://bulbapedia.bulbagarden.net/wiki/Pikachu_(Pok%C3%A9mon)", "content": "s1", "score": 0.91},
-                {"title": "User:Landfish7/Overview/Pikachu", "url": "https://bulbapedia.bulbagarden.net/wiki/User:Landfish7/Overview/Pikachu", "content": "s2", "score": 0.9},
-                {"title": "Volt Tackle (move)", "url": "https://bulbapedia.bulbagarden.net/wiki/Volt_Tackle_(move)", "content": "s3", "score": 0.85},
-                {"title": "Talk page", "url": "https://bulbapedia.bulbagarden.net/wiki/User_talk:Someone", "content": "s4", "score": 0.8},
-            ]
-        })
-        monkeypatch.setattr(web, "TavilyClient", lambda api_key=None: fake)
+        fake = self.fake_client(
+            {
+                "results": [
+                    {
+                        "title": "Pikachu (Pokémon)",
+                        "url": "https://bulbapedia.bulbagarden.net/wiki/Pikachu_(Pok%C3%A9mon)",
+                        "content": "s1",
+                        "score": 0.91,
+                    },
+                    {
+                        "title": "User:Landfish7/Overview/Pikachu",
+                        "url": "https://bulbapedia.bulbagarden.net/wiki/User:Landfish7/Overview/Pikachu",
+                        "content": "s2",
+                        "score": 0.9,
+                    },
+                    {
+                        "title": "Volt Tackle (move)",
+                        "url": "https://bulbapedia.bulbagarden.net/wiki/Volt_Tackle_(move)",
+                        "content": "s3",
+                        "score": 0.85,
+                    },
+                    {
+                        "title": "Talk page",
+                        "url": "https://bulbapedia.bulbagarden.net/wiki/User_talk:Someone",
+                        "content": "s4",
+                        "score": 0.8,
+                    },
+                ]
+            }
+        )
+        monkeypatch.setattr(web_search, "TavilyClient", lambda api_key=None: fake)
         monkeypatch.setenv("TAVILY_API_KEY", "test-key")
 
-        results = web.web_search("pikachu", num_results=5)
+        results = web_search.web_search("pikachu", num_results=5)
 
-        assert [r["url"] for r in results] == [
+        assert [r.url for r in results] == [
             "https://bulbapedia.bulbagarden.net/wiki/Pikachu_(Pok%C3%A9mon)",
             "https://bulbapedia.bulbagarden.net/wiki/Volt_Tackle_(move)",
         ]
-        assert [r["score"] for r in results] == [0.91, 0.85]
+        assert [r.score for r in results] == [0.91, 0.85]
         fake.search.assert_called_once()
 
     def test_missing_api_key_raises(self, monkeypatch):
-        from src.search import web
+        from src.search import web_search
 
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         with pytest.raises(RuntimeError):
-            web.web_search("pikachu")
+            web_search.web_search("pikachu")
 
 
 # ===========================================================================
@@ -1667,12 +1857,18 @@ class TestWebSearch:
 
 
 class TestConversationStore:
-
     @staticmethod
-    def record(prompt_tokens=10, completion_tokens=5, source="local",
-               rejected=False, span_id="span0", cost=None, model="qwen/qwen3.5-9b",
-               error=None):
-        from src.rag.metrics import LLMCallRecord
+    def record(
+        prompt_tokens=10,
+        completion_tokens=5,
+        source="local",
+        rejected=False,
+        span_id="span0",
+        cost=None,
+        model="qwen/qwen3.5-9b",
+        error=None,
+    ):
+        from src.rag.llm_call_record import LLMCallRecord
 
         if cost is None:
             cost = (prompt_tokens * 0.15 + completion_tokens * 0.60) / 1_000_000
@@ -1766,17 +1962,26 @@ class TestConversationStore:
         assert stats.avg_response_time == 0.5
 
     def test_calculate_cost_qwen_formula(self):
-        from src.rag.metrics import calculate_cost
+        from src.rag.llm_call_record import calculate_cost
 
         assert (
-            calculate_cost("qwen/qwen3.5-9b", {"input_tokens": 1_000_000, "output_tokens": 0})
+            calculate_cost(
+                "qwen/qwen3.5-9b", Usage(input_tokens=1_000_000, output_tokens=0)
+            )
             == 0.15
         )
         assert (
-            calculate_cost("qwen/qwen3.5-9b", {"input_tokens": 0, "output_tokens": 1_000_000})
+            calculate_cost(
+                "qwen/qwen3.5-9b", Usage(input_tokens=0, output_tokens=1_000_000)
+            )
             == 0.60
         )
-        assert calculate_cost("gpt-4o", {"input_tokens": 1_000_000, "output_tokens": 1_000_000}) == 0.0
+        assert (
+            calculate_cost(
+                "gpt-4o", Usage(input_tokens=1_000_000, output_tokens=1_000_000)
+            )
+            == 0.0
+        )
         assert calculate_cost("qwen/qwen3.5-9b", None) == 0.0
 
     def test_save_never_raises(self, monkeypatch):
@@ -1799,10 +2004,24 @@ class TestConversationStore:
         init_feedback()
         # CREATE TABLE IF NOT EXISTS makes re-initialization idempotent
         # (entrypoint runs init on every container boot).
-        assert sum("CREATE TABLE IF NOT EXISTS conversations" in s for s in fake.statements) >= 1
-        assert sum("CREATE TABLE IF NOT EXISTS feedback" in s for s in fake.statements) >= 1
-        assert sum("CREATE TABLE IF NOT EXISTS searches" in s for s in fake.statements) >= 1
-        assert sum("CREATE TABLE IF NOT EXISTS llm_calls" in s for s in fake.statements) >= 1
+        assert (
+            sum(
+                "CREATE TABLE IF NOT EXISTS conversations" in s for s in fake.statements
+            )
+            >= 1
+        )
+        assert (
+            sum("CREATE TABLE IF NOT EXISTS feedback" in s for s in fake.statements)
+            >= 1
+        )
+        assert (
+            sum("CREATE TABLE IF NOT EXISTS searches" in s for s in fake.statements)
+            >= 1
+        )
+        assert (
+            sum("CREATE TABLE IF NOT EXISTS llm_calls" in s for s in fake.statements)
+            >= 1
+        )
 
     def test_save_conversation_with_session_and_error(self, monkeypatch):
         from monitoring.db_init import init_db
@@ -1854,23 +2073,32 @@ class TestConversationStore:
 
 
 class TestSearchStore:
-
     def test_save_search_local_and_web(self, monkeypatch):
         from monitoring.db_init import init_db
-        from monitoring.db_detail import save_search
+        from monitoring.db_save import save_search
 
         fake = make_fake_db(monkeypatch)
         init_db()
         save_search(
-            1, "span1", "What are Pikachu's stats?", "pikachu stats", "local",
+            1,
+            "span1",
+            "What are Pikachu's stats?",
+            "pikachu stats",
+            "local",
             [{"id": 25, "name": "Pikachu", "score": 0.9}],
         )
         save_search(
-            1, "span1", "Who voiced Pikachu?", "Pikachu voice actor", "web",
+            1,
+            "span1",
+            "Who voiced Pikachu?",
+            "Pikachu voice actor",
+            "web",
             [{"title": "Ikue Otani", "url": "u", "snippet": "voiced", "score": 0.8}],
         )
 
-        fake.execute("SELECT source, query, search_query, results FROM searches ORDER BY id")
+        fake.execute(
+            "SELECT source, query, search_query, results FROM searches ORDER BY id"
+        )
         rows = fake.fetchall()
         assert len(rows) == 2
         assert rows[0][0] == "local"
@@ -1886,10 +2114,9 @@ class TestSearchStore:
 
 
 class TestLLMCallStore:
-
     def test_save_llm_call_success(self, monkeypatch):
         from monitoring.db_init import init_db
-        from monitoring.db_detail import save_llm_call
+        from monitoring.db_save import save_llm_call
 
         fake = make_fake_db(monkeypatch)
         init_db()
@@ -1904,11 +2131,13 @@ class TestLLMCallStore:
 
     def test_save_llm_call_failure(self, monkeypatch):
         from monitoring.db_init import init_db
-        from monitoring.db_detail import save_llm_call
+        from monitoring.db_save import save_llm_call
 
         fake = make_fake_db(monkeypatch)
         init_db()
-        save_llm_call(1, "span1", "qwen/qwen3.5-9b", None, None, None, 0.1, "LLM call failed")
+        save_llm_call(
+            1, "span1", "qwen/qwen3.5-9b", None, None, None, 0.1, "LLM call failed"
+        )
 
         fake.execute(
             "SELECT prompt_tokens, completion_tokens, total_tokens, error "
@@ -1918,147 +2147,351 @@ class TestLLMCallStore:
         assert row == (None, None, None, "LLM call failed")
 
 
-class TestAgentUsage:
+class TestAgentLoopSaver:
+    def test_save_agent_loop_persists_conversation_search_and_llm_calls(
+        self, monkeypatch
+    ):
+        # Regression: the saver must resolve save_search/save_llm_call from
+        # db_save (they are not in db_save); an ImportError was
+        # previously swallowed and conversations silently never saved.
+        from monitoring.db_init import init_db
+        from src.interface.agent_loop_saver import AgentLoopSaver
+        from src.rag.tools import SearchRecord
 
+        fake = make_fake_db(monkeypatch)
+        init_db()
+
+        agent = SimpleNamespace(
+            agent_loop_record=TestConversationStore.record(span_id="span9"),
+            calls=[
+                SimpleNamespace(
+                    model="qwen/qwen3.5-9b",
+                    prompt_tokens=100,
+                    completion_tokens=50,
+                    total_tokens=150,
+                    response_time=0.3,
+                    error=None,
+                ),
+                SimpleNamespace(
+                    model="qwen/qwen3.5-9b",
+                    prompt_tokens=10,
+                    completion_tokens=5,
+                    total_tokens=15,
+                    response_time=0.2,
+                    error="LLM call failed",
+                ),
+            ],
+        )
+        result = SimpleNamespace(
+            searches=[
+                SearchRecord(
+                    query="What are Pikachu's stats?",
+                    results=[],
+                    source="local",
+                    search_query="pikachu stats",
+                )
+            ]
+        )
+
+        saver = AgentLoopSaver()
+        conversation_id = saver.save_agent_loop(
+            agent, result, "span9", "What are Pikachu's stats?", "sess1"
+        )
+        assert conversation_id is not None
+
+        fake.execute("SELECT question, session_id, span_id, source FROM conversations")
+        assert fake.fetchone() == (
+            "What are Pikachu's stats?",
+            "sess1",
+            "span9",
+            "local",
+        )
+
+        fake.execute("SELECT conversation_id, source, search_query FROM searches")
+        assert fake.fetchone() == (conversation_id, "local", "pikachu stats")
+
+        fake.execute(
+            "SELECT conversation_id, prompt_tokens, error FROM llm_calls ORDER BY id"
+        )
+        assert fake.fetchall() == [
+            (conversation_id, 100, None),
+            (conversation_id, 10, "LLM call failed"),
+        ]
+
+    def test_save_agent_loop_with_traced_wrapper(self, monkeypatch):
+        # Regression: handle_prompt passes the TracedRAGAgent wrapper to the
+        # saver; it must delegate the record attributes to the inner agent.
+        from monitoring.db_init import init_db
+        from monitoring.tracer import TracedRAGAgent
+        from src.interface.agent_loop_saver import AgentLoopSaver
+        from src.rag.tools import SearchRecord
+
+        fake = make_fake_db(monkeypatch)
+        init_db()
+
+        inner = SimpleNamespace(
+            agent_loop_record=TestConversationStore.record(span_id="span9"),
+            calls=[],
+        )
+        wrapper = TracedRAGAgent(inner)
+        result = SimpleNamespace(searches=[])
+
+        saver = AgentLoopSaver()
+        conversation_id = saver.save_agent_loop(wrapper, result, "span9", "q", "sess1")
+        assert conversation_id is not None
+
+
+class TestConfigSweep:
+    FAKE_RESULTS = {
+        "agentic_rag": {
+            "answer_quality": {"mean_score": 4.2, "num_evaluated": 20},
+            "retrieval": {"hit_rate": 0.98},
+            "avg_searches_per_query": 1.3,
+            "latency_per_query": 1.1,
+            "total_time_seconds": 60.0,
+        }
+    }
+
+    def test_knob_env_mapping(self):
+        from evaluation.config_sweep import KNOB_ENV
+
+        assert KNOB_ENV == {
+            "temperature": "AGENT_TEMPERATURE",
+            "confidence_threshold": "CONFIDENCE_THRESHOLD",
+        }
+
+    def test_run_one_invokes_subprocess_with_env_override(self, monkeypatch, tmp_path):
+        import evaluation.config_sweep as sweep
+
+        calls = []
+        monkeypatch.setattr(
+            sweep.subprocess, "run", lambda *args, **kwargs: calls.append(kwargs)
+        )
+        source = tmp_path / "agent_eval.json"
+        source.write_text(json.dumps({"fake": "results"}))
+        monkeypatch.setattr(sweep, "AGENT_EVAL_JSON", source)
+
+        results = sweep.run_one("temperature", "0.2", tmp_path)
+
+        assert len(calls) == 1
+        assert calls[0]["env"][sweep.KNOB_ENV["temperature"]] == "0.2"
+        labeled = tmp_path / "agent_eval_temperature_0.2.json"
+        assert labeled.exists()
+        assert results == {"fake": "results"}
+
+    def test_compare_collects_metrics(self, monkeypatch):
+        import evaluation.config_sweep as sweep
+
+        monkeypatch.setattr(
+            sweep, "run_one", lambda knob, value, results_dir=None: self.FAKE_RESULTS
+        )
+        out = sweep.compare("confidence_threshold", ["0.5", "0.65"])
+
+        expected = {
+            str(value): {
+                "mean_score": 4.2,
+                "num_evaluated": 20,
+                "retrieval_hit_rate": 0.98,
+                "avg_searches_per_query": 1.3,
+                "latency_per_query": 1.1,
+                "total_time_seconds": 60.0,
+            }
+            for value in ["0.5", "0.65"]
+        }
+        assert out == expected
+
+
+class TestAgentUsage:
     @staticmethod
-    def usage_turn(text="", *calls, input_tokens=0, output_tokens=0):
-        response = TestAgentToolLoop.turn(text, *calls)
-        response.usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+    def usage_response(text="", *calls, input_tokens=0, output_tokens=0):
+        response = TestAgentToolLoop.response(text, *calls)
+        response.usage = SimpleNamespace(
+            input_tokens=input_tokens, output_tokens=output_tokens
+        )
         return response
 
-    def test_usage_accumulated_across_turns(self, monkeypatch):
+    def test_usage_accumulated_across_agent_loops(self, monkeypatch):
         web_fake = TestAgentToolLoop.web_fake()
-        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
-        agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(
-            self.usage_turn(
-                "", TestAgentToolLoop.function_call(
-                    TestAgentToolLoop.LOCAL, {"query": "pikachu stats"}
+        monkeypatch.setattr("src.search.web_search.web_search", web_fake)
+        agent = TestAgentToolLoop.agent(
+            TestAgentToolLoop.script_client(
+                self.usage_response(
+                    "",
+                    TestAgentToolLoop.function_call(
+                        TestAgentToolLoop.LOCAL, {"query": "pikachu stats"}
+                    ),
+                    input_tokens=100,
+                    output_tokens=50,
                 ),
-                input_tokens=100, output_tokens=50,
-            ),
-            self.usage_turn(text="Pikachu has HP 35.", input_tokens=100, output_tokens=50),
-        ))
+                self.usage_response(
+                    text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90.",
+                    input_tokens=100,
+                    output_tokens=50,
+                ),
+            )
+        )
         result = agent.run("What are Pikachu's stats?")
 
-        assert result["usage"] == {"input_tokens": 200, "output_tokens": 100}
+        assert result.usage == Usage(input_tokens=200, output_tokens=100)
 
     def test_usage_zero_on_early_reject(self):
         mock_client = MagicMock()
-        mock_client.client.responses.create.side_effect = AssertionError("LLM must not be called")
+        mock_client.client.responses.create.side_effect = AssertionError(
+            "LLM must not be called"
+        )
         agent = TestAgentToolLoop.agent(mock_client)
         result = agent.run("???")
 
-        assert result["usage"] == {"input_tokens": 0, "output_tokens": 0}
+        assert result.usage == Usage(input_tokens=0, output_tokens=0)
 
     def test_usage_safe_with_magicmock_usage(self):
-        response = TestAgentToolLoop.turn(text="Pikachu is Electric.")
+        response = TestAgentToolLoop.response(text="Pikachu is Electric.")
         response.usage = MagicMock()  # auto-created attrs are not ints
         agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(response))
         result = agent.run("What type is Pikachu?")
 
-        assert result["usage"] == {"input_tokens": 0, "output_tokens": 0}
+        assert result.usage == Usage(input_tokens=0, output_tokens=0)
 
     def test_rejection_result_has_usage(self, monkeypatch):
-        from src.rag.agent import REJECTION_MESSAGE
+        from src.rag.prompts import REJECTION_MESSAGE
 
         def no_web(query, num_results=5):
             raise AssertionError("tools must never run on an out-of-scope question")
 
-        monkeypatch.setattr("src.rag.execution.web.web_search", no_web)
-        response = self.usage_turn(text=REJECTION_MESSAGE, input_tokens=30, output_tokens=10)
+        monkeypatch.setattr("src.search.web_search.web_search", no_web)
+        response = self.usage_response(
+            text=REJECTION_MESSAGE, input_tokens=30, output_tokens=10
+        )
         agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(response))
         result = agent.run("Who would win Charizard vs Blastoise?")
 
-        assert "usage" in result
-        assert result["rejected"] is True
-        assert result["usage"] == {"input_tokens": 30, "output_tokens": 10}
+        assert hasattr(result, "usage")
+        assert result.rejected is True
+        assert result.usage == Usage(input_tokens=30, output_tokens=10)
 
-    def test_llm_calls_recorded_per_turn(self, monkeypatch):
+    def test_llm_calls_recorded_per_agent_loop(self, monkeypatch):
         web_fake = TestAgentToolLoop.web_fake()
-        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
-        agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(
-            self.usage_turn(
-                "", TestAgentToolLoop.function_call(
-                    TestAgentToolLoop.LOCAL, {"query": "pikachu stats"}
+        monkeypatch.setattr("src.search.web_search.web_search", web_fake)
+        agent = TestAgentToolLoop.agent(
+            TestAgentToolLoop.script_client(
+                self.usage_response(
+                    "",
+                    TestAgentToolLoop.function_call(
+                        TestAgentToolLoop.LOCAL, {"query": "pikachu stats"}
+                    ),
+                    input_tokens=100,
+                    output_tokens=50,
                 ),
-                input_tokens=100, output_tokens=50,
-            ),
-            self.usage_turn(text="Pikachu has HP 35.", input_tokens=200, output_tokens=80),
-        ))
+                self.usage_response(
+                    text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90.",
+                    input_tokens=200,
+                    output_tokens=80,
+                ),
+            )
+        )
         result = agent.run("What are Pikachu's stats?")
 
-        assert len(result["llm_calls"]) == 2
-        first, second = result["llm_calls"]
-        assert first["prompt_tokens"] == 100
-        assert first["completion_tokens"] == 50
-        assert first["total_tokens"] == 150
-        assert first["latency"] >= 0
-        assert first["error"] is None
-        assert second["prompt_tokens"] == 200
-        assert second["completion_tokens"] == 80
-        assert second["total_tokens"] == 280
+        assert len(result.llm_calls) == 2
+        first, second = result.llm_calls
+        assert first.prompt_tokens == 100
+        assert first.completion_tokens == 50
+        assert first.total_tokens == 150
+        assert first.latency >= 0
+        assert first.error is None
+        assert second.prompt_tokens == 200
+        assert second.completion_tokens == 80
+        assert second.total_tokens == 280
 
     def test_llm_calls_error_entry(self):
-        from src.rag.agent import REJECTION_MESSAGE
+        from src.rag.prompts import REJECTION_MESSAGE
 
         mock_client = MagicMock()
         mock_client.client.responses.create.side_effect = RuntimeError("server down")
         agent = TestAgentToolLoop.agent(mock_client)
         result = agent.run("Question")
 
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
-        assert len(result["llm_calls"]) == 1
-        call = result["llm_calls"][0]
-        assert call["error"] == "LLM call failed"
-        assert call["prompt_tokens"] is None
-        assert call["completion_tokens"] is None
-        assert call["total_tokens"] is None
+        assert result.rejected is True
+        assert result.answer == REJECTION_MESSAGE
+        assert len(result.llm_calls) == 1
+        call = result.llm_calls[0]
+        assert call.error == "LLM call failed"
+        assert call.prompt_tokens is None
+        assert call.completion_tokens is None
+        assert call.total_tokens is None
 
     def test_llm_calls_empty_on_early_reject(self):
         mock_client = MagicMock()
-        mock_client.client.responses.create.side_effect = AssertionError("LLM must not be called")
+        mock_client.client.responses.create.side_effect = AssertionError(
+            "LLM must not be called"
+        )
         agent = TestAgentToolLoop.agent(mock_client)
         result = agent.run("???")
 
-        assert result["llm_calls"] == []
+        assert result.llm_calls == []
 
-    def test_llm_calls_safe_with_magicmock_usage(self):
-        response = TestAgentToolLoop.turn(text="Pikachu is Electric.")
+    def test_llm_calls_safe_with_magicmock_usage(self, monkeypatch):
+        web_fake = TestAgentToolLoop.web_fake()
+        monkeypatch.setattr("src.search.web_search.web_search", web_fake)
+        response = TestAgentToolLoop.response(text="Pikachu is Electric.")
         response.usage = MagicMock()  # auto-created attrs are not ints
-        agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(response))
-        result = agent.run("What type is Pikachu?")
+        agent = TestAgentToolLoop.agent(
+            TestAgentToolLoop.script_client(
+                response,
+                TestAgentToolLoop.response(
+                    "",
+                    TestAgentToolLoop.function_call(
+                        TestAgentToolLoop.WEB, {"query": "pikachu"}
+                    ),
+                ),
+                TestAgentToolLoop.response(
+                    text="Ikue Otani voiced Pikachu in the anime."
+                ),
+            )
+        )
+        result = agent.run("Who voiced Pikachu in the anime?")
 
-        assert len(result["llm_calls"]) == 1
-        call = result["llm_calls"][0]
-        assert call["prompt_tokens"] == 0
-        assert call["completion_tokens"] == 0
-        assert call["total_tokens"] == 0
-        assert call["error"] is None
+        # The tool-less memory answer escalated to web; the MagicMock usage
+        # on the first call must be handled without int() crashes.
+        assert len(result.llm_calls) == 3
+        first = result.llm_calls[0]
+        assert first.prompt_tokens == 0
+        assert first.completion_tokens == 0
+        assert first.total_tokens == 0
+        assert first.error is None
 
 
 class TestRAGOwnsRecords:
-
     @staticmethod
-    def usage_turn(text="", *calls, input_tokens=0, output_tokens=0):
-        response = TestAgentToolLoop.turn(text, *calls)
-        response.usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+    def usage_response(text="", *calls, input_tokens=0, output_tokens=0):
+        response = TestAgentToolLoop.response(text, *calls)
+        response.usage = SimpleNamespace(
+            input_tokens=input_tokens, output_tokens=output_tokens
+        )
         return response
 
     def test_calls_are_llmcalls_with_latency(self, monkeypatch):
-        from src.rag.metrics import LLMCallRecord, calculate_cost
+        from src.rag.llm_call_record import calculate_cost
+        from src.rag.llm_call_record import LLMCallRecord
 
         web_fake = TestAgentToolLoop.web_fake()
-        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
-        agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(
-            self.usage_turn(
-                "", TestAgentToolLoop.function_call(
-                    TestAgentToolLoop.LOCAL, {"query": "pikachu stats"}
+        monkeypatch.setattr("src.search.web_search.web_search", web_fake)
+        agent = TestAgentToolLoop.agent(
+            TestAgentToolLoop.script_client(
+                self.usage_response(
+                    "",
+                    TestAgentToolLoop.function_call(
+                        TestAgentToolLoop.LOCAL, {"query": "pikachu stats"}
+                    ),
+                    input_tokens=100,
+                    output_tokens=50,
                 ),
-                input_tokens=100, output_tokens=50,
-            ),
-            self.usage_turn(text="Pikachu has HP 35.", input_tokens=200, output_tokens=80),
-        ))
+                self.usage_response(
+                    text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90.",
+                    input_tokens=200,
+                    output_tokens=80,
+                ),
+            )
+        )
         agent.run("What are Pikachu's stats?")
 
         assert len(agent.calls) == 2
@@ -2071,76 +2504,89 @@ class TestRAGOwnsRecords:
         assert first.error is None
         assert first.cost == calculate_cost(
             agent.model,
-            {"input_tokens": 100, "output_tokens": 50},
+            Usage(input_tokens=100, output_tokens=50),
         )
         assert second.total_tokens == 280
 
-    def test_turn_record_built(self, monkeypatch):
+    def test_agent_loop_record_built(self, monkeypatch):
         web_fake = TestAgentToolLoop.web_fake()
-        monkeypatch.setattr("src.rag.execution.web.web_search", web_fake)
-        agent = TestAgentToolLoop.agent(TestAgentToolLoop.script_client(
-            self.usage_turn(
-                "", TestAgentToolLoop.function_call(
-                    TestAgentToolLoop.LOCAL, {"query": "pikachu stats"}
+        monkeypatch.setattr("src.search.web_search.web_search", web_fake)
+        agent = TestAgentToolLoop.agent(
+            TestAgentToolLoop.script_client(
+                self.usage_response(
+                    "",
+                    TestAgentToolLoop.function_call(
+                        TestAgentToolLoop.LOCAL, {"query": "pikachu stats"}
+                    ),
+                    input_tokens=100,
+                    output_tokens=50,
                 ),
-                input_tokens=100, output_tokens=50,
-            ),
-            self.usage_turn(text="Pikachu has HP 35.", input_tokens=100, output_tokens=50),
-        ))
+                self.usage_response(
+                    text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90.",
+                    input_tokens=100,
+                    output_tokens=50,
+                ),
+            )
+        )
         result = agent.run("What are Pikachu's stats?")
 
-        record = agent.turn_record
+        record = agent.agent_loop_record
         assert record is not None
-        assert record.answer == result["answer"]
+        assert record.answer == result.answer
         assert record.total_tokens == 300
-        assert record.source == result["source"]
-        assert record.rejected == result["rejected"]
+        assert record.source == result.source
+        assert record.rejected == result.rejected
         assert record.response_time > 0
         assert record.span_id is None  # caller attaches the span id
 
-    def test_turn_record_for_early_reject(self):
-        from src.rag.agent import REJECTION_MESSAGE
+    def test_agent_loop_record_for_early_reject(self):
+        from src.rag.prompts import REJECTION_MESSAGE
 
         mock_client = MagicMock()
-        mock_client.client.responses.create.side_effect = AssertionError("LLM must not be called")
+        mock_client.client.responses.create.side_effect = AssertionError(
+            "LLM must not be called"
+        )
         agent = TestAgentToolLoop.agent(mock_client)
         agent.run("???")
 
-        record = agent.turn_record
+        record = agent.agent_loop_record
         assert record is not None
         assert record.rejected is True
         assert record.answer == REJECTION_MESSAGE
         assert record.total_tokens == 0
 
     def test_error_call_recorded(self):
-        from src.rag.agent import REJECTION_MESSAGE
+        from src.rag.prompts import REJECTION_MESSAGE
 
         mock_client = MagicMock()
         mock_client.client.responses.create.side_effect = RuntimeError("server down")
         agent = TestAgentToolLoop.agent(mock_client)
         result = agent.run("Question")
 
-        assert result["rejected"] is True
-        assert result["answer"] == REJECTION_MESSAGE
+        assert result.rejected is True
+        assert result.answer == REJECTION_MESSAGE
         assert len(agent.calls) == 1
         assert agent.calls[0].error == "LLM call failed"
         assert agent.calls[0].prompt_tokens is None
-        assert agent.turn_record is not None
-        assert agent.turn_record.total_tokens == 0
+        assert agent.agent_loop_record is not None
+        assert agent.agent_loop_record.total_tokens == 0
 
     def test_search_payload_shapes(self):
         from src.rag.tools import SearchRecord
 
         local = SearchRecord(
-            query="q", source="local",
-            results=[{"id": 25, "name": "Pikachu", "score": 0.9}],
+            query="q",
+            source="local",
+            results=[PokemonDoc(id=25, name="Pikachu", score=0.9)],
         )
         assert local.payload == [{"id": 25, "name": "Pikachu", "score": 0.9}]
 
         long_snippet = "x" * 500
         web = SearchRecord(
-            query="q", source="web", search_query="pikachu",
-            results=[{"title": "t", "url": "u", "snippet": long_snippet, "score": 0.8}],
+            query="q",
+            source="web",
+            search_query="pikachu",
+            results=[WebResult(title="t", url="u", snippet=long_snippet, score=0.8)],
         )
         item = web.payload[0]
         assert set(item) == {"title", "url", "snippet", "score"}
@@ -2148,14 +2594,13 @@ class TestRAGOwnsRecords:
 
 
 class TestTracerConversationIntegration:
-
     def test_traced_agent_sets_token_and_cost_attributes(self, monkeypatch):
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-        from monitoring.exporter import PostgresSpanExporter
+        from monitoring.span_exporter import PostgresSpanExporter
         from monitoring.span_store import get_trace_stats
-        from monitoring.traced_agent import TracedRAGAgent
+        from monitoring.tracer import TracedRAGAgent
 
         fake = make_fake_db(monkeypatch)
         exporter = PostgresSpanExporter()
@@ -2165,12 +2610,16 @@ class TestTracerConversationIntegration:
 
         mock_agent = MagicMock()
         mock_agent.model = "qwen/qwen3.5-9b"
-        mock_agent.run.return_value = {
-            "answer": "a",
-            "searches": [],
-            "iterations": 1,
-            "usage": {"input_tokens": 500, "output_tokens": 200},
-        }
+        mock_agent.run.return_value = AgentResult(
+            answer="a",
+            searches=[],
+            iterations=1,
+            rejected=False,
+            source=None,
+            confidence=None,
+            relevance=None,
+            usage=Usage(input_tokens=500, output_tokens=200),
+        )
 
         traced = TracedRAGAgent(agent=mock_agent, tracer=tracer)
         traced.run("test query")
@@ -2215,5 +2664,3 @@ class TestTracerConversationIntegration:
         save_feedback(999, "user", score=1)
         fake.execute("SELECT COUNT(*) FROM feedback")
         assert fake.fetchone()[0] == 1
-
-

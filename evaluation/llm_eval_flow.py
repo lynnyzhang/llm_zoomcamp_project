@@ -4,16 +4,16 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src.llm import LLMClient
-from src.rag.RAGBase import RAGBase
-from src.search.hybrid import HybridSearch
+from src.llm_client import LLMClient
+from src.rag.rag_base import RAGBase
+from src.search.hybrid_search import HybridSearch
 
 
 def setup_rag():
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
     load_dotenv(PROJECT_ROOT / ".env")
 
-    from evaluation.documents import load_document_index
+    from evaluation.document_index import load_document_index
     from evaluation.retrieval_metrics import load_qa_pairs
 
     qa_path = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"

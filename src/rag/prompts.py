@@ -5,6 +5,13 @@ REJECTION_MESSAGE = (
     "answer non-Pokémon topics. Try asking about a specific Pokémon!"
 )
 
+ESCALATION_MESSAGE = (
+    "Your previous answer was not grounded in the retrieved documents. Call "
+    "search_bulbapedia with a short keyword query for the missing facts (and "
+    "search_local_knowledge_base if you have not yet), then answer again "
+    "based only on the tool results."
+)
+
 INSTRUCTIONS = f"""\
 You are a Pokémon knowledge assistant that answers questions about the
 1,350-Pokémon knowledge base and Bulbapedia. You decide yourself when to

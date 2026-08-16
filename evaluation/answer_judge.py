@@ -1,8 +1,8 @@
 from pydantic import BaseModel
 
-from evaluation.documents import ground_truth_answer
+from evaluation.document_index import ground_truth_answer
 from evaluation.llm_calls import llm_structured
-from src.llm import LLMClient
+from src.llm_client import LLMClient
 
 
 class JudgeScore(BaseModel):

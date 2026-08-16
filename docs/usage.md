@@ -50,9 +50,10 @@ Each response includes:
 ### Single Query (Agentic RAG)
 
 ```python
-from src.rag.agent import RAGAgent
+from src.rag.rag_agent import RAGAgent
+from src.search.hybrid_search import HybridSearch
 
-agent = RAGAgent()
+agent = RAGAgent(search_index=HybridSearch())
 result = agent.run("What are Pikachu's stats?")
 
 print(f"Answer: {result['answer']}")
@@ -67,8 +68,8 @@ for i, search in enumerate(result['searches']):
 ### Single Query (Simple RAG)
 
 ```python
-from src.rag.RAGBase import RAGBase
-from src.search.hybrid import HybridSearch
+from src.rag.rag_base import RAGBase
+from src.search.hybrid_search import HybridSearch
 
 search_index = HybridSearch()
 rag = RAGBase(search_index=search_index)
@@ -80,7 +81,7 @@ print(answer)
 ### Hybrid Search
 
 ```python
-from src.search.hybrid import HybridSearch
+from src.search.hybrid_search import HybridSearch
 
 hs = HybridSearch()
 
@@ -100,7 +101,7 @@ vec_results = hs.vector_search("electric pokemon stats", num_results=5)
 from monitoring.tracer import TracedRAGAgent, record_feedback, get_trace_stats
 
 # Wrap agent with tracing
-agent = RAGAgent()
+agent = RAGAgent(search_index=HybridSearch())
 traced = TracedRAGAgent(agent)
 
 # Run and get feedback ID (matches the span exactly)
@@ -117,7 +118,7 @@ print(f"Feedback: {stats['feedback']}")
 
 ## Monitoring
 
-Tracing runs through OpenTelemetry. Every agent run, search, and LLM call produces a span. Spans go to SQLite (`monitoring/traces.db`, always on) and optionally to Postgres when `POSTGRES_HOST` is set. Tracing can be disabled entirely with `TRACING_ENABLED=0`.
+Tracing runs through OpenTelemetry. Every agent run, search, and LLM call produces a span. Spans and all monitoring data (conversations, searches, llm_calls, feedback) are stored in **Postgres** (`POSTGRES_HOST` etc.; Docker Compose starts Postgres by default). Tracing can be disabled entirely with `TRACING_ENABLED=0`.
 
 ### Grafana Dashboard (recommended)
 
@@ -138,9 +139,9 @@ The dashboard **"Pokemon RAG Monitoring"** is provisioned automatically. Panels:
 6. **Top queries** — Most frequent queries (top 20)
 7. **Agent iterations distribution** — Iterations per query
 
-### Streamlit Dashboard (SQLite)
+### Streamlit Dashboard
 
-For a lightweight dashboard over the local SQLite store:
+For a dashboard over the Postgres store:
 
 ```bash
 uv run streamlit run monitoring/dashboard.py
@@ -150,7 +151,7 @@ Sections: summary metrics, queries over time, feedback distribution, latency dis
 
 ### Trace Schema
 
-The `spans` table in `monitoring/traces.db` (mirrored in Postgres) stores:
+The `spans` table in Postgres stores:
 
 | Column            | Type    | Description                                    |
 |-------------------|---------|------------------------------------------------|
@@ -205,8 +206,8 @@ Full-data runs are manual — see "Manual full-data runs" in [docs/setup.md](set
 ### Custom Search Configuration
 
 ```python
-from src.search.hybrid import HybridSearch
-from src.rag.agent import RAGAgent
+from src.search.hybrid_search import HybridSearch
+from src.rag.rag_agent import RAGAgent
 
 # Custom weights
 hs = HybridSearch(
@@ -221,7 +222,7 @@ result = agent.run("Which Pokémon are weak to fire?")
 ### Accessing Search Results
 
 ```python
-agent = RAGAgent()
+agent = RAGAgent(search_index=HybridSearch())
 result = agent.run("What type is Pikachu?")
 
 # Each search iteration
@@ -237,8 +238,8 @@ for search_record in result['searches']:
 ### Custom RAG Pipeline
 
 ```python
-from src.rag.RAGBase import RAGBase
-from src.search.hybrid import HybridSearch
+from src.rag.rag_base import RAGBase
+from src.search.hybrid_search import HybridSearch
 
 # Custom prompt template
 CUSTOM_PROMPT = """\

@@ -56,7 +56,7 @@ course parity / test seam / dead — and remove the last category.
   mutate it from outside. State changes go through the owning object's
   methods (e.g. the agent's records are updated by the agent, not by the
   app).
-- **File cap** — no implementation file exceeds 120 lines. When a file
+- **File cap** — no implementation file exceeds 200 lines. When a file
   grows past it, split by responsibility: one class per concern, one
   module per layer. Do not grow the file.
 - **Records live beside their domain** — value objects (LLMCallRecord,
@@ -72,10 +72,23 @@ course parity / test seam / dead — and remove the last category.
   comments describing what the code does.
 - **Most common word naming** — name variables and functions with the most
   commonly used word for the meaning (e.g. `test` instead of `probe`).
+- **One word, one meaning** — never reuse the same word for different
+  concepts in the same codebase (e.g. "turn" once meant a whole agent loop,
+  a single LLM API call, and a scripted test response). When a name becomes
+  ambiguous, disambiguate by renaming each use to its precise meaning
+  (`agent_loop`, `llm_api_call`, `response`).
 - **Plain names for files and folders** — file and folder names must also
   use plain, everyday words (e.g. `data/pokemon.jsonl` not
   `data/corpus.jsonl`). This project is a demo; anyone should be able to
   understand it at a glance.
+- **Files named after their main class or function** — when a module has a
+  single main class or function, the file name is its snake_case name
+  (e.g. `card_renderer.py` for `CardRenderer`, `web_search.py` for
+  `web_search()`). This is the Java/Ruby convention applied to Python:
+  `Foo.java` holds `Foo`, `card_renderer.py` holds `CardRenderer`. Vague
+  multi-purpose names (`utils.py`, `records.py`, `metrics.py`) are
+  acceptable only when the module genuinely holds several co-equal pieces
+  (`scoring.py`, `prompts.py`); otherwise they hide what the file does.
 - **Comments only for "why"** — add comments solely for edge cases,
   workarounds, and patches, explaining why they exist. Minimize comment
   presence.
@@ -105,7 +118,7 @@ Docker alternative: `docker-compose up --build` (app + Postgres + Grafana).
 
 ## LLM Backend
 
-`.env` supplies the LLM config, read centrally by `src/llm.py`
+`.env` supplies the LLM config, read centrally by `src/llm_client.py`
 (`LLMClient.get_api_key()`, `LLMClient.get_base_url()`, `LLMClient.get_model()`, `LLMClient.get()`):
 
 - `OPENAI_API_KEY` — API key (required; RuntimeError if missing)
@@ -126,7 +139,7 @@ unchanged).
 ## Key Libraries
 
 - **minsearch** — keyword search index (NOT vector search despite the name);
-  keyword half of hybrid search (`src/search/hybrid.py`)
+  keyword half of hybrid search (`src/search/hybrid_search.py`)
 - **onnxruntime + tokenizers** — local embeddings (all-MiniLM-L6-v2 ONNX,
   no torch) via `src/search/embedder.py`
 - **openai** — LLM calls (Responses API)
@@ -138,13 +151,13 @@ unchanged).
 
 | Path | Purpose |
 |------|---------|
-| `src/llm.py` | env config: API key, base URL, model ID, client creation |
-| `src/data/` | `download_model.py`, `chunker.py`, `ingest.py` (index build) |
-| `src/search/` | `hybrid.py` (keyword + vector + RRF), `embedder.py` (ONNX) |
-| `src/rag/` | `RAGBase.py` (RAGBase), `agent.py` (manual agentic loop: LLM tool calls, guardrails) |
-| `src/interface/app.py` | Streamlit chat UI (Pokémon cards, feedback) |
-| `evaluation/` | offline eval (pre-deployment): `generate_qa.py` (QA set), `retrieval_eval.py`, `llm_eval.py`, `agent_eval.py`; `data/` (qa.jsonl), `results/` |
-| `monitoring/` | `tracer.py` (PostgresSpanExporter), `db_init.py` (connection + schema), `metrics.py` (LLMCallRecord + cost), `db_save.py` (save_conversation, save_search, save_llm_call), `db_feedback.py` (save_feedback), `db_query.py` (stats/queries), `dashboard.py` (Streamlit); `grafana/` + `dashboards/` configs on the same Postgres |
+| `src/llm_client.py` | env config: API key, base URL, model ID, client creation |
+| `src/data/` | `download_model.py`, `chunker.py`, `ingest.py` (index build), `csv_parsers.py`, `download.py`, `evolution.py`, `evolution_overrides.py`, `type_chart.py`, `pokemon_doc_builder.py` |
+| `src/search/` | `hybrid_search.py` (keyword + vector + RRF), `embedder.py` (ONNX), `web_search.py` (Tavily), `search_records.py` |
+| `src/rag/` | `rag_base.py` (RAGBase), `rag_agent.py` (RAGAgent, manual agentic loop: LLM tool calls, guardrails), `llm_call_record.py` (LLMCallRecord + cost), `scoring.py`, `tools.py` (tool defs + SearchRecord + execution), `prompts.py` |
+| `src/interface/` | `app.py` (Streamlit entry), `chat_page.py` (ChatPage), `chat_message.py` (ChatMessage), `message_renderer.py` (MessageRenderer), `card_renderer.py` (CardRenderer), `agent_loop_saver.py` (AgentLoopSaver) |
+| `evaluation/` | offline eval (pre-deployment): `generate_qa.py` (QA set), `retrieval_eval.py`, `llm_eval.py`, `agent_eval.py`; `document_index.py` (ground-truth docs), `question_generator.py`, `answer_judge.py`, `llm_judge.py`, `retrieval_metrics.py`, `dev_subset.py`, `comparison_chart.py`, `evaluation_utils.py`; `data/` (qa.jsonl), `results/` |
+| `monitoring/` | `tracer.py` (TracerSetup + TracedRAGAgent), `span_exporter.py` (PostgresSpanExporter), `span_store.py`, `db_init.py` (connection + schema + init), `db_save.py` (save_conversation, save_search, save_llm_call), `db_feedback.py` (save_feedback), `db_query.py`, `db_stats.py`, `dashboard.py` (Streamlit), `dashboard_utils.py`, `history_panels.py`, `span_panels.py`, `trace_detail_panels.py`; `grafana/` + `dashboards/` configs on the same Postgres |
 | `tests/` | pytest suite (`conftest.py`, `test_integration.py`) |
 | `docs/` | `setup.md`, `usage.md`, `evaluation.md`, `code_overview.md` |
 | `deployment/` | `Dockerfile`, `.dockerignore`, `entrypoint.sh` (pipeline orchestration + URL rewrite) |

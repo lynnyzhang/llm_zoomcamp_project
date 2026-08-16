@@ -74,10 +74,9 @@ The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│         Monitoring (OpenTelemetry + SQLite/Postgres)        │
+│            Monitoring (OpenTelemetry + Postgres)            │
 │                                                             │
-│  TracerSetup ──► SQLiteSpanExporter ──► traces.db           │
-│                 PostgresSpanExporter ──► PostgreSQL         │
+│  TracerSetup ──► PostgresSpanExporter ──► PostgreSQL        │
 │  (spans for         (custom schema)      (queries, tokens,  │
 │   agent.run,                             feedback, latency) │
 │   search, LLM)                                              │
@@ -101,12 +100,19 @@ The app runs at `http://localhost:8501`, Postgres on port 5433, and Grafana at `
 ### Local Development
 
 ```bash
-uv sync
+uv sync                          # installs ALL project dependencies into .venv (see pyproject.toml)
 cp .env.example .env              # then edit the LLM vars
 uv run python -m src.data.download_model   # fetches ONNX embedder (tokenizer.json + model.onnx)
 uv run python -m src.data.ingest           # downloads Kaggle dataset, builds data/pokemon.jsonl (full dataset, 1,350)
 uv run python -m src.data.chunker          # builds data/chunks/documents.jsonl
 uv run streamlit run src/interface/app.py  # chat UI at :8501
+```
+
+**All project dependencies** (installed by `uv sync`; alternatively add them explicitly):
+
+```bash
+uv add gitsource "huggingface-hub>=1.21" jupyter "matplotlib>=3.10" "minsearch>=0.1" "numpy>=2.5" "onnxruntime>=1.27" "openai>=2.42" "opentelemetry-api>=1.44" "opentelemetry-sdk>=1.44" "psycopg[binary]>=3.3" "python-dotenv>=1.2" "requests>=2.34" "sqlitesearch>=0.1" "streamlit>=1.59" "tavily-python>=0.7" "tokenizers>=0.22" "toyaikit>=0.0.11" "tqdm>=4.68" "watchdog>=6.0" "wget>=3.2"
+uv add --group dev pytest          # dev group: test runner (uv sync installs it by default)
 ```
 
 See [docs/setup.md](docs/setup.md) for detailed setup instructions.
@@ -117,7 +123,7 @@ See [docs/setup.md](docs/setup.md) for detailed setup instructions.
 # Ask a question via the Streamlit UI at http://localhost:8501
 
 # Or run the agent from CLI:
-set -a; source .env; set +a; uv run python -c "from src.rag.agent import RAGAgent; a = RAGAgent(); r = a.run('What are Pikachu's stats?'); print(r['answer'][:200])"
+set -a; source .env; set +a; uv run python -c "from src.rag.rag_agent import RAGAgent; from src.search.hybrid_search import HybridSearch; a = RAGAgent(search_index=HybridSearch()); r = a.run('What are Pikachu's stats?'); print(r['answer'][:200])"
 
 # Generate the ground-truth set (dev subset, 250 questions):
 uv run python -m evaluation.generate_qa
@@ -136,7 +142,8 @@ See [docs/usage.md](docs/usage.md) for the complete usage guide.
 ## Capabilities
 
 - **Hybrid search** — keyword (minsearch) + vector (local ONNX MiniLM) fused with Reciprocal Rank Fusion.
-- **Agentic loop** — the LLM decides when to call its tools (`search_local_knowledge_base`, `search_bulbapedia`), up to 3 iterations, and writes its own web keyword queries.
+- **Web search (Bulbapedia)** — Tavily-backed web search for facts the local knowledge base lacks (moves, anime, manga, lore, game history, strategy). The agent decides when local results are insufficient and searches Bulbapedia; if it answers without grounding, the loop forces one Bulbapedia retry before rejecting.
+- **Agentic loop** — the LLM decides when to call its tools (`search_local_knowledge_base`, `search_bulbapedia`), up to 3 tool-use rounds, and writes its own web keyword queries (recorded per search as `search_query`).
 - **Guardrails** — out-of-scope rejection (battle simulation/prediction, save files, cheats, non-Pokémon topics); the model refuses without calling tools, and the loop never fabricates an answer when searches fail.
 - **Pokémon cards** — retrieved documents render as cards with official artwork (PokeAPI sprites), types, and a stats summary.
 - **Feedback capture** — thumbs up/down per answer, recorded in monitoring for continuous improvement.
@@ -174,13 +181,36 @@ The with-examples judge prompt scores best overall.
 
 Both pipelines sit at a ~98% retrieval ceiling on the 50-doc dev subset, so the agent loop adds latency without a hit-rate gain here; it is expected to help on the full dataset where single-shot retrieval is weaker.
 
+### Evaluation criteria coverage
+
+Mapped against the course project rubric (see `project.md`):
+
+- **Retrieval evaluation** — three approaches (keyword / vector / hybrid) evaluated on the 250-question dev set; the best (hybrid) is what production uses.
+- **LLM evaluation** — multiple approaches compared: three prompt styles (Simple / Detailed / With Examples, LLM-judged) and Simple RAG vs Agentic RAG; the winner of each comparison is the production choice.
+- **Best practices** — hybrid search combining text + vector, evaluated; user query rewriting via the agent's per-tool keyword queries (recorded as `search_query` per search).
+- **Monitoring** — user feedback (thumbs up/down) + Streamlit and Grafana dashboards (10+ charts).
+- **Config sweeps** — `uv run python -m evaluation.config_sweep --knob temperature --values 0.0,0.2` (or `--knob confidence_threshold`) runs the agent eval per setting and saves side-by-side results, so the `.env` defaults are chosen with data.
+
+### Screenshots
+
+| App | Where |
+|---|---|
+| Chat UI with a grounded answer (cards, source caption, feedback) | `docs/screenshots/ui.png` |
+| Monitoring dashboard (conversations, traces, feedback) | `docs/screenshots/dashboard.png` |
+| Grafana "Pokemon RAG Monitoring" | `docs/screenshots/grafana.png` |
+
 ## Monitoring
 
-Tracing runs through OpenTelemetry. Every agent run, search, and LLM call produces spans with query, tokens, latency, and feedback:
+Tracing runs through OpenTelemetry. Every agent run, search, and LLM call produces spans with query, tokens, latency, and feedback. All monitoring data (conversations, spans, searches, llm_calls, feedback) lives in **PostgreSQL** (Docker Compose starts Postgres by default; `POSTGRES_*` env vars configure it):
 
-- **SQLite** (`monitoring/traces.db`) — always on, default store.
-- **PostgreSQL** — optional span export when `POSTGRES_HOST` is set (Docker Compose starts Postgres by default).
+- **Streamlit dashboard** — conversations, span traces, LLM-call details, and feedback stats.
 - **Grafana** at `http://localhost:3000` — dashboard "Pokemon RAG Monitoring" with 10 panels: total traces, cost, average latency, token usage, queries over time, feedback distribution, latency and token trends, top queries, and agent iteration distribution.
+
+## Documentation
+
+- [docs/setup.md](docs/setup.md) — environment setup, dataset ingestion, index building, and configuration (including every env variable)
+- [docs/usage.md](docs/usage.md) — how to use the app, the agent, tracing/monitoring, and the dashboards
+- [docs/evaluation.md](docs/evaluation.md) — offline evaluation: QA generation, retrieval/LLM/agent evals, and config sweeps
 
 ## Project Structure
 
@@ -197,9 +227,8 @@ project/
 ├── models/
 │   └── Xenova/all-MiniLM-L6-v2/   # ONNX embedder (tokenizer.json + model.onnx)
 ├── monitoring/
-│   ├── tracer.py           # OpenTelemetry tracing (SQLite + Postgres exporters)
+│   ├── tracer.py           # OpenTelemetry tracing (Postgres span store)
 │   ├── dashboard.py        # Streamlit monitoring dashboard
-│   ├── traces.db           # Monitoring data (SQLite)
 │   ├── grafana/provisioning/   # Grafana datasource + dashboard provisioning
 │   └── dashboards/
 │       └── pokemon_rag.json    # Grafana dashboard "Pokemon RAG Monitoring"
@@ -228,13 +257,17 @@ project/
 │   │   └── download_model.py   # ONNX embedding model download
 │   ├── search/
 │   │   ├── embedder.py     # ONNX embedder (onnxruntime, no torch)
-│   │   └── hybrid.py       # Hybrid search (keyword + vector + RRF)
+│   │   ├── hybrid_search.py # Hybrid search (keyword + vector + RRF)
+│   │   └── web_search.py   # Bulbapedia web search (Tavily)
 │   ├── rag/
-│   │   ├── RAGBase.py       # Base RAG pipeline
-│   │   └── agent.py        # Agentic RAG: LLM tool calls + guardrails
+│   │   ├── rag_base.py      # Base RAG pipeline
+│   │   └── rag_agent.py     # Agentic RAG: LLM tool calls + guardrails
 │   └── interface/
-│       └── app.py          # Streamlit chat UI
-├── tests/                  # Test suite (115 tests)
+│       ├── app.py          # Streamlit chat entry
+│       ├── chat_page.py    # Agent-loop orchestration
+│       ├── message_renderer.py  # Chat bubble rendering
+│       └── card_renderer.py     # Pokémon cards
+├── tests/                  # Test suite (142 tests)
 └── notebooks/              # Exploration notebooks
 ```
 
@@ -242,9 +275,10 @@ project/
 
 - **minsearch** — keyword search index (NOT vector search despite the name)
 - **ONNX + tokenizers** — local embeddings (all-MiniLM-L6-v2 via onnxruntime, no torch)
+- **Tavily** — Bulbapedia web search backend for the agent's escalation path (`TAVILY_API_KEY`; a missing key degrades gracefully to empty results)
 - **OpenAI** — LLM calls via the Responses API to the configured endpoint (locally hosted LLM or cloud OpenAI-compatible API)
 - **Streamlit** — chat interface and monitoring dashboard
-- **OpenTelemetry** — distributed tracing with SQLite/Postgres storage
+- **OpenTelemetry** — distributed tracing with Postgres storage
 - **Grafana** — monitoring dashboards on top of Postgres
 
 ## LLM Backend

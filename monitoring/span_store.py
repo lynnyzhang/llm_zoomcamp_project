@@ -1,7 +1,7 @@
 import logging
 
 from .db_init import get_db_connection
-from .exporter import ensure_postgres_schema
+from .span_exporter import ensure_postgres_schema
 
 
 def record_feedback(span_id, feedback):

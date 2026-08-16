@@ -15,10 +15,10 @@ load_dotenv(project_root / ".env")
 
 import streamlit as st
 
-from src.interface.cards import CardRenderer
+from src.interface.card_renderer import CardRenderer
 from src.interface.chat_page import ChatPage
-from src.interface.messages import MessageRenderer
-from src.interface.turn_saver import TurnSaver
+from src.interface.message_renderer import MessageRenderer
+from src.interface.agent_loop_saver import AgentLoopSaver
 
 
 def parse_cli_flags(argv):
@@ -51,11 +51,9 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = uuid.uuid4().hex
 
 cards = CardRenderer()
-saver = TurnSaver()
+saver = AgentLoopSaver()
 messages = MessageRenderer(cards, saver, SHOW_CONFIDENCE)
 chat_page = ChatPage(cards, messages, saver)
-
-chat_page.load_history()
 
 st.title("🤖 Pokémon Assistant")
 st.caption("Agentic RAG assistant for Pokémon knowledge")
@@ -66,4 +64,4 @@ for message in st.session_state.messages:
 
 # Chat input
 if prompt := st.chat_input("Ask a question about Pokémon..."):
-    chat_page.run_turn(prompt)
+    chat_page.handle_prompt(prompt)

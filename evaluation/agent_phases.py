@@ -2,11 +2,14 @@ import time
 
 import numpy as np
 
+from src.rag.rag_agent import RAGAgent
+from src.rag.rag_base import RAGBase
+
 from evaluation.answer_judge import evaluate_answer_quality
 from evaluation.retrieval_metrics import retrieval_accuracy
 
 
-def run_simple_rag(rag_base, client, qa_pairs, doc_idx, judge_sample, llm_available):
+def run_simple_rag(rag_base: RAGBase, client, qa_pairs: list[dict], doc_idx: dict, judge_sample: int, llm_available: bool):
     print("\n" + "=" * 60)
     print("PHASE 1: Simple RAG (single search)")
     print("=" * 60)
@@ -42,8 +45,8 @@ def run_simple_rag(rag_base, client, qa_pairs, doc_idx, judge_sample, llm_availa
     }
 
 
-def run_agentic_rag(agent, rag_base, client, qa_pairs, doc_idx, judge_sample, llm_available):
-    from evaluation.agent_loop import judge_agent_answers, run_agent_loop
+def run_agentic_rag(agent: RAGAgent, rag_base: RAGBase, client, qa_pairs: list[dict], doc_idx: dict, judge_sample: int, llm_available: bool):
+    from evaluation.agent_eval_loop import judge_agent_answers, evaluate_agent_loop
 
     print("\n" + "=" * 60)
     print("PHASE 2: Agentic RAG (agent loop)")
@@ -51,7 +54,7 @@ def run_agentic_rag(agent, rag_base, client, qa_pairs, doc_idx, judge_sample, ll
 
     print("Running agent loop on sample...")
     agent_sample = qa_pairs[:judge_sample]
-    agent_search_counts, agent_retrieval_hits, agent_latencies = run_agent_loop(
+    agent_search_counts, agent_retrieval_hits, agent_latencies = evaluate_agent_loop(
         agent, rag_base, agent_sample, llm_available, show_avg=True,
     )
 
@@ -79,8 +82,8 @@ def run_agentic_rag(agent, rag_base, client, qa_pairs, doc_idx, judge_sample, ll
     }
 
 
-def run_retrieval_comparison(agent, rag_base, qa_pairs, agent_full_sample, llm_available):
-    from evaluation.agent_loop import run_agent_loop
+def run_retrieval_comparison(agent: RAGAgent, rag_base: RAGBase, qa_pairs: list[dict], agent_full_sample: int, llm_available: bool):
+    from evaluation.agent_eval_loop import evaluate_agent_loop
 
     print("\n" + "=" * 60)
     print("PHASE 3: Full retrieval comparison (dev subset)")
@@ -89,7 +92,7 @@ def run_retrieval_comparison(agent, rag_base, qa_pairs, agent_full_sample, llm_a
     full_sample = qa_pairs[:agent_full_sample]
     print(f"Running agent on {len(full_sample)} questions for retrieval metrics...")
     t0 = time.time()
-    full_agent_search_counts, full_agent_hits, _ = run_agent_loop(
+    full_agent_search_counts, full_agent_hits, _ = evaluate_agent_loop(
         agent, rag_base, full_sample, llm_available,
     )
     full_agent_time = time.time() - t0

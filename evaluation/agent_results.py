@@ -1,6 +1,6 @@
 import json
 
-from src.llm import LLMClient
+from src.llm_client import LLMClient
 
 
 def build_results(qa_pairs, judge_sample, simple, agentic, comp):

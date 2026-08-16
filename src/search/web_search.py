@@ -1,19 +1,20 @@
-# src/search/web.py
+# src/search/web_search.py
 #
 # Web search backend for the agent's escalation path: Tavily, restricted to
-# bulbapedia.bulbagarden.net. Returns a small list of
-# {title, url, snippet, score} dicts (score = Tavily's own relevance score,
-# surfaced so the model can weight results; the shape otherwise matches the
-# old DuckDuckGo backend, so consumers are unchanged). The caller is
-# responsible for handling failures (the agent's web_search node degrades
-# gracefully to empty results).
+# bulbapedia.bulbagarden.net. Returns a small list of WebResult records (score
+# = Tavily's own relevance score, surfaced so the model can weight results; the
+# shape otherwise matches the old DuckDuckGo backend, so consumers are
+# unchanged). The caller is responsible for handling failures (the agent's
+# web_search node degrades gracefully to empty results).
 
 import os
 
 from tavily import TavilyClient
 
+from src.search.search_records import WebResult
 
-def get_api_key():
+
+def get_api_key() -> str | None:
     key = os.environ.get("TAVILY_API_KEY")
     if key is None or not key.strip():
         raise RuntimeError(
@@ -22,12 +23,12 @@ def get_api_key():
     return key
 
 
-def web_search(query, num_results=5, api_key=None):
+def web_search(query: str, num_results: int = 5, api_key: str | None = None) -> list[WebResult]:
     """Web search via Tavily, restricted to bulbapedia.bulbagarden.net.
 
-    Returns up to num_results dicts {title, url, snippet}. Raises on missing
-    key or API errors; the agent wraps this call so the flow degrades to a
-    rejection instead of crashing.
+    Returns up to num_results WebResult records. Raises on missing key or API
+    errors; the agent wraps this call so the flow degrades to a rejection
+    instead of crashing.
     """
     client = TavilyClient(api_key=api_key or get_api_key())
     response = client.search(
@@ -37,12 +38,12 @@ def web_search(query, num_results=5, api_key=None):
         include_domains=["bulbapedia.bulbagarden.net"],
     )
     results = [
-        {
-            "title": item.get("title", ""),
-            "url": item.get("url", ""),
-            "snippet": item.get("content", ""),
-            "score": item.get("score", 0.0),
-        }
+        WebResult(
+            title=item.get("title", ""),
+            url=item.get("url", ""),
+            snippet=item.get("content", ""),
+            score=item.get("score", 0.0),
+        )
         for item in response.get("results", [])
         # Skip non-authoritative user subpages (User:, User talk:, blog
         # posts) — the judge must not ground answers on them.

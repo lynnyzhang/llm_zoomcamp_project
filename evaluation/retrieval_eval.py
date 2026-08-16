@@ -19,7 +19,7 @@ def evaluate_search(search_fn, questions, k=5):
         relevant_id = str(item["document"])
 
         results = search_fn(query, num_results=k)
-        retrieved_ids = [str(doc.get("id", "")) for doc in results]
+        retrieved_ids = [str(doc.id) for doc in results]
 
         precisions.append(precision_at_k(retrieved_ids, relevant_id, k))
         recalls.append(recall_at_k(retrieved_ids, relevant_id, k))
@@ -35,7 +35,7 @@ def evaluate_search(search_fn, questions, k=5):
 
 
 def main():
-    from src.search.hybrid import HybridSearch
+    from src.search.hybrid_search import HybridSearch
 
     qa_path = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
     results_dir = PROJECT_ROOT / "evaluation" / "results"
@@ -85,9 +85,7 @@ def main():
 
     # Report the best method factually — no claim that hybrid must win: on
     # the Pokémon dev subset, exact-name keyword search often beats vector.
-    best_method = max(
-        all_results, key=lambda m: all_results[m][f"precision@{k}"]
-    )
+    best_method = max(all_results, key=lambda m: all_results[m][f"precision@{k}"])
     print(f"\nBest method by precision@{k}: {best_method}")
 
     with open(output_path, "w") as f:

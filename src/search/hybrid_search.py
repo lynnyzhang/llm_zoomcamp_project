@@ -4,9 +4,10 @@ from pathlib import Path
 from minsearch import Index, VectorSearch
 
 from src.search.embedder import Embedder
+from src.search.search_records import PokemonDoc, parse_doc
 
 
-def load_documents(path):
+def load_documents(path: Path | str) -> list[dict]:
     docs = []
     with open(path) as f:
         for line in f:
@@ -17,7 +18,7 @@ def load_documents(path):
 
 
 # Reciprocal Rank Fusion: score(doc) = sum over lists of 1 / (k + rank_i)
-def rrf(result_lists, k=60, num_results=5):
+def rrf(result_lists: list[list[dict]], k: int = 60, num_results: int = 5) -> list[dict]:
     scores = {}
     docs = {}
 
@@ -37,12 +38,14 @@ def rrf(result_lists, k=60, num_results=5):
 
 
 class HybridSearch:
-    DEFAULT_DATA = Path(__file__).resolve().parents[2] / "data" / "chunks" / "documents.jsonl"
+    DEFAULT_DATA = (
+        Path(__file__).resolve().parents[2] / "data" / "chunks" / "documents.jsonl"
+    )
 
     def __init__(
         self,
-        documents_path=None,
-        rrf_k=60,
+        documents_path: Path | str | None = None,
+        rrf_k: int = 60,
     ):
         if documents_path is not None:
             self.documents = load_documents(documents_path)
@@ -63,10 +66,8 @@ class HybridSearch:
         self.vector_index = VectorSearch()
         self.vector_index.fit(self.embeddings, self.documents)
 
-    def search(self, query, num_results=5):
-        keyword_results = self.keyword_index.search(
-            query, num_results=num_results * 2
-        )
+    def search(self, query: str, num_results: int = 5) -> list[PokemonDoc]:
+        keyword_results = self.keyword_index.search(query, num_results=num_results * 2)
 
         query_vector = self.embedder.encode(query, normalize=True)
         vector_results = self.vector_index.search(
@@ -79,14 +80,16 @@ class HybridSearch:
             num_results=num_results,
         )
 
-        return fused
+        return [parse_doc(d) for d in fused]
 
-    def keyword_search(self, query, num_results=5):
-        return self.keyword_index.search(query, num_results=num_results)
+    def keyword_search(self, query: str, num_results: int = 5) -> list[PokemonDoc]:
+        results = self.keyword_index.search(query, num_results=num_results)
+        return [parse_doc(d) for d in results]
 
-    def vector_search(self, query, num_results=5):
+    def vector_search(self, query: str, num_results: int = 5) -> list[PokemonDoc]:
         query_vector = self.embedder.encode(query, normalize=True)
-        return self.vector_index.search(query_vector, num_results=num_results)
+        results = self.vector_index.search(query_vector, num_results=num_results)
+        return [parse_doc(d) for d in results]
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +118,8 @@ if __name__ == "__main__":
         print(f"\n--- Query: {q} ---")
         results = hybrid.search(q, num_results=3)
         for i, r in enumerate(results, 1):
-            print(f"  {i}. [{r['id']}] {r.get('name', r['search_text'])[:80]}  (score: {r.get('score', 'N/A'):.6f})")
+            print(
+                f"  {i}. [{r.id}] {(r.name or r.search_text)[:80]}  (score: {(r.score or 'N/A'):.6f})"
+            )
 
     print("\nHybrid search index built and tested successfully.")

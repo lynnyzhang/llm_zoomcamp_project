@@ -99,7 +99,7 @@ fi
 echo ""
 echo "[4/7] Building search indices..."
 uv run python -c "
-from src.search.hybrid import HybridSearch
+from src.search.hybrid_search import HybridSearch
 import os
 
 # Check if we can build the index

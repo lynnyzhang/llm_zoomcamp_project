@@ -83,6 +83,16 @@ cd project/
 uv sync
 ```
 
+`uv sync` installs all project dependencies from `pyproject.toml` / `uv.lock`.
+To add the full dependency set explicitly instead:
+
+```bash
+uv add gitsource "huggingface-hub>=1.21" jupyter "matplotlib>=3.10" "minsearch>=0.1" "numpy>=2.5" "onnxruntime>=1.27" "openai>=2.42" "opentelemetry-api>=1.44" "opentelemetry-sdk>=1.44" "psycopg[binary]>=3.3" "python-dotenv>=1.2" "requests>=2.34" "sqlitesearch>=0.1" "streamlit>=1.59" "tavily-python>=0.7" "tokenizers>=0.22" "toyaikit>=0.0.11" "tqdm>=4.68" "watchdog>=6.0" "wget>=3.2"
+uv add --group dev pytest          # dev group: test runner (uv sync installs it by default)
+```
+
+Package roles: **minsearch** (keyword index), **onnxruntime + tokenizers** (local embeddings), **openai** (LLM Responses API), **tavily-python** (Bulbapedia web search), **streamlit** (chat UI + dashboards), **opentelemetry-*** (tracing), **psycopg** (Postgres), **python-dotenv** (`.env`), **matplotlib** (eval charts), plus data/ingestion helpers (requests, tqdm, watchdog, wget, huggingface-hub, jupyter, gitsource, sqlitesearch, toyaikit, numpy).
+
 ### 2. Configure environment
 
 ```bash

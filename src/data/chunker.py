@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from src.data.documents import PokemonDocBuilder
+from src.data.pokemon_doc_builder import PokemonDocBuilder
 from src.data.evolution import EvolutionChain
 from src.data.type_chart import TypeChart
 
