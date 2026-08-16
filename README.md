@@ -15,9 +15,9 @@ Given a dataset of Pokédex records (dev subset: coverage-sampled 50 Pokémon, 2
 
 ## Data
 
-The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle ([`patelris/pokemon-dataset-with-stats-and-types`](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types), download endpoint `https://www.kaggle.com/api/v1/datasets/download/patelris/pokemon-dataset-with-stats-and-types`). The two raw CSVs (`pokemon_complete.csv`, `pokemon_types.csv`) ship bundled in `data/raw/` — Kaggle's anonymous download endpoint is bot-blocked, so the repo carries its own copy and no login is needed. `src/data/ingest.py` only attempts a download when they are missing, and builds `data/pokemon.jsonl` with one structured record per Pokémon (full: 1,350 — 1,025 canonical + 325 alternate forms).
+The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle ([`patelris/pokemon-dataset-with-stats-and-types`](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types), download endpoint `https://www.kaggle.com/api/v1/datasets/download/patelris/pokemon-dataset-with-stats-and-types`). The two raw CSVs (`pokemon_complete.csv`, `pokemon_types.csv`) ship bundled in `data/raw/` — Kaggle's anonymous download endpoint is bot-blocked, so the repo carries its own copy and no login is needed. `src/data/build_documents.py` only attempts a download when they are missing, and builds `data/chunks/documents.jsonl` (full: 1,350 Pokémon docs + 18 type-chart docs — 1,025 canonical + 325 alternate forms).
 
-**Development subset:** `src/data/ingest.py` builds the full 1,350-record dataset by default; `evaluation/generate_qa.py` defaults to a deterministic coverage-sampled dev subset of 50 Pokémon (250 ground-truth questions). This is a user directive: dev subset for all automated test/eval runs, full-data QA runs manual only. See [docs/setup.md](docs/setup.md).
+**Development subset:** `src/data/build_documents.py` builds the full 1,350-record dataset by default; `evaluation/generate_qa.py` defaults to a deterministic coverage-sampled dev subset of 50 Pokémon (250 ground-truth questions). This is a user directive: dev subset for all automated test/eval runs, full-data QA runs manual only. See [docs/setup.md](docs/setup.md).
 
 ## Architecture
 
@@ -63,13 +63,13 @@ The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle
 ┌─────────────────────────────────────────────────────────────┐
 │              Data Pipeline                                  │
 │                                                             │
-│ Kaggle API ──► raw CSVs ──► pokemon.jsonl                   │
-│  (patelris/     (1,350 records,          (one record per    │
-│   pokemon-       cached, idempotent)      Pokémon, 1,350)   │
+│ Kaggle API ──► raw CSVs ──► documents.jsonl               │
+│  (patelris/     (1,350 records,          (1,350 Pokémon    │
+│   pokemon-       cached, idempotent)      + 18 type charts)│
 │   dataset)                                                  │
 │                         │                                   │
 │                         ▼                                   │
-│              chunker ──► documents.jsonl (indexed)          │
+│              HybridSearch (keyword + vector + RRF)          │
 └────────────────────────┬────────────────────────────────────┘
                          │
                          ▼
@@ -95,7 +95,7 @@ cp .env.example .env
 docker-compose up --build
 ```
 
-The app runs at `http://localhost:8501`, Postgres on port 5433, and Grafana at `http://localhost:3000`. The entrypoint ingests the full dataset, chunks it, and starts the app.
+The app runs at `http://localhost:8501`, Postgres on port 5433, and Grafana at `http://localhost:3000`. The entrypoint builds the documents corpus, indexes it, and starts the app.
 
 ### Local Development
 
@@ -103,8 +103,7 @@ The app runs at `http://localhost:8501`, Postgres on port 5433, and Grafana at `
 uv sync                          # installs ALL project dependencies into .venv (see pyproject.toml)
 cp .env.example .env              # then edit the LLM vars
 uv run python -m src.data.download_model   # fetches ONNX embedder (tokenizer.json + model.onnx)
-uv run python -m src.data.ingest           # downloads Kaggle dataset, builds data/pokemon.jsonl (full dataset, 1,350)
-uv run python -m src.data.chunker          # builds data/chunks/documents.jsonl
+uv run python -m src.data.build_documents   # builds data/chunks/documents.jsonl (full: 1,350; --limit for subset)
 uv run streamlit run src/interface/app.py  # chat UI at :8501
 ```
 
@@ -222,7 +221,6 @@ project/
 ├── .env.example            # Environment template
 ├── data/
 │   ├── raw/pokemon_complete.csv + pokemon_types.csv  # Cached raw CSVs
-│   ├── pokemon.jsonl        # One structured record per Pokémon (full: 1,350; --limit for subset)
 │   └── chunks/documents.jsonl     # 1,350 Pokémon docs + 18 type-chart docs (indexed)
 ├── models/
 │   └── Xenova/all-MiniLM-L6-v2/   # ONNX embedder (tokenizer.json + model.onnx)
@@ -252,8 +250,7 @@ project/
 │       └── final_report.md     # Final evaluation report
 ├── src/
 │   ├── data/
-│   │   ├── ingest.py       # Kaggle dataset download → pokemon.jsonl
-│   │   ├── chunker.py      # Pokémon-native docs (1 per Pokémon + 18 type-chart docs)
+│   │   ├── build_documents.py   # raw CSVs → documents.jsonl (corpus entry point)
 │   │   └── download_model.py   # ONNX embedding model download
 │   ├── search/
 │   │   ├── embedder.py     # ONNX embedder (onnxruntime, no torch)

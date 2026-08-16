@@ -10,7 +10,7 @@ deployment.
 
 The knowledge base is the Kaggle Pokémon Dataset with Stats and Types
 (`patelris/pokemon-dataset-with-stats-and-types`, 1,350 records: 1,025
-canonical Pokémon + 325 alternate forms) fetched by `src/data/ingest.py`,
+canonical Pokémon + 325 alternate forms) fetched by `src/data/build_documents.py`,
 which builds the full 1,350-record dataset by default. The **dev subset** — a
 deterministic coverage-sampled 50 Pokémon (250 ground-truth questions) — is the default for
 ground-truth generation (`evaluation/generate_qa.py`) and all automated eval
@@ -78,7 +78,7 @@ course parity / test seam / dead — and remove the last category.
   ambiguous, disambiguate by renaming each use to its precise meaning
   (`agent_loop`, `llm_api_call`, `response`).
 - **Plain names for files and folders** — file and folder names must also
-  use plain, everyday words (e.g. `data/pokemon.jsonl` not
+  use plain, everyday words (e.g. `data/chunks/documents.jsonl` not
   `data/corpus.jsonl`). This project is a demo; anyone should be able to
   understand it at a glance.
 - **Files named after their main class or function** — when a module has a
@@ -109,10 +109,13 @@ course parity / test seam / dead — and remove the last category.
 uv sync                          # install deps into .venv (Python 3.13+)
 cp .env.example .env             # then edit the LLM vars (see below)
 uv run python -m src.data.download_model   # fetch ONNX embedder artifacts
-uv run python -m src.data.ingest           # fetch Kaggle dataset, build pokemon.jsonl (dev subset: 50)
-uv run python -m src.data.chunker          # build chunks/documents.jsonl (indexed)
+uv run python -m src.data.build_documents   # build chunks/documents.jsonl (full 1,350; --limit N for a subset)
 uv run streamlit run src/interface/app.py  # dev app on :8501
 ```
+
+**Env vars are documented in two places: `.env.example` (values + comments)
+and `docs/setup.md` (reference table). Every new env var must be added to
+both — never add a var the user cannot discover.**
 
 Docker alternative: `docker-compose up --build` (app + Postgres + Grafana).
 
@@ -128,7 +131,7 @@ Docker alternative: `docker-compose up --build` (app + Postgres + Grafana).
 - `MODEL_ID` — model name (required, no default fallback; RuntimeError if
   missing)
 - `DATASET_PATH` — optional local data directory override (default `./data`,
-  used by `src/data/ingest.py`)
+  used by `src/data/build_documents.py`)
 
 All LLM calls use the OpenAI Responses API (`client.responses.create`), not
 Chat Completions. In Docker, `deployment/entrypoint.sh` rewrites a
@@ -152,7 +155,7 @@ unchanged).
 | Path | Purpose |
 |------|---------|
 | `src/llm_client.py` | env config: API key, base URL, model ID, client creation |
-| `src/data/` | `download_model.py`, `chunker.py`, `ingest.py` (index build), `csv_parsers.py`, `download.py`, `evolution.py`, `evolution_overrides.py`, `type_chart.py`, `pokemon_doc_builder.py` |
+| `src/data/` | `build_documents.py` (corpus entry point), `download_model.py`, `csv_parsers.py`, `download.py`, `evolution.py`, `evolution_overrides.py`, `type_chart.py`, `pokemon_doc_builder.py` |
 | `src/search/` | `hybrid_search.py` (keyword + vector + RRF), `embedder.py` (ONNX), `web_search.py` (Tavily), `search_records.py` |
 | `src/rag/` | `rag_base.py` (RAGBase), `rag_agent.py` (RAGAgent, manual agentic loop: LLM tool calls, guardrails), `llm_call_record.py` (LLMCallRecord + cost), `scoring.py`, `tools.py` (tool defs + SearchRecord + execution), `prompts.py` |
 | `src/interface/` | `app.py` (Streamlit entry), `chat_page.py` (ChatPage), `chat_message.py` (ChatMessage), `message_renderer.py` (MessageRenderer), `card_renderer.py` (CardRenderer), `agent_loop_saver.py` (AgentLoopSaver) |
@@ -167,7 +170,7 @@ unchanged).
 ## Testing
 
 ```bash
-set -a; source .env; set +a; uv run pytest -q   # 142 tests
+set -a; source .env; set +a; uv run pytest -q   # 149 tests — keep this count in sync with the suite
 ```
 
 ## Gotchas
@@ -176,6 +179,6 @@ set -a; source .env; set +a; uv run pytest -q   # 142 tests
   `MODEL_ID`; there is no default model. LLM calls fail lazily at first use.
 - **`.env` must never be committed** — it holds the LLM API key (ignored via a global gitignore rule; no repo `.gitignore` exists — add one).
 - `uv.lock` and `.python-version` are committed in this repo; `evaluation/results/` eval outputs are committed too.
-- `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/pokemon.jsonl`, `data/chunks/documents.jsonl`, ONNX embedder under `models/`); the two raw CSVs under `data/raw/` are **bundled and committed** (Kaggle anonymous downloads are bot-blocked, so the repo ships its own copy — no login needed); `evaluation/data/qa.jsonl` is an LLM-generated eval artifact; all monitoring data (spans + conversations + searches + llm_calls + feedback) lives in Postgres (`docker-compose up postgres`, or a local server on localhost:5432 with the capstone defaults; set `POSTGRES_HOST` etc. to override).
+- `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/chunks/documents.jsonl`, ONNX embedder under `models/`); the two raw CSVs under `data/raw/` are **bundled and committed** (Kaggle anonymous downloads are bot-blocked, so the repo ships its own copy — no login needed); `evaluation/data/qa.jsonl` is an LLM-generated eval artifact; all monitoring data (spans + conversations + searches + llm_calls + feedback) lives in Postgres (`docker-compose up postgres`, or a local server on localhost:5432 with the capstone defaults; set `POSTGRES_HOST` etc. to override).
 - Keep the project self-contained: no imports from external reference
   material (docstring attributions are comments only, never dependencies).

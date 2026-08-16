@@ -36,14 +36,16 @@ def retrieval_accuracy(search_fn, questions, k=5):
         relevant_id = str(item["document"])
 
         results = search_fn(query, num_results=k)
-        retrieved_ids = [str(doc.get("id", "")) for doc in results]
+        retrieved_ids = [str(doc.id) for doc in results]
         hit = relevant_id in retrieved_ids
         hits += hit
-        details.append({
-            "question_id": item["document"],
-            "hit": hit,
-            "retrieved_ids": retrieved_ids[:k],
-        })
+        details.append(
+            {
+                "question_id": item["document"],
+                "hit": hit,
+                "retrieved_ids": retrieved_ids[:k],
+            }
+        )
 
     n = len(questions)
     return {

@@ -193,7 +193,7 @@ uv run python -m evaluation.agent_eval
 # → evaluation/results/agent_eval.json, evaluation/results/agent_eval_comparison.png
 ```
 
-Full-data QA runs are manual: regenerate chunk → QA with `--full` first (see [docs/setup.md](setup.md), Manual full-data runs); ingest already builds the full dataset by default.
+Full-data QA runs are manual: regenerate documents → QA with `--full` first (see [docs/setup.md](setup.md), Manual full-data runs); build_documents already builds the full dataset by default.
 
 ## Limitations
 

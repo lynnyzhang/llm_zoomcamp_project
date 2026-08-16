@@ -53,7 +53,9 @@ def download_archive(url=KAGGLE_DATASET_URL):
     print(f"Downloading archive from {url} ...")
     try:
         resp = requests.get(
-            url, headers={"User-Agent": USER_AGENT}, allow_redirects=True,
+            url,
+            headers={"User-Agent": USER_AGENT},
+            allow_redirects=True,
             timeout=120,
         )
         resp.raise_for_status()
@@ -65,17 +67,14 @@ def download_archive(url=KAGGLE_DATASET_URL):
 
 
 def extract_raw_csvs():
-    # Idempotent on the raw cache: pokemon.jsonl is a derived slice of it and is
-    # never a re-download, so the raw CSVs are the deterministic source.
+    # Idempotent on the raw cache: documents.jsonl is derived from it and never
+    # triggers a re-download, so the raw CSVs are the deterministic source.
     if POKEMON_CSV.exists() and TYPES_CSV.exists():
         print(f"Using cached raw CSVs: {POKEMON_CSV}, {TYPES_CSV}")
         return
 
     zf = download_archive()
     names = zf.namelist()
-    print("Archive contents:")
-    for name in names:
-        print(f"  {name} ({zf.getinfo(name).file_size} bytes)")
 
     wanted = {
         "pokemon_complete.csv": POKEMON_CSV,

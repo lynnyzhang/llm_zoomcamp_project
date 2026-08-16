@@ -60,10 +60,6 @@ class PokemonDocBuilder:
         return "\n".join(lines)
 
     def build(self, record, chart, chain):
-        evolves_from, evolves_into = EvolutionChain.link(record, chain)
         doc = dict(record)
-        doc["evolves_from"] = evolves_from
-        doc["evolves_into"] = evolves_into
-        doc["type_effectiveness"] = chart.effectiveness(record)
         doc["search_text"] = self.build_search_text(record, chart, chain)
         return doc

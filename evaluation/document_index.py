@@ -45,7 +45,7 @@ def load_pokemon_documents():
     if not DEFAULT_DOCUMENTS_PATH.exists():
         raise SystemExit(
             f"FATAL: indexed documents missing at {DEFAULT_DOCUMENTS_PATH}. "
-            "Run `uv run python -m src.data.chunker` first."
+            "Run `uv run python -m src.data.build_documents` first."
         )
     docs = {}
     with open(DEFAULT_DOCUMENTS_PATH, encoding="utf-8") as f:

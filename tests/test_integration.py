@@ -248,32 +248,30 @@ class StubSearchIndex:
 
 
 class TestDataIngestion:
-    def test_pokemon_file_exists(self):
-        pokemon_path = DATA_DIR / "pokemon.jsonl"
-        assert pokemon_path.exists(), f"Missing {pokemon_path}"
+    def test_documents_file_exists(self):
+        docs_path = CHUNKS_DIR / "documents.jsonl"
+        assert docs_path.exists(), f"Missing {docs_path}"
 
     def test_qa_file_exists(self):
         qa_path = EVAL_QA
         assert qa_path.exists(), f"Missing {qa_path}"
 
     def test_pokemon_records_are_valid(self):
-        pokemon_path = DATA_DIR / "pokemon.jsonl"
+        docs_path = CHUNKS_DIR / "documents.jsonl"
         records = []
-        with open(pokemon_path) as f:
+        with open(docs_path) as f:
             for i, line in enumerate(f):
                 line = line.strip()
                 if not line:
                     continue
-                record = json.loads(line)
-                # New record schema: full native record (no 'passage' wrapper).
-                assert "id" in record, f"Record {i} missing 'id' field"
-                assert "name" in record, f"Record {i} missing 'name' field"
-                assert "types" in record, f"Record {i} missing 'types' field"
-                assert "stats" in record, f"Record {i} missing 'stats' field"
-                assert isinstance(record["id"], int), f"Record {i} id not an int"
-                assert isinstance(record["types"], list)
-                assert isinstance(record["stats"], dict)
-                records.append(record)
+                doc = json.loads(line)
+                if doc.get("kind") == "type_chart":
+                    continue
+                assert "id" in doc, f"Record {i} missing 'id' field"
+                assert "name" in doc, f"Record {i} missing 'name' field"
+                assert "search_text" in doc, f"Record {i} missing 'search_text' field"
+                assert isinstance(doc["id"], int), f"Record {i} id not an int"
+                records.append(doc)
         # Full dataset now (CSV swap): all 1,350 records.
         assert len(records) == 1350, f"Expected 1350 records, got {len(records)}"
 
@@ -327,11 +325,7 @@ class TestDataIngestion:
                     chart_count += 1
                 else:
                     assert "name" in doc, f"Doc {i} missing 'name'"
-                    assert "evolves_from" in doc, f"Doc {i} missing 'evolves_from'"
-                    assert "evolves_into" in doc, f"Doc {i} missing 'evolves_into'"
-                    assert "type_effectiveness" in doc, (
-                        f"Doc {i} missing 'type_effectiveness'"
-                    )
+                    assert "search_text" in doc, f"Doc {i} missing 'search_text'"
                 count += 1
         assert count == 1368, f"Expected 1368 chunked docs, got {count}"
         assert chart_count == 18, f"Expected 18 chart docs, got {chart_count}"
@@ -345,8 +339,15 @@ class TestDataIngestion:
 class TestChunkingPipeline:
     @staticmethod
     def pokemon_records():
-        with open(DATA_DIR / "pokemon.jsonl", encoding="utf-8") as f:
-            return [json.loads(line) for line in f if line.strip()]
+        records = []
+        with open(CHUNKS_DIR / "documents.jsonl", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                doc = json.loads(line)
+                if doc.get("kind") != "type_chart":
+                    records.append(doc)
+        return records
 
     @staticmethod
     def record_by_id(records, id_):
@@ -398,9 +399,8 @@ class TestChunkingPipeline:
             ivysaur, chart, chains[ivysaur["evolution_chain_id"]]
         )
         assert doc["id"] == 2  # int id preserved
-        assert doc["evolves_from"] == "Bulbasaur"
-        assert doc["evolves_into"] == ["Venusaur"]
-        assert doc["type_effectiveness"]["fire"] == 2.0
+        assert "Evolution chain" in doc["search_text"]
+        assert "fire 2.0" in doc["search_text"]
         assert "Type effectiveness:" in doc["search_text"]
         assert "Flavor text:" in doc["search_text"]
 
@@ -1500,7 +1500,7 @@ class TestEvaluationScripts:
 
         # Create a simple search function that returns the correct doc
         def perfect_search(query, num_results=5):
-            return [{"id": "42", "content": "answer"}, {"id": "1", "content": "other"}]
+            return [PokemonDoc(id=42), PokemonDoc(id=1)]
 
         questions = [
             {"question": "q1", "document": 42},
@@ -1614,7 +1614,6 @@ class TestFullPipeline:
 
     def test_data_to_search_pipeline(self, full_pipeline):
         # Verify data exists
-        assert (DATA_DIR / "pokemon.jsonl").exists()
         assert EVAL_QA.exists()
         assert (CHUNKS_DIR / "documents.jsonl").exists()
 

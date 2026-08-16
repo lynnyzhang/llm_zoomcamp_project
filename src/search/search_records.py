@@ -43,9 +43,6 @@ class PokemonDoc:
     evolution_chain_id: int | None = None
     flavor_text: str = ""
     sprite_url: str = ""
-    evolves_from: str | None = None
-    evolves_into: list = field(default_factory=list)
-    type_effectiveness: dict = field(default_factory=dict)
     search_text: str = ""
     score: float = 0.0
 

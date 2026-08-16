@@ -10,7 +10,7 @@
 
 ## Development Subset (Default)
 
-All automated runs use the **dev subset**: a deterministic coverage-sampled 50 Pokémon (all 18 types, all generations, legendary/mythical representation) → 50 Pokédex records, 250 ground-truth questions. This is a user directive (2026-08-09): `src/data/ingest.py` builds the full 1,350-record dataset by default (no LLM cost, seconds), and the dev-subset limit is applied in `evaluation/generate_qa.py` so automated eval runs stay cheap; full-data QA runs are manual only. See [Manual full-data runs](#manual-full-data-runs) below.
+All automated runs use the **dev subset**: a deterministic coverage-sampled 50 Pokémon (all 18 types, all generations, legendary/mythical representation) → 50 Pokédex records, 250 ground-truth questions. This is a user directive (2026-08-09): `src/data/build_documents.py` builds the full 1,350-record dataset by default (no LLM cost, seconds), and the dev-subset limit is applied in `evaluation/generate_qa.py` so automated eval runs stay cheap; full-data QA runs are manual only. See [Manual full-data runs](#manual-full-data-runs) below.
 
 ## Docker Setup (Recommended)
 
@@ -48,9 +48,9 @@ This starts three services:
 ### 3. Wait for pipeline
 
 On first run, the entrypoint script:
-1. Seeds the bundled dataset CSVs into the data volume (they ship in the image — no Kaggle login needed; `ingest.py` falls back to a download only if they are missing)
-2. Builds `data/pokemon.jsonl` (full dataset: 1,350 records)
-3. Chunks documents and builds hybrid search indices (keyword + vector)
+1. Seeds the bundled dataset CSVs into the data volume (they ship in the image — no Kaggle login needed; `build_documents.py` falls back to a download only if they are missing)
+2. Builds `data/chunks/documents.jsonl` (full dataset: 1,350 Pokémon docs + 18 type-chart docs)
+3. Builds hybrid search indices (keyword + vector)
 4. Initializes the Postgres monitoring schema (spans, conversations, searches, llm_calls, feedback)
 5. Launches Streamlit
 
@@ -106,17 +106,14 @@ cp .env.example .env
 # Download ONNX embedding model (tokenizer.json + model.onnx)
 uv run python -m src.data.download_model
 
-# Download the Pokémon dataset and build pokemon.jsonl (full dataset: 1,025)
-uv run python -m src.data.ingest
-
-# Chunk documents into data/chunks/documents.jsonl
-uv run python -m src.data.chunker
+# Download the Pokémon dataset and build documents.jsonl (full dataset: 1,350)
+uv run python -m src.data.build_documents
 
 # Generate the ground-truth set (dev subset: 250 questions; requires the LLM API)
 uv run python -m evaluation.generate_qa
 ```
 
-`ingest.py` defaults to the full 1,025-record dataset; pass `--limit N` for a smaller dataset (e.g. `--limit 50`). `generate_qa.py` defaults to the deterministic coverage-sampled dev subset (50 records × 5 questions = 250) and supports `--full` (all 1,025 records), `--limit N`, `--questions N` (questions per record), `--seed N`, and `--resume` (skip ids already in qa.jsonl). Each row is `{"question", "document"}` — questions only, linked to the Pokédex document that contains the answer; the LLM never writes answers.
+`build_documents.py` defaults to the full 1,350-record dataset; pass `--limit N` for a smaller dataset (e.g. `--limit 50`). `generate_qa.py` defaults to the deterministic coverage-sampled dev subset (50 records × 5 questions = 250) and supports `--full` (all 1,350 records), `--limit N`, `--questions N` (questions per record), `--seed N`, and `--resume` (skip ids already in qa.jsonl). Each row is `{"question", "document"}` — questions only, linked to the Pokédex document that contains the answer; the LLM never writes answers.
 
 ### 4. Start the app
 
@@ -158,11 +155,10 @@ The full dataset is 1,025 Pokémon; the full QA set would be 5,125 pairs (5 per 
 
 | Step | Command | What it does |
 |------|---------|--------------|
-| Ingest | `uv run python -m src.data.ingest` | All 1,350 records → `data/pokemon.jsonl` (default) |
-| Chunk  | `uv run python -m src.data.chunker` | Re-chunks whatever dataset exists (no flags) |
+| Build documents | `uv run python -m src.data.build_documents` | All 1,350 records + 18 type charts → `data/chunks/documents.jsonl` (default) |
 | QA     | `uv run python -m evaluation.generate_qa --full` | 1,350 records × 5 = 6,750 questions (flagged MANUAL — slow/costly) |
 
-`--limit N` on `generate_qa.py` selects a coverage-sampled N records (deterministic, `--seed`); on `ingest.py` it takes the first N by id.
+`--limit N` on `generate_qa.py` selects a coverage-sampled N records (deterministic, `--seed`); on `build_documents.py` it takes the first N by id.
 
 The eval scripts take no CLI flags: `retrieval_eval.py` reads the full `evaluation/data/qa.jsonl`, while `llm_eval.py` and `agent_eval.py` use in-script `sample_size` constants (10 for the LLM judge, 20 judge / 50 agent-full in `agent_eval.py`). For a full judge pass, edit those constants to `0` (all pairs) before running.
 
@@ -171,17 +167,16 @@ The eval scripts take no CLI flags: `retrieval_eval.py` reads the full `evaluati
 The pipeline is strictly ordered — each step reads the previous step's output:
 
 ```bash
-uv run python -m src.data.ingest            # 1. pokemon.jsonl (1350, default)
-uv run python -m src.data.chunker            # 2. documents.jsonl
-uv run python -m evaluation.generate_qa --full   # 3. qa.jsonl (6750) — LLM cost
-uv run python -m evaluation.retrieval_eval       # 4. retrieval metrics (no LLM)
-uv run python -m evaluation.llm_eval             # 5. LLM judge (~19 min on dev subset)
-uv run python -m evaluation.agent_eval           # 6. agent vs simple (~27 min on dev subset)
+uv run python -m src.data.build_documents   # 1. documents.jsonl (1350, default)
+uv run python -m evaluation.generate_qa --full   # 2. qa.jsonl (6750) — LLM cost
+uv run python -m evaluation.retrieval_eval       # 3. retrieval metrics (no LLM)
+uv run python -m evaluation.llm_eval             # 4. LLM judge (~19 min on dev subset)
+uv run python -m evaluation.agent_eval           # 5. agent vs simple (~27 min on dev subset)
 ```
 
 ### Cost / time note
 
-Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took ≈ 1,120s (~19 min) and the agent eval ≈ 27 min. The full 1,350-Pokémon / 6,750-question run will be substantially longer (ingest + chunk scale linearly, QA generation scales with records, and the evals scale with ground-truth questions) and consumes meaningful LLM tokens — the QA generator alone issues one multi-pair prompt per record. Budget accordingly, and switch back to the dev subset afterwards (a plain `uv run python -m evaluation.generate_qa` run regenerates the coverage-sampled 250-question set).
+Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took ≈ 1,120s (~19 min) and the agent eval ≈ 27 min. The full 1,350-Pokémon / 6,750-question run will be substantially longer (build_documents scales linearly, QA generation scales with records, and the evals scale with ground-truth questions) and consumes meaningful LLM tokens — the QA generator alone issues one multi-pair prompt per record. Budget accordingly, and switch back to the dev subset afterwards (a plain `uv run python -m evaluation.generate_qa` run regenerates the coverage-sampled 250-question set).
 
 ## Configuration Reference
 
@@ -216,9 +211,6 @@ Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took 
 
 ```
 repo bundle (fallback: Kaggle API) ──► data/raw/pokemon_complete.csv + pokemon_types.csv (1,350 records, bundled)
-                    │
-                    ▼
-              data/pokemon.jsonl (dev: 50 records)
                     │
                     ▼
               data/chunks/documents.jsonl (1,350 Pokémon docs + 18 type-chart docs, indexed)
