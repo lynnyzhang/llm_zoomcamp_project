@@ -13,17 +13,17 @@ cells = []
 cells.append(
     md("""# 01 Agent Path Analysis — detailed Q→answer trace
 
-Purpose: inspect the actual gate behavior on a mixed question set. For each
-question this notebook records the **entire LLM call sequence** (request +
-response bodies per call) and, for **each gate decision**, the confidence,
-relevance, the answer, and the **exact retrieval text** used to compute that
-confidence — with the pre-escalation gate flagged. The full trace is written to
-`evaluation/notebooks/data/agent_path_trace.txt`.
+Purpose: inspect the actual gate behavior on a small set of **local**
+questions. For each question this notebook records the **entire LLM call
+sequence** (request + response bodies per call) and, for **each gate
+decision**, the confidence, relevance, the answer, and the **exact retrieval
+text** used to compute that confidence — with the pre-escalation gate flagged.
+The full trace is written to `evaluation/notebooks/data/agent_path_trace.txt`.
 
-Input: 6 local + 2 web + 2 partial + 1 multi-Pokémon question (the multi one
-tests whether the LLM searches once per Pokémon).
+Input: the first 6 **local** questions of the dev-subset QA set
+(`evaluation/data/qa.jsonl`).
 
-Run cells top to bottom. ~11 questions × ~35s + index build ≈ ~8-10 min.""")
+Run cells top to bottom. ~6 questions × ~35s + index build ≈ ~4-5 min.""")
 )
 
 cells.append(
@@ -53,30 +53,16 @@ print("model:", agent.model)""")
 cells.append(
     md("""## 2. Question set
 
-Mixed set: the first 6 **local** questions of the dev-subset QA set, 2 **web**
-(Bulbapedia-only), 2 **local-partial** (local answers most, web may add), and 1
-**multi** (needs facts about 3 Pokémon — does the LLM search once per
-Pokémon?).""")
+Only **local** questions (answerable from the local KB): the first 6 of the
+dev-subset QA set. Each is tagged `nature=local`, `expected=hybrid -> answer`.""")
 )
 
 cells.append(
     code("""QA = load_qa(PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl")
-LOCAL = [
+QUESTIONS = [
     {"question": q["question"], "nature": "local", "expected": "hybrid -> answer"}
     for q in sample_qa(QA, 6)
 ]
-WEB = [
-    {"question": "Who voiced Pikachu in the anime?", "nature": "web", "expected": "hybrid -> web -> answer"},
-    {"question": "What is the newest Pokémon introduced in Scarlet/Violet?", "nature": "web", "expected": "hybrid -> web -> answer"},
-]
-PARTIAL = [
-    {"question": "Since Ivysaur has the Overgrow ability, what happens if its HP gets really low in battle?", "nature": "local-partial", "expected": "hybrid -> answer"},
-    {"question": "If I want to evolve Ivysaur into Venusaur, do I need any specific items or just level it up?", "nature": "local-partial", "expected": "hybrid -> answer"},
-]
-MULTI = [
-    {"question": "Compare the base stat totals of Bulbasaur, Charmander, and Squirtle — which is highest and how do their speeds differ?", "nature": "multi", "expected": "hybrid -> answer"},
-]
-QUESTIONS = LOCAL + WEB + PARTIAL + MULTI
 for i, q in enumerate(QUESTIONS, 1):
     print(f"[{i}] ({q['nature']}) {q['question']}")""")
 )
