@@ -50,7 +50,7 @@ def llm_structured_retry(
     output_type,
     model=None,
     max_retries=3,
-):
+) -> tuple:
     for attempt in range(max_retries):
         try:
             return llm_structured(
@@ -64,3 +64,4 @@ def llm_structured_retry(
             if attempt == max_retries - 1:
                 raise
             time.sleep(2**attempt)
+    raise RuntimeError("unreachable")
