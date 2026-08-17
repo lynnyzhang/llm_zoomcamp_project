@@ -656,8 +656,16 @@ class TestAgentToolLoop:
         # The fabricated local-only answer failed the grounding gate; the
         # forced web retry ran, and the answer now grounds via the local doc.
         assert result.rejected is False
-        assert result.source == "web"
+        assert result.source == "local+web"
         assert web_fake.calls == [("pikachu", 5)]
+        # The rejected attempt is retained with its failing answer for
+        # monitoring/troubleshooting.
+        assert result.escalated is True
+        assert [g.rejected for g in agent.gate_history] == [True, False]
+        assert (
+            agent.gate_history[0].rejected_answer
+            == "Pikachu has 999 attack and can fly"
+        )
 
     def test_local_tool_then_answer(self, monkeypatch):
         web_fake = self.web_fake()
@@ -681,6 +689,8 @@ class TestAgentToolLoop:
         assert result.searches[0].source == "local"
         assert result.confidence > 0.65  # grounding cosine vs the Pikachu doc
         assert result.relevance > 0.6  # query-answer cosine
+        assert result.escalated is False
+        assert [g.rejected for g in agent.gate_history] == [False]
         assert web_fake.calls == []
 
     def test_local_search_records_query_and_falls_back_to_question(self):
@@ -719,7 +729,7 @@ class TestAgentToolLoop:
         )
         result = agent.run("Who voiced Pikachu?")
 
-        assert result.source == "web"
+        assert result.source == "local+web"
         assert result.iterations == 2
         assert [s.source for s in result.searches] == ["local", "web"]
         assert result.searches[1].search_query == "Pikachu voice actor anime"

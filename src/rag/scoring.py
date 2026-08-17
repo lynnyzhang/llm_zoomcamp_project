@@ -18,6 +18,8 @@ class AgentResult:
     relevance: float | None
     usage: Usage = field(default_factory=Usage)
     llm_calls: list[LLMCallSummary] = field(default_factory=list)
+    escalated: bool = False
+    rejected_answer: str | None = None
 
     @classmethod
     def rejected_result(cls, searches):
@@ -91,13 +93,19 @@ def finalize_result(
         confidence = max(scores) if scores else 0.0
         relevance = relevance_score(embedder, query, answer)
     if confidence is not None and confidence < confidence_threshold:
-        # Ungrounded answers (memory, invented facts, tool-less replies)
-        # fail the gate — never surface them.
+        # Record the failing score and answer for monitoring/troubleshooting:
+        # the rejected attempt is what triggers escalation, so it must not
+        # be discarded.
+        result.confidence = confidence
+        result.relevance = relevance
+        result.rejected_answer = answer
         return result
     result.answer = answer
     result.rejected = False
     result.source = (
-        "web" if "web" in sources else ("local" if "local" in sources else None)
+        "local+web"
+        if "local" in sources and "web" in sources
+        else ("web" if "web" in sources else ("local" if "local" in sources else None))
     )
     result.confidence = confidence
     result.relevance = relevance

@@ -78,6 +78,9 @@ class RAGAgent(RAGBase):
     def run_agent_loop(self, query: str) -> AgentResult:
         self.calls = []
         self.agent_loop_record = None
+        # Every grounding-gate outcome in order: the rejected attempt that
+        # triggered escalation is retained here for monitoring/troubleshooting.
+        self.gate_history: list[AgentResult] = []
         start = time.perf_counter()
         # Deterministic guard: empty/whitespace or pure punctuation can never
         # be a question — reject without spending an LLM round trip.
@@ -114,6 +117,7 @@ class RAGAgent(RAGBase):
                         self.embedder,
                         self.confidence_threshold,
                     )
+                    self.gate_history.append(result)
                     if (
                         result.rejected
                         and answer
@@ -121,15 +125,18 @@ class RAGAgent(RAGBase):
                         and "web" not in sources
                         and not escalated
                     ):
-                        # One forced Bulbapedia retry before giving up: a
-                        # model that answers without grounding (from memory
-                        # or partial local results) must not starve an
-                        # answer the web could have grounded.
-                        messages.append(
-                            {"role": "developer", "content": ESCALATION_MESSAGE}
-                        )
+                        # Fail-safe edge case: the model answered with a
+                        # partial or irrelevant answer instead of calling the
+                        # web tool itself, so the grounding gate rejected it.
+                        # Force one Bulbapedia retry so a web-grounded answer
+                        # is not starved. User role: the Responses API only
+                        # allows developer messages at the start, and local
+                        # chat templates reject a mid-conversation system
+                        # message.
+                        messages.append({"role": "user", "content": ESCALATION_MESSAGE})
                         escalated = True
                     else:
+                        result.escalated = escalated
                         return self.record_agent_loop(result, start)
                 else:
                     apply_tool_calls(self, calls, query, messages, searches, sources)
@@ -140,9 +147,8 @@ class RAGAgent(RAGBase):
                 "Agent loop failed for %r", query, exc_info=True
             )
         # Loop exhausted without a final answer: never guess.
-        return self.record_agent_loop(
-            finalize_result(
-                None, query, searches, sources, self.embedder, self.confidence_threshold
-            ),
-            start,
+        final = finalize_result(
+            None, query, searches, sources, self.embedder, self.confidence_threshold
         )
+        final.escalated = escalated
+        return self.record_agent_loop(final, start)

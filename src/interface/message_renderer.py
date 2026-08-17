@@ -34,6 +34,8 @@ class MessageRenderer:
                 st.caption("Source: Local knowledge base")
             elif source == "web":
                 st.caption("Source: Bulbapedia (web)")
+            elif source == "local+web":
+                st.caption("Source: Local knowledge base + Bulbapedia (web)")
 
             docs = self.cards.pokemon_doc(searches, msg.question)
             if docs:
@@ -42,7 +44,11 @@ class MessageRenderer:
             if self.show_confidence:
                 confidence = result.confidence
                 if confidence is not None:
-                    st.progress(confidence, text=f"Confidence: {confidence:.0%}")
+                    label = f"Confidence: {confidence:.0%}"
+                    relevance = result.relevance
+                    if relevance is not None:
+                        label += f" · Relevance: {relevance:.0%}"
+                    st.progress(confidence, text=label)
 
         # Feedback buttons
         st.divider()
