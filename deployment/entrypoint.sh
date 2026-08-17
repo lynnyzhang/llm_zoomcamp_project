@@ -55,22 +55,10 @@ else
     echo "  Dataset already present, skipping seed."
 fi
 
-# Step 1: Build search corpus (download + chunk → documents.jsonl)
+# Step 1: Download ONNX embedding model (build_documents needs the tokenizer
+# to chunk, so the model must be present before the corpus is built)
 echo ""
-echo "[1/6] Building and chunking documents..."
-if [ -f "$DOCUMENTS_FILE" ]; then
-    echo "  Documents already exist, skipping processing."
-else
-    uv run python -c "
-from src.data.build_documents import main
-main()
-"
-    echo "  Documents processed and chunked."
-fi
-
-# Step 2: Download ONNX embedding model
-echo ""
-echo "[2/6] Downloading ONNX embedding model..."
+echo "[1/6] Downloading ONNX embedding model..."
 if [ -f "$EMBEDDER_MODEL_PATH/model.onnx" ] && [ -f "$EMBEDDER_MODEL_PATH/tokenizer.json" ]; then
     echo "  Model already exists, skipping download."
 else
@@ -79,6 +67,19 @@ from src.data.download_model import download
 download('Xenova/all-MiniLM-L6-v2', '${MODELS_DIR}')
 "
     echo "  Embedding model downloaded."
+fi
+
+# Step 2: Build search corpus (download + chunk → documents.jsonl)
+echo ""
+echo "[2/6] Building and chunking documents..."
+if [ -f "$DOCUMENTS_FILE" ]; then
+    echo "  Documents already exist, skipping processing."
+else
+    uv run python -c "
+from src.data.build_documents import main
+main()
+"
+    echo "  Documents processed and chunked."
 fi
 
 # Step 3: Build search indices (pre-download model)
