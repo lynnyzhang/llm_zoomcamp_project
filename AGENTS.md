@@ -170,7 +170,7 @@ unchanged).
 ## Testing
 
 ```bash
-set -a; source .env; set +a; uv run pytest -q   # 149 tests — keep this count in sync with the suite
+set -a; source .env; set +a; uv run pytest -q   # 123 tests — keep this count in sync with the suite
 ```
 
 ## Gotchas

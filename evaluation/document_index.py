@@ -9,18 +9,30 @@ DEFAULT_DOCUMENTS_PATH = (
 def load_document_index(documents_path=None):
     """data/chunks/documents.jsonl -> {str(doc id): doc}.
 
-    The ground-truth answer for a QA row is the linked document's content —
-    the analog of the FAQ 'answer' lookup in the course's RAG eval
+    The corpus is token-chunked, so each Pokémon's full document is
+    reconstructed by concatenating its chunks' search_text in `start` order
+    (joined with "\\n"). Type-chart docs (string ids) are included as-is. The
+    ground-truth answer for a QA row is the linked document's content — the
+    analog of the FAQ 'answer' lookup in the course's RAG eval
     (answer_orig = doc_idx[doc_id]["answer"]).
     """
     path = Path(documents_path) if documents_path else DEFAULT_DOCUMENTS_PATH
     docs = {}
+    parents = {}
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
                 doc = json.loads(line)
-                docs[str(doc["id"])] = doc
+                if doc.get("kind") == "type_chart":
+                    docs[str(doc["id"])] = doc
+                else:
+                    parents.setdefault(doc["id"], []).append(doc)
+    for parent_id, chunks in parents.items():
+        chunks.sort(key=lambda c: c["start"])
+        first = dict(chunks[0])
+        first["search_text"] = "\n".join(c["search_text"] for c in chunks)
+        docs[str(parent_id)] = first
     return docs
 
 

@@ -44,6 +44,8 @@ class PokemonDoc:
     flavor_text: str = ""
     sprite_url: str = ""
     search_text: str = ""
+    chunk_id: str = ""
+    start: int = 0
     score: float = 0.0
 
     @classmethod

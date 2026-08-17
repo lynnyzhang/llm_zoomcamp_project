@@ -11,26 +11,29 @@ code = nbf.v4.new_code_cell
 cells = []
 
 cells.append(
-    md("""# 04 Retrieval Quality (hybrid-search evaluation) + embedding-truncation analysis
+    md("""# 04 Retrieval Quality (hybrid-search evaluation) — chunked corpus
 
-Purpose: measure hybrid-search retrieval quality on the dev subset — hit rate,
-precision@k, recall@k, MRR per method (keyword / vector / hybrid) and per
-question type — and quantify how the embedder's **128-token truncation limit**
-degrades vector retrieval (the vector half embeds the full `search_text`, so
-any document over 128 tokens has its tail lines invisible to the vector half;
-the keyword half still sees them). Finally it assesses the feasibility of a
-retrieval pre-gate: a query-vs-document relevance floor checked before
-generation.
+Purpose: measure hybrid-search retrieval quality on the dev subset against the
+**chunked** corpus — hit rate, precision@k, recall@k, MRR per method (keyword /
+vector / hybrid) and per question type — and confirm that token-aware chunking
+(100/50, each chunk <= 128 tokens) **fixed** the embedder's 128-token
+truncation problem that the unchunked corpus suffered. It also re-assesses the
+retrieval pre-gate: a query-vs-chunk relevance floor checked before generation.
+
+With chunking, retrieval returns **chunks**; a question's ground-truth relevant
+doc is the **parent Pokémon** (qa.jsonl `document` field), and a retrieval is a
+HIT if ANY chunk of that parent appears in the top-k.
 
 Fully **offline** — embeddings run locally via ONNX, no LLM is called. Run
-cells top to bottom (~2-3 min).""")
+cells top to bottom (~2-4 min).""")
 )
 
 cells.append(
     md("""## 1. Setup
 
-Builds the hybrid search index (1,368 documents: 1,350 Pokémon + 18 type
-charts) and loads the dev-subset QA set.""")
+Builds the hybrid search index over the chunked corpus (6,100 chunks: 1,350
+Pokémon split into 4-5 chunks each + 18 type charts) and loads the dev-subset
+QA set.""")
 )
 
 cells.append(
@@ -48,15 +51,15 @@ from src.search.hybrid_search import HybridSearch
 setup()
 index = HybridSearch()
 QA = load_qa(PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl")
-print(f"documents indexed: {len(index.documents)} | questions: {len(QA)}")""")
+print(f"chunks indexed: {len(index.documents)} | questions: {len(QA)}")""")
 )
 
 cells.append(
     md("""## 2. Question set
 
 Each of the 250 dev questions carries its ground-truth document id (`document`
-field — the index of the Pokédex document the question was generated from).
-`qa.jsonl` carries no `nature` labels, so a simple keyword classifier derives a
+field — the parent Pokémon the question was generated from). `qa.jsonl`
+carries no `nature` labels, so a simple keyword classifier derives a
 per-question **type** (stats / evolution / type / ability / capture / habitat,
 falling back to `other`) for the per-type breakdown.""")
 )
@@ -95,17 +98,18 @@ cells.append(
     md("""## 3. Retrieval run
 
 For each question run the three retrieval methods against the index with
-`k=5` and record the ranked document ids. All three run locally on ONNX
-embeddings; query embeddings are batched (one batch of 250). The vector
-half can also surface type-chart documents (string ids) — those never match a
-ground-truth Pokémon id, and are excluded from the pre-gate cosine stats.""")
+`k=5` and record the ranked **parent ids** of the returned chunks (a chunk's
+parent id is its `id` field). All three run locally on ONNX embeddings; query
+embeddings are batched (one batch of 250). The vector half can also surface
+type-chart documents (string ids) — those never match a ground-truth Pokémon
+id. For the pre-gate, the raw vector index is queried with `output_ids=True`
+to recover each top-5 chunk's embedding row and its query-chunk cosine.""")
 )
 
 cells.append(
     code("""import numpy as np
 
 K = 5
-doc_rows = {d["id"]: i for i, d in enumerate(index.documents)}
 query_embeddings = index.embedder.encode_batch([q["question"] for q in QA], normalize=True)
 
 rows = []
@@ -114,11 +118,8 @@ for i, q in enumerate(QA):
     kw = index.keyword_search(q["question"], num_results=K)
     vec = index.vector_search(q["question"], num_results=K)
     hyb = index.search(q["question"], num_results=K)
-    vec_sims = [
-        float(qemb @ index.embeddings[doc_rows[d.id]])
-        for d in vec
-        if d.id in doc_rows
-    ]
+    raw_vec = index.vector_index.search(qemb, num_results=K, output_ids=True)
+    vec_sims = [float(qemb @ index.embeddings[r["_id"]]) for r in raw_vec]
     rows.append({
         "question": q["question"],
         "doc": q["document"],
@@ -135,12 +136,11 @@ print(f"retrieved all {len(rows)} questions (k={K})")""")
 cells.append(
     md("""## 4. Metrics
 
-`hit@k` = relevant doc in top-k; `precision@k` = 1/k if retrieved else 0 (one
-relevant doc per question); `recall@k` = 1 if retrieved else 0; `MRR` = 1/rank
-of the relevant doc (0 if not retrieved). Table: method × mean metrics, then a
-per-type breakdown for hybrid and keyword-vs-hybrid (vector truncation should
-hurt types whose answer line sits in the document tail — evolution and
-type-effectiveness).""")
+A question's relevant doc is its **parent Pokémon**; a retrieval is a HIT if
+ANY chunk of that parent appears in the top-k. `hit@k` = hit; `precision@k` =
+1/k if hit else 0 (one relevant parent per question); `recall@k` = 1 if hit
+else 0; `MRR` = 1/rank of the first chunk of the relevant parent (0 if not
+retrieved). Table: method × mean metrics, then a per-type breakdown.""")
 )
 
 cells.append(
@@ -195,22 +195,14 @@ per_type""")
 )
 
 cells.append(
-    md("""## 5. Truncation analysis
+    md("""## 5. Chunking fixed truncation
 
-The embedder truncates every document to **128 tokens** (`max_length=128`,
-longest-first, right — fixed to 128 with padding). Any document over 128
-tokens has its tail lines invisible to the vector half. This cell:
-
-- counts true (untruncated) token lengths for all 1,368 documents and the
-  fraction exceeding 128;
-- shows the truncation-loss distribution (tokens lost = total - 128);
-- for the 50 dev ground-truth documents, labels each line by its prefix and
-  shows which survive the cutoff;
-- maps each dev question to its answer line (via the type classifier) and
-  counts how many answer lines are fully / partially / fully-lost from the
-  vector embedding;
-- cross-tabulates answer-line status × {keyword / hybrid / vector} hit@5 — does
-  the keyword half preserve recall when the vector half loses the answer line?""")
+The unchunked corpus embedded each full `search_text`; 98.7% of documents
+exceeded the embedder's 128-token limit, so the tail lines (`Evolution chain`,
+`Type effectiveness`, `Flavor text`) were invisible to the vector half. With
+token-aware chunking (100/50, each chunk <= 128 tokens) every chunk fits the
+embedder with **no truncation**. This cell confirms it: chunk token stats, the
+chunk count per Pokémon, and that the tail lines are now present in chunks.""")
 )
 
 cells.append(
@@ -223,111 +215,47 @@ def tok_len(text):
     tk.no_padding()
     return len(tk.encode(text).ids)
 
-total_tokens = [tok_len(d["search_text"]) for d in index.documents]
-over = sum(1 for t in total_tokens if t > 128)
-losses = [t - min(t, 128) for t in total_tokens]
+chunk_tokens = [tok_len(d["search_text"]) for d in index.documents]
+print(f"chunks: {len(chunk_tokens)} | max tokens: {max(chunk_tokens)} | mean: {statistics.mean(chunk_tokens):.1f}")
+print(f"chunks over 128 tokens: {sum(1 for t in chunk_tokens if t > 128)}")
+print("chunk token distribution:")
+for lo, hi in [(0, 49), (50, 79), (80, 99), (100, 128)]:
+    n = sum(1 for t in chunk_tokens if lo <= t <= hi)
+    print(f"  {lo:3d}-{hi:3d}: {n}")
 
-print(f"documents: {len(total_tokens)} | over 128 tokens: {over} ({over / len(total_tokens):.1%})")
-print(f"truncation loss (tokens dropped): mean {statistics.mean(losses):.1f}, "
-      f"median {statistics.median(losses):.0f}, max {max(losses)}")
-bins = [(0, 0), (1, 49), (50, 99), (100, 149), (150, 200)]
-print("loss distribution (tokens lost):")
-for lo, hi in bins:
-    n = sum(1 for t in losses if lo <= t <= hi)
-    print(f"  {lo:4d}-{hi:4d}: {n}")""")
+chunks_per_pokemon = Counter()
+for d in index.documents:
+    if isinstance(d["id"], int):
+        chunks_per_pokemon[d["id"]] += 1
+print("chunks per Pokémon:", dict(Counter(chunks_per_pokemon.values())))""")
 )
 
 cells.append(
-    code("""CUTOFF = 128
+    code("""def chunk_count(prefix):
+    return sum(1 for d in index.documents if prefix in d["search_text"])
 
+print("tail-line retrievability — chunks containing each tail prefix:")
+for prefix in ("Evolution chain:", "Type effectiveness:", "Flavor text:", "Flags:"):
+    print(f"  '{prefix}': {chunk_count(prefix)} chunks")
 
-def line_spans(search_text):
-    spans = []
-    start = 0
-    for line in search_text.split("\\n"):
-        length = tok_len(line)
-        spans.append((line.split(":")[0] + ":", start, start + length))
-        start += length
-    return spans
-
-
-def status(span):
-    label, s, e = span
-    if e <= CUTOFF:
-        return "intact"
-    if s < CUTOFF < e:
-        return "partially lost"
-    return "lost"
-
-
-dev_docs = {d["id"]: d for d in index.documents if d["id"] in {q["document"] for q in QA}}
-span_by_doc = {did: line_spans(d["search_text"]) for did, d in dev_docs.items()}
-
-prefix_counts = {}
-for spans in span_by_doc.values():
-    for label, s, e in spans:
-        prefix_counts.setdefault(label, Counter())[status((label, s, e))] += 1
-
-dev_line_status = pd.DataFrame(prefix_counts).T.fillna(0).astype(int)
-print("50 dev ground-truth documents — line survival across the 128-token cutoff:")
-dev_line_status""")
+sample = next(d for d in index.documents if "Type effectiveness:" in d["search_text"])
+print()
+print("sample chunk containing 'Type effectiveness:' (chunk_id", sample["chunk_id"], "):")
+print(sample["search_text"])""")
 )
 
 cells.append(
-    code("""ANSWER_LINE = {
-    "stats": "Stats:",
-    "evolution": "Evolution chain:",
-    "type": "Type effectiveness:",
-    "ability": "Abilities:",
-    "capture": "Capture rate:",
-    "habitat": "Habitat:",
-}
-
-
-def answer_line_status(q):
-    label = ANSWER_LINE.get(q["type"])
-    if label is None:
-        return None
-    for span in span_by_doc.get(q["doc"], []):
-        if span[0] == label:
-            return status(span)
-    return None
-
-
-for q in rows:
-    q["line_status"] = answer_line_status(q)
-
-known = [q for q in rows if q["line_status"] is not None]
-print(f"questions with a known answer line: {len(known)} / {len(rows)}")
-
-status_df = pd.DataFrame(
-    [(r["line_status"], r) for r in known], columns=["line_status", "row"]
-)
-cross = pd.DataFrame(
-    [
-        {"answer-line": st, "n": len(grp),
-         "keyword hit@5": grp["row"].apply(lambda r: r["doc"] in r["kw_ids"]).mean(),
-         "hybrid hit@5": grp["row"].apply(lambda r: r["doc"] in r["hyb_ids"]).mean(),
-         "vector hit@5": grp["row"].apply(lambda r: r["doc"] in r["vec_ids"]).mean()}
-        for st, grp in status_df.groupby("line_status")
-    ]
-).round(3)
-print("answer-line status × retrieval hit@5 (does the keyword half preserve recall?):")
-cross""")
-)
-
-cells.append(
-    md("""## 6. Pre-gate feasibility
+    md("""## 6. Pre-gate feasibility (chunked)
 
 A retrieval pre-gate would reject a question before generation when retrieval
 found nothing relevant. Using the **vector** half only (the embedding-based
-score), for each question take `max cosine(query, doc)` over its top-5
-vector docs, then compare the distribution for questions whose relevant doc
-**is** in the vector top-5 vs those where it **is not**. A query-vs-document
+score), for each question take `max cosine(query, chunk)` over its top-5
+vector chunks, then compare the distribution for questions whose relevant
+parent **is** in the vector top-5 vs those where it **is not**. A query-vs-chunk
 floor separates the two only if the distributions barely overlap — report the
 overlap, a suggested floor, and the FP/FN at that floor (FP = gate passes but
-relevant doc not retrieved; FN = gate rejects a question whose relevant doc was
-retrieved).""")
+relevant parent not retrieved; FN = gate rejects a question whose relevant
+parent was retrieved).""")
 )
 
 cells.append(
@@ -355,7 +283,7 @@ dist_df = pd.DataFrame(
     {"relevant in top-5": dist_stats(hit_group),
      "not in top-5": dist_stats(miss_group)}
 ).T.round(3)
-print("max cosine(query, top-5 vector docs) by whether the relevant doc was retrieved:")
+print("max cosine(query, top-5 vector chunks) by whether the relevant parent was retrieved:")
 display(dist_df)
 
 lo = max(min(hit_group), min(miss_group))
@@ -374,14 +302,12 @@ candidates = np.arange(0.0, 1.0, 0.01)
 best = min(candidates, key=lambda f: sum(gate_errors(f)))
 best_fp, best_fn = gate_errors(best)
 
-# A floor between the distributions cleanly separates them only if no
-# question sits in the overlap band.
 mid = (lo + hi) / 2
 fp_mid, fn_mid = gate_errors(mid)
 print(f"suggested floor (min total error): {best:.2f} -> FP={best_fp}, FN={best_fn}")
 print(f"overlap midpoint floor {mid:.2f} -> FP={fp_mid}, FN={fn_mid}")
-print(f"relevant-doc-retrieved questions: {len(hit_group)} / {len(rows)} ({len(hit_group) / len(rows):.0%})")
-print("note: FP = gate passes but relevant doc NOT retrieved; FN = gate rejects a good retrieval")""")
+print(f"relevant-parent-retrieved questions: {len(hit_group)} / {len(rows)} ({len(hit_group) / len(rows):.0%})")
+print("note: FP = gate passes but relevant parent NOT retrieved; FN = gate rejects a good retrieval")""")
 )
 
 cells.append(
@@ -390,18 +316,18 @@ cells.append(
 - **Retrieval quality** — the three methods are compared on hit@5 / precision@5 /
   recall@5 / MRR in section 4, with the per-type keyword-vs-vector-vs-hybrid
   breakdown.
-- **Truncation** — ~99% of documents exceed the 128-token embedding limit; the
-  cutoff lands inside the `Stats:` line, so `Flags`, `Evolution chain`, `Type
-  effectiveness` and `Flavor text` are invisible to the vector half. The
-  section-5 cross-tab shows whether the keyword half preserves recall for the
-  affected questions.
-- **Pre-gate** — section 6 reports whether a query-vs-doc cosine floor can
-  separate good from bad retrievals and the FP/FN at the suggested floor.
-- **Recommendation** — if truncation measurably hurts vector recall for
-  evolution/type-effectiveness questions, notebook 03 (agent path) and
-  notebook 06 (end-to-end) should compare answers with and without those tail
-  lines present, and the pre-gate floor, if clean, should be prototyped as a
-  cheap rejection before generation.""")
+- **Chunking fixed truncation** — all 6,100 chunks are <= 128 tokens (max 103,
+  mean ~96, 0 over 128); the tail lines (`Evolution chain`, `Type
+  effectiveness`, `Flavor text`) are now present in thousands of chunks and
+  fully visible to the vector half.
+- **Pre-gate** — section 6 reports whether a query-vs-chunk cosine floor can
+  separate good from bad retrievals on the chunked corpus and the FP/FN at the
+  suggested floor.
+- **Recommendation** — if chunking improved vector recall (especially for
+  evolution/type-effectiveness questions whose answer lines were previously
+  truncated), notebook 06 (end-to-end) should confirm the quality gain; the
+  pre-gate floor, if clean, should be prototyped as a cheap rejection before
+  generation.""")
 )
 
 nb.cells = cells

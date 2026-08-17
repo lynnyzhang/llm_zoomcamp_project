@@ -1,6 +1,3 @@
-import contextlib
-import re
-
 import streamlit as st
 
 from src.rag.tools import SearchRecord
@@ -8,9 +5,11 @@ from src.search.search_records import PokemonDoc, TypeChartDoc
 
 
 class CardRenderer:
-    # Pure rendering of Pokémon cards; no session state here.
+    """Pure rendering of Pokémon cards; no session state here."""
 
-    def pokemon_doc(self, searches: list[SearchRecord], question: str) -> list[PokemonDoc]:
+    def pokemon_doc(
+        self, searches: list[SearchRecord], question: str
+    ) -> list[PokemonDoc]:
         """Docs for Pokémon named in the question, deduped by id — the identity
         key shared by Pokémon and docs (alternate forms have distinct ids)."""
         question_lower = question.lower()
@@ -19,8 +18,6 @@ class CardRenderer:
 
         for search in searches:
             for doc in search.results:
-                # Only doc-shaped local results render as cards; web results
-                # (title/url/snippet) carry no "id" and must never be shown.
                 if not isinstance(doc, PokemonDoc):
                     continue
                 doc_id = doc.id
@@ -30,35 +27,6 @@ class CardRenderer:
                     docs.append(doc)
 
         return docs
-
-    def doc_artwork_url(self, doc: PokemonDoc | TypeChartDoc) -> str:
-        doc_id = str(doc.id)
-        pokemon_id = re.sub(r"\D", "", doc_id)
-        if pokemon_id:
-            # High-res 475x475 official artwork — the dataset sprite_url is a
-            # small 96x96 image. Missing artwork (404) degrades to no image
-            # via the caller's suppress.
-            return (
-                "https://raw.githubusercontent.com/PokeAPI/sprites/master/"
-                f"sprites/pokemon/other/official-artwork/{pokemon_id}.png"
-            )
-        # Non-numeric ids (type-chart docs) have no artwork; keep any sprite.
-        return doc.sprite_url or ""
-
-    def stats_summary(self, doc: PokemonDoc | TypeChartDoc, limit: int = 200) -> str:
-        # Type-chart docs carry no stats.
-        if isinstance(doc, TypeChartDoc):
-            return ""
-        stats = doc.stats
-        parts = [
-            f"hp {stats.hp}",
-            f"attack {stats.attack}",
-            f"defense {stats.defense}",
-            f"sp. attack {stats.sp_attack}",
-            f"sp. defense {stats.sp_defense}",
-            f"speed {stats.speed}",
-        ]
-        return ", ".join(parts)[:limit]
 
     def card_title(self, doc: PokemonDoc | TypeChartDoc) -> str:
         if isinstance(doc, TypeChartDoc):
@@ -85,17 +53,7 @@ class CardRenderer:
             columns = st.columns(4)
             for col, doc in zip(columns, row_docs):
                 with col:
-                    title = self.card_title(doc)
-                    artwork_url = self.doc_artwork_url(doc)
-                    if artwork_url:
-                        # Broken/404 artwork must not break the card — the
-                        # title and stats below still render without it.
-                        with contextlib.suppress(Exception):
-                            st.image(artwork_url, width="stretch")
-                    st.markdown(f"**{title}**")
+                    st.markdown(f"**{self.card_title(doc)}**")
                     caption = self.card_caption(doc)
                     if caption:
                         st.caption(caption)
-                    summary = self.stats_summary(doc)
-                    if summary:
-                        st.caption(summary)

@@ -86,6 +86,25 @@ prints a note and the measurement is skipped everywhere downstream.""")
 )
 
 cells.append(
+    md("""**bi-encoder vs cross-encoder**
+
+- **bi-encoder**: encodes two texts INDEPENDENTLY into separate vectors, then
+  takes their cosine similarity. Fast and precomputable (documents are embedded
+  once, offline), but weaker judgment — each text is compressed in isolation
+  before it knows what it will be compared against. This is what the current
+  gate uses (all-MiniLM-L6-v2).
+- **cross-encoder**: feeds BOTH texts into the model together as one input, so
+  attention can cross-reference tokens between them. More accurate (it can
+  check "does this number appear in this doc?"), but slower — every
+  (answer, passage) pair needs its own forward pass, and nothing is
+  precomputable.
+- **line_score**: a specific bi-encoder scoring method — split the document
+  into labeled lines, compare the answer to each line, take the max. Better
+  than full-doc because the answer only needs to match its one relevant line
+  (and lines are < 128 tokens, so there is no truncation loss).""")
+)
+
+cells.append(
     code("""import os
 import onnxruntime as ort
 from tokenizers import Tokenizer
@@ -152,6 +171,23 @@ For each measurement: mean/median for correct vs incorrect answers and a
 separation metric (AUROC via sklearn — 1.0 = perfect separation, 0.5 = no
 separation). `relevance` is included as a bonus row to verify the handoff
 hypothesis (it should NOT discriminate).""")
+)
+
+cells.append(
+    md("""**AUROC: how well a score separates correct from incorrect**
+
+AUROC (Area Under the Receiver Operating Characteristic curve) is a single
+0-1 number measuring how well a score **ranks** correct answers above incorrect
+ones, independent of any threshold. **1.0 = perfect separation, 0.5 = random.**
+
+It is a property of the SCORE, not of any specific cutoff. A model with higher
+AUROC can still have a worse operating point at a given threshold, because
+different models produce different score distributions — the same `t` lands at
+a different place in each.
+
+This is why the cross-encoder (AUROC 0.967) does NOT beat line_score at t=0.3:
+at that same threshold it has worse FN (3.8% vs 0%). Its advantage only shows
+if you move the threshold (t=0.5 → FP=0 but FN=7).""")
 )
 
 cells.append(
@@ -243,6 +279,24 @@ cells.append(
 Choose the production measurement weighing separation, FP/FN at the operating
 point, and cost/latency (bi-encoder: local, fast; cross-encoder: local,
 slower per-pair; LLM judge: one LLM call per answer).""")
+)
+
+cells.append(
+    md("""**Why line_score >= 0.30 is recommended over the cross-encoder**
+
+The acceptance criteria constrain **rejection <= 10%** and **correct accepted
+>= 95%** (FN <= 5%) — they say nothing about FP.
+
+- **line_score 0.30**: FN 0%, rejection 6.7% → criteria **MET**, at the
+  cheapest cost (local ONNX, one encode per line, no LLM).
+- **cross-encoder 0.30**: FN 3.8% → **FAILS** the correct-accepted >= 95% bar;
+  to reach FP=0 you must accept FN=7.
+- **LLM judge**: most accurate (FP 18.2%, FN 0%) but one LLM call per answer —
+  keep for offline evaluation, not the runtime gate.
+
+The recommendation is **criteria-driven, not accuracy-driven**. If the product
+priority is "never show a wrong answer" (FP worse than FN), the cross-encoder
+at t=0.5 (FP=0, FN=7) is the alternative.""")
 )
 
 cells.append(

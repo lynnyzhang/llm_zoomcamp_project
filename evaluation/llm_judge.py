@@ -1,12 +1,19 @@
 import time
 
+from pydantic import BaseModel
+
 from src.llm_client import LLMClient
+
+
+class JudgeScore(BaseModel):
+    faithfulness: int  # 1-5
+    relevance: int  # 1-5
+    coherence: int  # 1-5
+    explanation: str  # brief reasoning
 
 
 def llm_judge(client, instructions, user_prompt, model=None):
     model = model or LLMClient.get_model()
-
-    from evaluation.llm_eval import JudgeScore
 
     messages = [
         {"role": "developer", "content": instructions},
@@ -26,7 +33,9 @@ def llm_judge(client, instructions, user_prompt, model=None):
         text_format=JudgeScore,
     )
     if response.output_parsed is None:
-        raise ValueError("structured output unsupported: server returned output_parsed=None")
+        raise ValueError(
+            "structured output unsupported: server returned output_parsed=None"
+        )
     return response.output_parsed
 
 
@@ -39,7 +48,7 @@ def llm_judge_retry(client, instructions, user_prompt, model=None, max_retries=3
             if attempt == max_retries - 1:
                 print(f"  Judge call failed after {max_retries} attempts: {e}")
                 return None
-            time.sleep(2 ** attempt)
+            time.sleep(2**attempt)
 
 
 def evaluate_single(
@@ -58,7 +67,9 @@ def evaluate_single(
         answer=generated_answer,
         ground_truth=ground_truth,
     )
-    result = llm_judge_retry(client, judge_config["instructions"], user_prompt, model=model)
+    result = llm_judge_retry(
+        client, judge_config["instructions"], user_prompt, model=model
+    )
     if result is None:
         return None
     return {

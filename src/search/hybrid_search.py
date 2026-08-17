@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 from minsearch import Index, VectorSearch
@@ -17,14 +18,20 @@ def load_documents(path: Path | str) -> list[dict]:
     return docs
 
 
+def get_relevance_threshold():
+    return float(os.environ.get("RETRIEVAL_SCORE_THRESHOLD", "0.3"))
+
+
 # Reciprocal Rank Fusion: score(doc) = sum over lists of 1 / (k + rank_i)
-def rrf(result_lists: list[list[dict]], k: int = 60, num_results: int = 5) -> list[dict]:
+def rrf(
+    result_lists: list[list[dict]], k: int = 60, num_results: int = 5
+) -> list[dict]:
     scores = {}
     docs = {}
 
     for results in result_lists:
         for rank, doc in enumerate(results):
-            key = (doc["id"],)
+            key = (doc.get("chunk_id") or doc["id"],)
             scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
             docs[key] = doc
 
@@ -46,6 +53,7 @@ class HybridSearch:
         self,
         documents_path: Path | str | None = None,
         rrf_k: int = 60,
+        relevance_threshold: float | None = None,
     ):
         if documents_path is not None:
             self.documents = load_documents(documents_path)
@@ -53,6 +61,11 @@ class HybridSearch:
             self.documents = load_documents(self.DEFAULT_DATA)
 
         self.rrf_k = rrf_k
+        self.relevance_threshold = (
+            relevance_threshold
+            if relevance_threshold is not None
+            else get_relevance_threshold()
+        )
 
         self.keyword_index = Index(
             text_fields=["search_text", "name"],
@@ -65,6 +78,23 @@ class HybridSearch:
         self.embeddings = self.embedder.encode_batch(texts, normalize=True)
         self.vector_index = VectorSearch()
         self.vector_index.fit(self.embeddings, self.documents)
+
+    def _filter_relevance(self, docs, query_vector):
+        # The RRF score is rank-based, not a cosine, so relevance is the
+        # query↔chunk cosine (the vector-search score). Compute it for every
+        # chunk and drop those below the threshold; a chunk with no cosine
+        # (keyword-only) is kept conservatively.
+        cosines = self.embeddings @ query_vector
+        chunk_cosine = {
+            doc.get("chunk_id") or doc["id"]: float(c)
+            for doc, c in zip(self.documents, cosines)
+        }
+        kept = []
+        for doc in docs:
+            cosine = chunk_cosine.get(doc.get("chunk_id") or doc["id"])
+            if cosine is None or cosine >= self.relevance_threshold:
+                kept.append(doc)
+        return kept
 
     def search(self, query: str, num_results: int = 5) -> list[PokemonDoc]:
         keyword_results = self.keyword_index.search(query, num_results=num_results * 2)
@@ -80,16 +110,18 @@ class HybridSearch:
             num_results=num_results,
         )
 
-        return [parse_doc(d) for d in fused]
+        return [parse_doc(d) for d in self._filter_relevance(fused, query_vector)]
 
     def keyword_search(self, query: str, num_results: int = 5) -> list[PokemonDoc]:
+        # No cosine is available for keyword-only results, so no relevance
+        # filter applies here.
         results = self.keyword_index.search(query, num_results=num_results)
         return [parse_doc(d) for d in results]
 
     def vector_search(self, query: str, num_results: int = 5) -> list[PokemonDoc]:
         query_vector = self.embedder.encode(query, normalize=True)
         results = self.vector_index.search(query_vector, num_results=num_results)
-        return [parse_doc(d) for d in results]
+        return [parse_doc(d) for d in self._filter_relevance(results, query_vector)]
 
 
 # ---------------------------------------------------------------------------

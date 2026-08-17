@@ -29,6 +29,7 @@ OPENAI_API_BASE_URL="http://localhost:9101/v1"
 DATASET_PATH="./data"
 TAVILY_API_KEY="your-tavily-api-key-here"   # optional: Bulbapedia web-search fallback
 CONFIDENCE_THRESHOLD="0.65"                 # minimum grounding cosine (0..1) for an answer; below it -> rejection
+RETRIEVAL_SCORE_THRESHOLD="0.3"             # minimum query↔chunk cosine (0..1) for a retrieved chunk; below it -> dropped
 ```
 
 ### 2. Start services
@@ -190,6 +191,7 @@ Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took 
 | `DATASET_PATH`     | `./data`                         | Dataset storage path                |
 | `TAVILY_API_KEY`   | (none — optional)                | Tavily API key for the Bulbapedia web-search fallback; without it the agent rejects when local search cannot answer confidently |
 | `CONFIDENCE_THRESHOLD` | `0.65`                        | Minimum grounding score (0–1) an answer must have to be returned — max embedding-cosine similarity between the answer and any single retrieved record; below it the answer is replaced by the rejection message |
+| `RETRIEVAL_SCORE_THRESHOLD` | `0.3`                     | Minimum query↔chunk cosine (0–1) a retrieved chunk must have to be returned by hybrid search; below it the chunk is dropped as irrelevant |
 | `AGENT_TEMPERATURE` | `0.0`                          | Sampling temperature for agent-loop tool decisions (deterministic) — set to `1` for reasoning models (o1/o3) |
 | `ANSWER_TEMPERATURE` | `0.3`                         | Sampling temperature for `RAGBase.llm()` answer generation — set to `1` for reasoning models (o1/o3) |
 | `POSTGRES_DB`      | `capstone`                       | PostgreSQL database name            |

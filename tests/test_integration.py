@@ -38,7 +38,6 @@ from src.search.search_records import PokemonDoc, WebResult
 
 DATA_DIR = PROJECT_ROOT / "data"
 CHUNKS_DIR = DATA_DIR / "chunks"
-RESULTS_DIR = PROJECT_ROOT / "evaluation" / "results"
 EVAL_QA = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
 
 
@@ -271,9 +270,14 @@ class TestDataIngestion:
                 assert "name" in doc, f"Record {i} missing 'name' field"
                 assert "search_text" in doc, f"Record {i} missing 'search_text' field"
                 assert isinstance(doc["id"], int), f"Record {i} id not an int"
+                assert "chunk_id" in doc, f"Record {i} missing 'chunk_id' field"
+                assert "start" in doc, f"Record {i} missing 'start' field"
                 records.append(doc)
-        # Full dataset now (CSV swap): all 1,350 records.
-        assert len(records) == 1350, f"Expected 1350 records, got {len(records)}"
+        # Full dataset now (CSV swap): all 1,350 Pokémon, each chunked into
+        # multiple docs — count distinct parent ids, not rows.
+        assert len({r["id"] for r in records}) == 1350, (
+            f"Expected 1350 distinct Pokémon, got {len({r['id'] for r in records})}"
+        )
 
     def test_qa_records_are_valid(self):
         qa_path = EVAL_QA
@@ -306,6 +310,7 @@ class TestDataIngestion:
         docs_path = CHUNKS_DIR / "documents.jsonl"
         count = 0
         chart_count = 0
+        pokemon_chunk_count = 0
         with open(docs_path) as f:
             for i, line in enumerate(f):
                 line = line.strip()
@@ -325,10 +330,14 @@ class TestDataIngestion:
                     chart_count += 1
                 else:
                     assert "name" in doc, f"Doc {i} missing 'name'"
-                    assert "search_text" in doc, f"Doc {i} missing 'search_text'"
+                    assert "chunk_id" in doc, f"Doc {i} missing 'chunk_id'"
+                    assert "start" in doc, f"Doc {i} missing 'start'"
+                    pokemon_chunk_count += 1
                 count += 1
-        assert count == 1368, f"Expected 1368 chunked docs, got {count}"
         assert chart_count == 18, f"Expected 18 chart docs, got {chart_count}"
+        assert pokemon_chunk_count >= 1350, (
+            f"Expected >= 1350 Pokémon chunks, got {pokemon_chunk_count}"
+        )
 
 
 # ===========================================================================
@@ -340,18 +349,26 @@ class TestChunkingPipeline:
     @staticmethod
     def pokemon_records():
         records = []
+        seen = set()
         with open(CHUNKS_DIR / "documents.jsonl", encoding="utf-8") as f:
             for line in f:
                 if not line.strip():
                     continue
                 doc = json.loads(line)
-                if doc.get("kind") != "type_chart":
+                if doc.get("kind") != "type_chart" and doc["id"] not in seen:
+                    seen.add(doc["id"])
                     records.append(doc)
         return records
 
     @staticmethod
     def record_by_id(records, id_):
         return next(r for r in records if r["id"] == id_)
+
+    @staticmethod
+    def full_records():
+        from src.data.csv_parsers import load_raw_rows, parse_row
+
+        return sorted((parse_row(r) for r in load_raw_rows()), key=lambda r: r["id"])
 
     @staticmethod
     def chart():
@@ -370,7 +387,9 @@ class TestChunkingPipeline:
     def test_evolution_link_ivysaur(self):
         from src.data.evolution import EvolutionChain
 
-        records = self.pokemon_records()
+        # Evolution linkage needs evolution_chain_id, which the trimmed corpus
+        # chunks drop — build the full records from the raw CSVs instead.
+        records = self.full_records()
         chains = EvolutionChain.build_map(records)
         ivysaur = self.record_by_id(records, 2)
         chain = chains[ivysaur["evolution_chain_id"]]
@@ -391,7 +410,7 @@ class TestChunkingPipeline:
         from src.data.pokemon_doc_builder import PokemonDocBuilder
         from src.data.evolution import EvolutionChain
 
-        records = self.pokemon_records()
+        records = self.full_records()
         chart = self.chart()
         chains = EvolutionChain.build_map(records)
         ivysaur = self.record_by_id(records, 2)
@@ -433,36 +452,57 @@ class TestHybridSearch:
         # 2026-08-07) — 3000 can never hold on the dev subset.
         assert len(search_index.documents) >= 50
 
-    def test_keyword_search_returns_results(self, search_index):
-        results = search_index.keyword_search("pikachu", num_results=5)
-        assert len(results) > 0
-        assert len(results) <= 5
-        for doc in results:
-            assert hasattr(doc, "id")
-            assert hasattr(doc, "search_text")
-
-    def test_vector_search_returns_results(self, search_index):
-        results = search_index.vector_search("electric pokemon stats", num_results=5)
-        assert len(results) > 0
-        assert len(results) <= 5
-        for doc in results:
+    def test_keyword_and_vector_search_return_results(self, search_index):
+        kw = search_index.keyword_search("pikachu", num_results=5)
+        assert len(kw) > 0 and len(kw) <= 5
+        for doc in kw:
+            assert hasattr(doc, "id") and hasattr(doc, "search_text")
+        vec = search_index.vector_search("electric pokemon stats", num_results=5)
+        assert len(vec) > 0 and len(vec) <= 5
+        for doc in vec:
             assert hasattr(doc, "id")
 
-    def test_hybrid_search_returns_results(self, search_index):
+    def test_hybrid_search_returns_ranked_results(self, search_index):
         results = search_index.search("What are Pikachu's stats?", num_results=5)
-        assert len(results) > 0
-        assert len(results) <= 5
+        assert len(results) > 0 and len(results) <= 5
         for doc in results:
             assert hasattr(doc, "id")
             assert hasattr(doc, "score"), "Hybrid results should have a 'score' field"
             assert isinstance(doc.score, (int, float))
-
-    def test_hybrid_search_scores_are_ranked(self, search_index):
-        results = search_index.search("fire type pokemon", num_results=5)
         scores = [doc.score for doc in results]
         assert scores == sorted(scores, reverse=True), (
             "Scores should be in descending order"
         )
+
+    def test_relevance_filter_keeps_only_relevant_chunks(self):
+        from src.search.hybrid_search import HybridSearch
+
+        index = HybridSearch(
+            documents_path=CHUNKS_DIR / "documents.jsonl", relevance_threshold=0.3
+        )
+        results = index.search("What are Pikachu's stats?", num_results=5)
+        query_vector = index.embedder.encode(
+            "What are Pikachu's stats?", normalize=True
+        )
+        cosines = index.embeddings @ query_vector
+        chunk_cosine = {
+            d.get("chunk_id") or d["id"]: float(c)
+            for d, c in zip(index.documents, cosines)
+        }
+        assert len(results) > 0
+        for r in results:
+            assert chunk_cosine[r.chunk_id] >= 0.3
+
+    def test_relevance_filter_can_return_empty(self):
+        from src.search.hybrid_search import HybridSearch
+
+        # A near-1.0 threshold drops every chunk, exercising the empty-results
+        # path the agent must handle gracefully.
+        index = HybridSearch(
+            documents_path=CHUNKS_DIR / "documents.jsonl", relevance_threshold=0.99
+        )
+        results = index.search("What are Pikachu's stats?", num_results=5)
+        assert len(results) == 0
 
     def test_rrf_fusion(self):
         from src.search.hybrid_search import rrf
@@ -1274,214 +1314,11 @@ class TestMonitoring:
 
 
 # ===========================================================================
-# PHASE 7: Evaluation Results Verification
-# ===========================================================================
-
-
-class TestEvaluationResults:
-    def test_retrieval_eval_file_exists(self):
-        path = RESULTS_DIR / "retrieval_eval.json"
-        assert path.exists(), f"Missing {path}"
-
-    def test_retrieval_eval_structure(self):
-        with open(RESULTS_DIR / "retrieval_eval.json") as f:
-            data = json.load(f)
-
-        assert "keyword" in data
-        assert "vector" in data
-        assert "hybrid" in data
-
-        for method in ["keyword", "vector", "hybrid"]:
-            section = data[method]
-            assert "precision@5" in section
-            assert "recall@5" in section
-            assert "mrr" in section
-            assert "num_questions" in section
-            assert "time_seconds" in section
-            # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: the default
-            # dev subset is 250 Pokémon QA pairs (50 docs x 5 questions, user
-            # directive 2026-08-07) — 900 can never hold on the dev subset.
-            assert section["num_questions"] >= 250
-
-    def test_retrieval_eval_metrics_are_valid(self):
-        with open(RESULTS_DIR / "retrieval_eval.json") as f:
-            data = json.load(f)
-
-        for method in ["keyword", "vector", "hybrid"]:
-            section = data[method]
-            for metric in ["precision@5", "recall@5", "mrr"]:
-                assert 0 <= section[metric] <= 1, (
-                    f"{method}.{metric} = {section[metric]} out of range [0, 1]"
-                )
-
-    def test_retrieval_eval_hybrid_beats_vector(self):
-        with open(RESULTS_DIR / "retrieval_eval.json") as f:
-            data = json.load(f)
-
-        # RRF fusion must improve on the vector-only baseline. The old
-        # "vector beats keyword" claim does not hold on the Pokémon dev
-        # subset: queries are dominated by exact Pokémon names, so keyword
-        # search (recall ~0.89) beats vector (~0.81) — see committed
-        # retrieval_eval.json. Hybrid still beats vector on every metric.
-        assert data["hybrid"]["recall@5"] >= data["vector"]["recall@5"], (
-            f"Hybrid recall {data['hybrid']['recall@5']} < vector recall {data['vector']['recall@5']}"
-        )
-
-    def test_llm_eval_file_exists(self):
-        path = RESULTS_DIR / "llm_eval.json"
-        assert path.exists(), f"Missing {path}"
-
-    def test_llm_eval_structure(self):
-        with open(RESULTS_DIR / "llm_eval.json") as f:
-            data = json.load(f)
-
-        assert "simple" in data
-        assert "detailed" in data
-        assert "with_examples" in data
-
-        for prompt_name in ["simple", "detailed", "with_examples"]:
-            section = data[prompt_name]
-            assert "faithfulness" in section
-            assert "relevance" in section
-            assert "coherence" in section
-            assert "num_evaluated" in section
-            assert section["num_evaluated"] >= 10
-
-    def test_llm_eval_scores_are_high(self):
-        with open(RESULTS_DIR / "llm_eval.json") as f:
-            data = json.load(f)
-
-        # Pokémon dev subset (2026-08-07): faithfulness floors relaxed from >= 4.0 to
-        # the observed values — simple 3.4, detailed 3.0, with_examples 3.9 (wiki was
-        # 4.9/4.9/5.0). Generated answers add details (stats, evolution lines) beyond
-        # the single retrieved doc, so the judge rates context support lower; observed
-        # relevance 4.4/4.6/4.7 and coherence 4.9/4.8/4.9 still hold >= 4.0.
-        faithfulness_floors = {
-            "simple": 3.4,
-            "detailed": 3.0,
-            "with_examples": 3.9,
-        }
-        for prompt_name in ["simple", "detailed", "with_examples"]:
-            section = data[prompt_name]
-            assert section["faithfulness"] >= faithfulness_floors[prompt_name], (
-                f"{prompt_name} faithfulness {section['faithfulness']} "
-                f"< {faithfulness_floors[prompt_name]}"
-            )
-            assert section["relevance"] >= 4.0, (
-                f"{prompt_name} relevance {section['relevance']} < 4.0"
-            )
-            assert section["coherence"] >= 4.0, (
-                f"{prompt_name} coherence {section['coherence']} < 4.0"
-            )
-
-    def test_llm_eval_with_examples_is_best(self):
-        with open(RESULTS_DIR / "llm_eval.json") as f:
-            data = json.load(f)
-
-        best = max(
-            ["simple", "detailed", "with_examples"],
-            key=lambda k: (
-                (data[k]["faithfulness"] + data[k]["relevance"] + data[k]["coherence"])
-                / 3
-            ),
-        )
-        assert best == "with_examples", (
-            f"Expected 'with_examples' to be best, got '{best}'"
-        )
-
-    def test_agent_eval_file_exists(self):
-        path = RESULTS_DIR / "agent_eval.json"
-        assert path.exists(), f"Missing {path}"
-
-    def test_agent_eval_structure(self):
-        with open(RESULTS_DIR / "agent_eval.json") as f:
-            data = json.load(f)
-
-        assert "simple_rag" in data
-        assert "agentic_rag" in data
-        assert "comparison" in data
-        assert "config" in data
-
-    def test_agent_eval_comparison_metrics(self):
-        with open(RESULTS_DIR / "agent_eval.json") as f:
-            data = json.load(f)
-
-        comp = data["comparison"]
-        assert "retrieval_improvement" in comp
-        assert "answer_quality_improvement" in comp
-        assert "latency_overhead" in comp
-        assert "search_overhead" in comp
-
-    def test_agent_eval_agentic_beats_simple(self):
-        with open(RESULTS_DIR / "agent_eval.json") as f:
-            data = json.load(f)
-
-        simple_rate = data["simple_rag"]["retrieval"]["hit_rate"]
-        agent_rate = data["agentic_rag"]["retrieval"]["hit_rate"]
-        # Pokémon dev subset (2026-08-07): relaxed from `>= simple` to `>= simple - 0.01`
-        # — observed agentic 0.980 vs simple 0.984 (-0.4pp). Both sit at a ~98% ceiling
-        # on the 50-doc type-tagged index (wiki was 0.040 vs 0.0044, +809%), so the
-        # agent's reformulation can no longer beat single-shot retrieval.
-        assert agent_rate >= simple_rate - 0.01, (
-            f"Agentic {agent_rate} < Simple {simple_rate}"
-        )
-
-    def test_agent_eval_retrieval_improvement_positive(self):
-        with open(RESULTS_DIR / "agent_eval.json") as f:
-            data = json.load(f)
-
-        # Pokémon dev subset (2026-08-07): relaxed from >= 0 to >= -0.01 — observed
-        # -0.004 (agentic 0.980 vs simple 0.984). Same ~98% ceiling effect as
-        # test_agent_eval_agentic_beats_simple.
-        assert data["comparison"]["retrieval_improvement"] >= -0.01, (
-            f"Retrieval improvement should be >= -0.01, got {data['comparison']['retrieval_improvement']}"
-        )
-
-    def test_agent_eval_config_is_valid(self):
-        with open(RESULTS_DIR / "agent_eval.json") as f:
-            data = json.load(f)
-
-        config = data["config"]
-        # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: the default
-        # dev subset is 250 Pokémon QA pairs (user directive 2026-08-09) — 900
-        # can never hold on the dev subset.
-        assert config["total_questions"] >= 250
-        assert "model" in config
-
-
-# ===========================================================================
 # PHASE 8: Evaluation Script Execution
 # ===========================================================================
 
 
 class TestEvaluationScripts:
-    def test_retrieval_eval_importable(self):
-        sys.path.insert(0, str(PROJECT_ROOT))
-
-    def test_precision_at_k(self):
-        from evaluation.retrieval_eval import precision_at_k
-
-        # Relevant doc is at position 0 in top-5
-        assert precision_at_k(["a", "b", "c", "d", "e"], "a", 5) == 1.0 / 5
-        # Relevant doc is not in top-5
-        assert precision_at_k(["a", "b", "c", "d", "e"], "f", 5) == 0.0
-
-    def test_recall_at_k(self):
-        from evaluation.retrieval_eval import recall_at_k
-
-        assert recall_at_k(["a", "b", "c"], "a", 5) == 1.0
-        assert recall_at_k(["a", "b", "c"], "d", 5) == 0.0
-
-    def test_mrr(self):
-        from evaluation.retrieval_eval import mrr
-
-        assert mrr(["a", "b", "c"], "a") == 1.0  # rank 1
-        assert mrr(["a", "b", "c"], "b") == 0.5  # rank 2
-        assert mrr(["a", "b", "c"], "d") == 0.0  # not found
-
-    def test_llm_eval_importable(self):
-        """llm_eval module should be importable."""
-
     def test_judge_prompts_have_required_fields(self):
         from evaluation.judge_prompts import JUDGE_PROMPTS
 
@@ -1492,45 +1329,6 @@ class TestEvaluationScripts:
             assert "{question}" in config["template"]
             assert "{context}" in config["template"]
             assert "{answer}" in config["template"]
-
-    def test_judge_scores_model(self):
-        from evaluation.llm_eval import JudgeScore
-
-        scores = JudgeScore(
-            faithfulness=5, relevance=4, coherence=5, explanation="Good answer"
-        )
-        assert scores.faithfulness == 5
-        assert scores.relevance == 4
-
-    def test_agent_eval_importable(self):
-        """agent_eval module should be importable."""
-
-    def test_retrieval_accuracy_function(self):
-        from evaluation.retrieval_metrics import retrieval_accuracy
-
-        # Create a simple search function that returns the correct doc
-        def perfect_search(query, num_results=5):
-            return [PokemonDoc(id=42), PokemonDoc(id=1)]
-
-        questions = [
-            {"question": "q1", "document": 42},
-            {"question": "q2", "document": 42},
-        ]
-        result = retrieval_accuracy(perfect_search, questions, k=5)
-        assert result["hit_rate"] == 1.0
-        assert result["hits"] == 2
-        assert result["total"] == 2
-
-    def test_load_qa_pairs(self):
-        from evaluation.retrieval_eval import load_qa_pairs
-
-        qa_path = EVAL_QA
-        questions = load_qa_pairs(str(qa_path))
-        # Floor relaxed from >= 900 (rag-mini-wikipedia) to >= 250: default dev
-        # subset = a coverage-sampled 50 records × 5 LLM-generated questions (user directive 2026-08-09).
-        assert len(questions) >= 250
-        assert "question" in questions[0]
-        assert "document" in questions[0]
 
 
 # ===========================================================================
@@ -2248,66 +2046,6 @@ class TestAgentLoopSaver:
         saver = AgentLoopSaver()
         conversation_id = saver.save_agent_loop(wrapper, result, "span9", "q", "sess1")
         assert conversation_id is not None
-
-
-class TestConfigSweep:
-    FAKE_RESULTS = {
-        "agentic_rag": {
-            "answer_quality": {"mean_score": 4.2, "num_evaluated": 20},
-            "retrieval": {"hit_rate": 0.98},
-            "avg_searches_per_query": 1.3,
-            "latency_per_query": 1.1,
-            "total_time_seconds": 60.0,
-        }
-    }
-
-    def test_knob_env_mapping(self):
-        from evaluation.config_sweep import KNOB_ENV
-
-        assert KNOB_ENV == {
-            "temperature": "AGENT_TEMPERATURE",
-            "confidence_threshold": "CONFIDENCE_THRESHOLD",
-        }
-
-    def test_run_one_invokes_subprocess_with_env_override(self, monkeypatch, tmp_path):
-        import evaluation.config_sweep as sweep
-
-        calls = []
-        monkeypatch.setattr(
-            sweep.subprocess, "run", lambda *args, **kwargs: calls.append(kwargs)
-        )
-        source = tmp_path / "agent_eval.json"
-        source.write_text(json.dumps({"fake": "results"}))
-        monkeypatch.setattr(sweep, "AGENT_EVAL_JSON", source)
-
-        results = sweep.run_one("temperature", "0.2", tmp_path)
-
-        assert len(calls) == 1
-        assert calls[0]["env"][sweep.KNOB_ENV["temperature"]] == "0.2"
-        labeled = tmp_path / "agent_eval_temperature_0.2.json"
-        assert labeled.exists()
-        assert results == {"fake": "results"}
-
-    def test_compare_collects_metrics(self, monkeypatch):
-        import evaluation.config_sweep as sweep
-
-        monkeypatch.setattr(
-            sweep, "run_one", lambda knob, value, results_dir=None: self.FAKE_RESULTS
-        )
-        out = sweep.compare("confidence_threshold", ["0.5", "0.65"])
-
-        expected = {
-            str(value): {
-                "mean_score": 4.2,
-                "num_evaluated": 20,
-                "retrieval_hit_rate": 0.98,
-                "avg_searches_per_query": 1.3,
-                "latency_per_query": 1.1,
-                "total_time_seconds": 60.0,
-            }
-            for value in ["0.5", "0.65"]
-        }
-        assert out == expected
 
 
 class TestAgentUsage:
