@@ -143,9 +143,6 @@ uv run python -m evaluation.agent_eval
 # Grafana (needs Postgres spans; Docker Compose starts both)
 docker-compose up -d postgres grafana
 # then open http://localhost:3000
-
-# Or the Streamlit dashboard (reads the Postgres store directly)
-uv run streamlit run monitoring/dashboard.py
 ```
 
 ## Manual Full-Data Runs

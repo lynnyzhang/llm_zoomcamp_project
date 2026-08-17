@@ -5,6 +5,7 @@ from pathlib import Path
 from minsearch import Index, VectorSearch
 
 from src.search.embedder import Embedder
+from src.search.reranker import Reranker
 from src.search.search_records import PokemonDoc, parse_doc
 
 
@@ -79,6 +80,8 @@ class HybridSearch:
         self.vector_index = VectorSearch()
         self.vector_index.fit(self.embeddings, self.documents)
 
+        self.reranker = Reranker()
+
     def _filter_relevance(self, docs, query_vector):
         # The RRF score is rank-based, not a cosine, so relevance is the
         # query↔chunk cosine (the vector-search score). Compute it for every
@@ -109,6 +112,8 @@ class HybridSearch:
             k=self.rrf_k,
             num_results=num_results,
         )
+
+        fused = self.reranker.rerank(query, fused)
 
         return [parse_doc(d) for d in self._filter_relevance(fused, query_vector)]
 

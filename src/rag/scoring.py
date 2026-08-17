@@ -58,12 +58,18 @@ def cosine_similarity(embedder: Embedder, text_a: str, text_b: str) -> float:
 def grounding_scores(
     embedder: Embedder, answer: str, searches: list[SearchRecord]
 ) -> list[float]:
+    # Line-level grounding: an answer only needs to match its one relevant
+    # line, so compare against each line of each retrieved text and take the
+    # max. Comparing against the whole multi-line chunk dilutes the match and
+    # wrongly rejects correct answers.
     scores = []
     for record in searches:
         for item in record.results:
             text = getattr(item, "search_text", "") or getattr(item, "snippet", "")
-            if text:
-                scores.append(cosine_similarity(embedder, answer, text))
+            for line in text.split("\n"):
+                line = line.strip()
+                if line:
+                    scores.append(cosine_similarity(embedder, answer, line))
     return scores
 
 

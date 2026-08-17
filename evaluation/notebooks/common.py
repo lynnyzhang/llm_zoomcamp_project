@@ -61,6 +61,36 @@ def snapshot_request(messages) -> list:
     return snap
 
 
+def json_safe(value):
+    """Recursively coerce a value to a JSON-serializable form."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {k: json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value]
+    return str(value)
+
+
+def snapshot_response(r):
+    """JSON-safe snapshot of an LLM response (output_text + output items)."""
+    output = []
+    for item in r.output:
+        if item.type == "function_call":
+            output.append(
+                {
+                    "type": "function_call",
+                    "name": item.name,
+                    "arguments": item.arguments,
+                }
+            )
+        else:
+            output.append(
+                {"type": item.type, "content": getattr(item, "content", None)}
+            )
+    return json_safe({"output_text": r.output_text, "output": output})
+
+
 def trace_run(agent, query, real_call_llm):
     """Wrap real_call_llm for one run; returns result, per-call log, whether
     escalation fired, and the full gate_history."""
@@ -95,6 +125,7 @@ def trace_run(agent, query, real_call_llm):
                 "items": items,
                 "escalated": escalated_now,
                 "request": snapshot_request(messages),
+                "response": snapshot_response(r),
             }
         )
         return r

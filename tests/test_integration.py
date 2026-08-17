@@ -533,6 +533,48 @@ class TestHybridSearch:
         results = search_index.search("", num_results=3)
         assert isinstance(results, list)
 
+    def test_reranker_falls_back_when_model_missing(self, monkeypatch):
+        from src.search.reranker import Reranker
+
+        monkeypatch.setenv("RERANKER_MODEL_PATH", "/nonexistent/reranker")
+        reranker = Reranker()
+        assert reranker.available is False
+        docs = [{"id": "a", "search_text": "one"}, {"id": "b", "search_text": "two"}]
+        assert reranker.rerank("query", docs) == docs
+
+    def test_reranker_reorders_by_cross_encoder_score(self, monkeypatch):
+        import numpy as np
+
+        from src.search.reranker import Reranker
+
+        class FakeSession:
+            def run(self, _, feed):
+                # Higher logit for the second doc → it should rank first.
+                return [np.array([[0.0], [3.0]], dtype=np.float32)]
+
+        class FakeTokenizer:
+            def enable_truncation(self, **kwargs):
+                pass
+
+            def enable_padding(self, **kwargs):
+                pass
+
+            def encode_batch(self, pairs):
+                return [
+                    type(
+                        "E", (), {"ids": [0], "attention_mask": [1], "type_ids": [0]}
+                    )()
+                    for _ in pairs
+                ]
+
+        reranker = Reranker()
+        reranker.available = True
+        reranker._tokenizer = FakeTokenizer()
+        reranker._session = FakeSession()
+        docs = [{"id": "a", "search_text": "one"}, {"id": "b", "search_text": "two"}]
+        ranked = reranker.rerank("query", docs)
+        assert [d["id"] for d in ranked] == ["b", "a"]
+
 
 # ===========================================================================
 # PHASE 4: RAG Pipeline
@@ -684,7 +726,7 @@ class TestAgentToolLoop:
                 self.response(
                     "", self.function_call(self.LOCAL, {"query": "pikachu stats"})
                 ),
-                self.response(text="Pikachu has 999 attack and can fly"),
+                self.response(text="The answer is 42"),
                 self.response("", self.function_call(self.WEB, {"query": "pikachu"})),
                 self.response(
                     text="Pikachu has HP 35, Attack 55, Defense 40, Speed 90."
@@ -702,10 +744,7 @@ class TestAgentToolLoop:
         # monitoring/troubleshooting.
         assert result.escalated is True
         assert [g.rejected for g in agent.gate_history] == [True, False]
-        assert (
-            agent.gate_history[0].rejected_answer
-            == "Pikachu has 999 attack and can fly"
-        )
+        assert agent.gate_history[0].rejected_answer == "The answer is 42"
 
     def test_local_tool_then_answer(self, monkeypatch):
         web_fake = self.web_fake()
@@ -872,13 +911,9 @@ class TestAgentToolLoop:
         agent = self.agent(
             self.script_client(
                 self.response("", self.function_call(self.LOCAL, {"query": "pikachu"})),
-                self.response(
-                    text="Pikachu has 999 attack and can fly and summons rain"
-                ),
+                self.response(text="The answer is 42"),
                 self.response("", self.function_call(self.WEB, {"query": "pikachu"})),
-                self.response(
-                    text="Pikachu has 999 attack and can fly and summons rain"
-                ),
+                self.response(text="The answer is 42"),
             )
         )
         result = agent.run("What are Pikachu's stats?")

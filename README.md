@@ -186,8 +186,8 @@ Mapped against the course project rubric (see `project.md`):
 
 - **Retrieval evaluation** — three approaches (keyword / vector / hybrid) evaluated on the 250-question dev set; the best (hybrid) is what production uses.
 - **LLM evaluation** — multiple approaches compared: three prompt styles (Simple / Detailed / With Examples, LLM-judged) and Simple RAG vs Agentic RAG; the winner of each comparison is the production choice.
-- **Best practices** — hybrid search combining text + vector, evaluated; user query rewriting via the agent's per-tool keyword queries (recorded as `search_query` per search).
-- **Monitoring** — user feedback (thumbs up/down) + Streamlit and Grafana dashboards (10+ charts).
+- **Best practices** — hybrid search combining text + vector, evaluated; document re-ranking with a cross-encoder over the fused top-N results; user query rewriting via the agent's per-tool keyword queries (recorded as `search_query` per search).
+- **Monitoring** — user feedback (thumbs up/down) + Grafana dashboards (10+ charts).
 - **Config sweeps** — `uv run python -m evaluation.config_sweep --knob temperature --values 0.0,0.2` (or `--knob confidence_threshold`) runs the agent eval per setting and saves side-by-side results, so the `.env` defaults are chosen with data.
 
 ### Screenshots
@@ -202,8 +202,7 @@ Mapped against the course project rubric (see `project.md`):
 
 Tracing runs through OpenTelemetry. Every agent run, search, and LLM call produces spans with query, tokens, latency, and feedback. All monitoring data (conversations, spans, searches, llm_calls, feedback) lives in **PostgreSQL** (Docker Compose starts Postgres by default; `POSTGRES_*` env vars configure it):
 
-- **Streamlit dashboard** — conversations, span traces, LLM-call details, and feedback stats.
-- **Grafana** at `http://localhost:3000` — dashboard "Pokemon RAG Monitoring" with 10 panels: total traces, cost, average latency, token usage, queries over time, feedback distribution, latency and token trends, top queries, and agent iteration distribution.
+- **Grafana** at `http://localhost:3000` — file-provisioned dashboards "Pokemon RAG Monitoring" (10 panels: total traces, cost, average latency, token usage, queries over time, feedback distribution, latency and token trends, top queries, agent iteration distribution) and "Pokemon RAG History" (gated-query rate, answer-path mix, recent conversations, thumbs up/down).
 
 ## Documentation
 
@@ -226,10 +225,10 @@ project/
 │   └── Xenova/all-MiniLM-L6-v2/   # ONNX embedder (tokenizer.json + model.onnx)
 ├── monitoring/
 │   ├── tracer.py           # OpenTelemetry tracing (Postgres span store)
-│   ├── dashboard.py        # Streamlit monitoring dashboard
 │   ├── grafana/provisioning/   # Grafana datasource + dashboard provisioning
 │   └── dashboards/
-│       └── pokemon_rag.json    # Grafana dashboard "Pokemon RAG Monitoring"
+│       ├── pokemon_rag.json        # Grafana dashboard "Pokemon RAG Monitoring"
+│       └── pokemon_rag_history.json # Grafana dashboard "Pokemon RAG History"
 ├── deployment/
 │   ├── Dockerfile          # App container (Python 3.13 + uv)
 │   ├── .dockerignore       # Build exclusions (context: repo root)
@@ -255,6 +254,7 @@ project/
 │   ├── search/
 │   │   ├── embedder.py     # ONNX embedder (onnxruntime, no torch)
 │   │   ├── hybrid_search.py # Hybrid search (keyword + vector + RRF)
+│   │   ├── reranker.py      # Cross-encoder re-ranking over fused results
 │   │   └── web_search.py   # Bulbapedia web search (Tavily)
 │   ├── rag/
 │   │   ├── rag_base.py      # Base RAG pipeline

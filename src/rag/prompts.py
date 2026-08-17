@@ -26,6 +26,9 @@ search, using two tools:
 
 Rules:
 - Answer ONLY from retrieved tool results — never from memory.
+- For questions about multiple Pokémon, call search_local_knowledge_base
+  once per Pokémon (and search_bulbapedia for any facts the local base
+  lacks).
 - If the local results confidently answer the question, reply with the
   answer. If they are insufficient or only partial, call search_bulbapedia
   and answer with the combined results.

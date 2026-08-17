@@ -12,7 +12,9 @@ CHUNKS_DIR="${DATA_DIR}/chunks"
 DOCUMENTS_FILE="${CHUNKS_DIR}/documents.jsonl"
 MODELS_DIR="${DATA_DIR}/models"
 EMBEDDER_MODEL_PATH="${MODELS_DIR}/Xenova/all-MiniLM-L6-v2"
+RERANKER_MODEL_PATH="${MODELS_DIR}/Xenova/ms-marco-MiniLM-L-6-v2"
 export EMBEDDER_MODEL_PATH
+export RERANKER_MODEL_PATH
 
 # ---------------------------------------------------------------------------
 # Reach a locally hosted LLM running on the Docker host (Mac/Windows/Linux with host-gateway). Cloud endpoints pass through unchanged.
@@ -67,6 +69,17 @@ from src.data.download_model import download
 download('Xenova/all-MiniLM-L6-v2', '${MODELS_DIR}')
 "
     echo "  Embedding model downloaded."
+fi
+
+echo "[1b/6] Downloading ONNX cross-encoder (re-ranking)..."
+if [ -f "$RERANKER_MODEL_PATH/model.onnx" ] && [ -f "$RERANKER_MODEL_PATH/tokenizer.json" ]; then
+    echo "  Cross-encoder already exists, skipping download."
+else
+    uv run python -c "
+from src.data.download_model import download
+download('Xenova/ms-marco-MiniLM-L-6-v2', '${MODELS_DIR}')
+"
+    echo "  Cross-encoder downloaded."
 fi
 
 # Step 2: Build search corpus (download + chunk → documents.jsonl)

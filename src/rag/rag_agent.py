@@ -11,7 +11,7 @@ from src.rag.scoring import AgentResult, finalize_result, get_confidence_thresho
 from src.rag.tools import apply_tool_calls
 from src.rag.tools import LOCAL_SEARCH_TOOL, TOOLS
 
-MAX_ITERATIONS = 3
+MAX_ITERATIONS = 5
 
 
 class RAGAgent(RAGBase):

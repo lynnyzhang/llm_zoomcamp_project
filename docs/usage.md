@@ -139,16 +139,6 @@ The dashboard **"Pokemon RAG Monitoring"** is provisioned automatically. Panels:
 6. **Top queries** — Most frequent queries (top 20)
 7. **Agent iterations distribution** — Iterations per query
 
-### Streamlit Dashboard
-
-For a dashboard over the Postgres store:
-
-```bash
-uv run streamlit run monitoring/dashboard.py
-```
-
-Sections: summary metrics, queries over time, feedback distribution, latency distribution, token usage, popular topics, agent search patterns, raw trace data.
-
 ### Trace Schema
 
 The `spans` table in Postgres stores:
