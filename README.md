@@ -1,6 +1,6 @@
-# LLM Zoomcamp 2026 Capstone Project
+# Agentic Pokemon Knowledge RAG
 
-An agentic RAG assistant for Pokémon knowledge, built for the DataTalksClub LLM Zoomcamp 2026 cohort. Ask about a Pokémon's stats, types, weaknesses, evolution line, or abilities and the system retrieves the right Pokédex entries, grounds its answer in them, and shows you the whole process. Combines hybrid search (keyword + vector with Reciprocal Rank Fusion), LLM-driven tool use (local + Bulbapedia search), and a Streamlit chat interface with full agent transparency.
+An agentic RAG assistant for Pokémon knowledge, built for the DataTalksClub LLM Zoomcamp 2026 cohort. Ask about a Pokémon's stats, types, weaknesses, evolution line, or abilities and the system retrieves the right Pokédex entries, grounds its answer in them, and shows you the whole process. Combines hybrid search (keyword + vector with Reciprocal Rank Fusion), cross-encoder re-ranking, LLM-driven tool use (local + Bulbapedia search), and a Streamlit chat interface with full agent transparency.
 
 ## Project Goal
 
@@ -10,12 +10,12 @@ Given a dataset of Pokédex records (dev subset: coverage-sampled 50 Pokémon, 2
 2. Uses an agentic loop to reformulate queries when results are insufficient
 3. Generates faithful, grounded answers via a local LLM
 4. Rejects out-of-scope questions (battle simulation, save files, cheats, non-Pokémon topics)
-5. Displays Pokémon cards with official artwork
+5. Displays Pokémon cards (name + types)
 6. Tracks performance with OpenTelemetry-based monitoring
 
 ## Data
 
-The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle ([`patelris/pokemon-dataset-with-stats-and-types`](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types), download endpoint `https://www.kaggle.com/api/v1/datasets/download/patelris/pokemon-dataset-with-stats-and-types`). The two raw CSVs (`pokemon_complete.csv`, `pokemon_types.csv`) ship bundled in `data/raw/` — Kaggle's anonymous download endpoint is bot-blocked, so the repo carries its own copy and no login is needed. `src/data/build_documents.py` only attempts a download when they are missing, and builds `data/chunks/documents.jsonl` (full: 1,350 Pokémon docs + 18 type-chart docs — 1,025 canonical + 325 alternate forms).
+The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle ([`patelris/pokemon-dataset-with-stats-and-types`](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types)). The two raw CSVs (`pokemon_complete.csv`, `pokemon_types.csv`) ship **bundled** in `data/raw/` — Kaggle's anonymous download endpoint is bot-blocked, so the repo carries its own copy and no login is needed. `src/data/build_documents.py` only attempts a download when they are missing, and builds `data/chunks/documents.jsonl`: each Pokémon's `search_text` is split into **token-aware chunks** (100-token windows, 50-token step, each ≤128 tokens so it fits the embedding window), giving **6,082 Pokémon chunks + 18 type-chart docs** (1,025 canonical + 325 alternate forms).
 
 **Development subset:** `src/data/build_documents.py` builds the full 1,350-record dataset by default; `evaluation/generate_qa.py` defaults to a deterministic coverage-sampled dev subset of 50 Pokémon (250 ground-truth questions). This is a user directive: dev subset for all automated test/eval runs, full-data QA runs manual only. See [docs/setup.md](docs/setup.md).
 
@@ -31,7 +31,7 @@ The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    RAG Agent (agent.py)                     │
+│                    RAG Agent (rag_agent.py)                 │
 │                                                             │
 │  0. Guardrails: reject out-of-scope queries                 │
 │  1. perform_search(query)  ──────────────────┐              │
@@ -39,12 +39,12 @@ The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle
 │  3. if insufficient: call search_bulbapedia() ──► go to 1   │
 │  4. generate_answer(query, all_results)                     │
 │                                                             │
-│  Max 3 iterations, LLM decides when to call the tools       │
+│  Max 5 iterations, LLM decides when to call the tools       │
 └────────────────────────┬────────────────────────────────────┘
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              Hybrid Search (hybrid.py)                      │
+│              Hybrid Search (hybrid_search.py)               │
 │                                                             │
 │       ┌──────────────┐     ┌──────────────┐                 │
 │       │   Keyword    │     │    Vector    │                 │
@@ -56,6 +56,11 @@ The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle
 │           ┌──────────────────────────┐                      │
 │           │  Reciprocal Rank Fusion  │                      │
 │           │  score = Σ w/(k + rank)  │                      │
+│           └────────────┬─────────────┘                      │
+│                        ▼                                   │
+│           ┌──────────────────────────┐                      │
+│           │  Cross-encoder reranker  │                      │
+│           │  (ms-marco-MiniLM-L-6-v2)│                      │
 │           └──────────────────────────┘                      │
 └────────────────────────┬────────────────────────────────────┘
                          │
@@ -63,10 +68,10 @@ The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle
 ┌─────────────────────────────────────────────────────────────┐
 │              Data Pipeline                                  │
 │                                                             │
-│ Kaggle API ──► raw CSVs ──► documents.jsonl               │
-│  (patelris/     (1,350 records,          (1,350 Pokémon    │
-│   pokemon-       cached, idempotent)      + 18 type charts)│
-│   dataset)                                                  │
+│ Bundled raw CSVs ──► documents.jsonl                       │
+│  (data/raw/,         (1,350 Pokémon → 6,082                │
+│   shipped in repo)    token-aware chunks                    │
+│                       + 18 type charts)                     │
 │                         │                                   │
 │                         ▼                                   │
 │              HybridSearch (keyword + vector + RRF)          │
@@ -103,7 +108,7 @@ The app runs at `http://localhost:8501`, Postgres on port 5433, and Grafana at `
 uv sync                          # installs ALL project dependencies into .venv (see pyproject.toml)
 cp .env.example .env              # then edit the LLM vars
 uv run python -m src.data.download_model   # fetches ONNX embedder (tokenizer.json + model.onnx)
-uv run python -m src.data.build_documents   # builds data/chunks/documents.jsonl (full: 1,350; --limit for subset)
+uv run python -m src.data.build_documents   # builds data/chunks/documents.jsonl (full: 1,350 Pokémon → 6,082 chunks; --limit for subset)
 uv run streamlit run src/interface/app.py  # chat UI at :8501
 ```
 
@@ -122,15 +127,15 @@ See [docs/setup.md](docs/setup.md) for detailed setup instructions.
 # Ask a question via the Streamlit UI at http://localhost:8501
 
 # Or run the agent from CLI:
-set -a; source .env; set +a; uv run python -c "from src.rag.rag_agent import RAGAgent; from src.search.hybrid_search import HybridSearch; a = RAGAgent(search_index=HybridSearch()); r = a.run('What are Pikachu's stats?'); print(r['answer'][:200])"
+set -a; source .env; set +a; uv run python -c "from src.rag.rag_agent import RAGAgent; from src.search.hybrid_search import HybridSearch; a = RAGAgent(search_index=HybridSearch()); r = a.run('What are Pikachu's stats?'); print(r.answer[:200])"
 
 # Generate the ground-truth set (dev subset, 250 questions):
 uv run python -m evaluation.generate_qa
 
-# Run evaluations:
-uv run python -m evaluation.retrieval_eval
-uv run python -m evaluation.llm_eval
-uv run python -m evaluation.agent_eval
+# Run evaluations via the notebooks under evaluation/notebooks/:
+#   01_agent_path_analysis, 02_gate_calibration, 03_gate_quality_comparison,
+#   04_retrieval_quality, 05_answer_quality
+# (see docs/evaluation.md)
 
 # Open the monitoring dashboard:
 docker-compose up -d grafana   # then open http://localhost:3000
@@ -140,62 +145,62 @@ See [docs/usage.md](docs/usage.md) for the complete usage guide.
 
 ## Capabilities
 
-- **Hybrid search** — keyword (minsearch) + vector (local ONNX MiniLM) fused with Reciprocal Rank Fusion.
+- **Hybrid search** — keyword (minsearch) + vector (local ONNX MiniLM) fused with Reciprocal Rank Fusion, then re-ranked by a cross-encoder (ms-marco-MiniLM-L-6-v2).
 - **Web search (Bulbapedia)** — Tavily-backed web search for facts the local knowledge base lacks (moves, anime, manga, lore, game history, strategy). The agent decides when local results are insufficient and searches Bulbapedia; if it answers without grounding, the loop forces one Bulbapedia retry before rejecting.
-- **Agentic loop** — the LLM decides when to call its tools (`search_local_knowledge_base`, `search_bulbapedia`), up to 3 tool-use rounds, and writes its own web keyword queries (recorded per search as `search_query`).
+- **Agentic loop** — the LLM decides when to call its tools (`search_local_knowledge_base`, `search_bulbapedia`), up to 5 tool-use rounds, and writes its own web keyword queries (recorded per search as `search_query`). For multi-Pokémon questions it searches once per Pokémon.
 - **Guardrails** — out-of-scope rejection (battle simulation/prediction, save files, cheats, non-Pokémon topics); the model refuses without calling tools, and the loop never fabricates an answer when searches fail.
-- **Pokémon cards** — retrieved documents render as cards with official artwork (PokeAPI sprites), types, and a stats summary.
+- **Pokémon cards** — retrieved documents render as cards showing the Pokémon's name and types.
 - **Feedback capture** — thumbs up/down per answer, recorded in monitoring for continuous improvement.
 
 ## Evaluation Results
 
-Measured on the Pokémon dev subset (50 docs, 250 ground-truth questions) with a local qwen model. Full details in [docs/evaluation.md](docs/evaluation.md).
+Evaluation runs via the notebooks under `evaluation/notebooks/` on the chunked corpus. Full details in [docs/evaluation.md](docs/evaluation.md).
 
-### Retrieval (250 questions, top-5)
+### Retrieval quality (notebook 04 — 250 questions, top-5, chunked corpus)
 
-| Method    | Precision@5 | Recall@5 | MRR    | Time   |
-|-----------|-------------|----------|--------|--------|
-| Keyword   | 0.1952      | 0.9760   | 0.9548 | 0.1s   |
-| Vector    | 0.1968      | 0.9840   | 0.8910 | 0.4s   |
-| **Hybrid**| **0.1968**  | **0.9840**| **0.9520**| **0.6s** |
+| Method    | Hit@5 | Precision@5 | Recall@5 | MRR    |
+|-----------|-------|-------------|----------|--------|
+| Keyword   | 0.856 | 0.171       | 0.856    | 0.814  |
+| Vector    | 0.704 | 0.141       | 0.704    | 0.595  |
+| **Hybrid**| **0.856** | **0.171** | **0.856** | **0.829** |
 
-### LLM Answer Quality (10-question sample, 1-5 scale)
+Hybrid matches keyword recall (0.856) and beats vector on every metric. The keyword half preserves recall for tail-line facts (evolution, type effectiveness) that the 128-token vector embedding truncates.
 
-| Prompt       | Faithfulness | Relevance | Coherence |
-|--------------|-------------|-----------|-----------|
-| Simple       | 3.4         | 4.4       | 4.9       |
-| Detailed     | 3.0         | 4.6       | 4.8       |
-| **With Examples** | **3.9** | **4.7** | **4.9** |
+### Answer quality (notebook 05 — 60 questions, 37 accepted, 1-5 scale)
 
-The with-examples judge prompt scores best overall.
+| Dimension    | Mean (accepted) |
+|--------------|-----------------|
+| Faithfulness | 4.486           |
+| Relevance    | 4.865           |
+| Coherence    | 4.973           |
 
-### Agent vs Simple RAG
+Per-type (n / acceptance / faithfulness / relevance / coherence):
 
-| Metric                      | Simple RAG | Agentic RAG | Delta      |
-|-----------------------------|------------|-------------|------------|
-| Retrieval Hit Rate          | 98.4% (246/250) | 98.0% (49/50) | -0.4%   |
-| Avg Searches/Query          | 1.0        | 1.22        | +0.22      |
-| Latency/Query (LLM)         | 19.26s     | 39.99s      | +20.73s    |
-| Answer Quality (LLM Judge)  | 3.9/5      | 3.65/5      | -0.25      |
+| Type      | n  | Acceptance | Faithfulness | Relevance | Coherence |
+|-----------|----|-----------|--------------|-----------|-----------|
+| ability   | 13 | 0.308     | 4.500        | 5.000     | 5.000     |
+| evolution | 8  | 0.875     | 5.000        | 5.000     | 5.000     |
+| other     | 10 | 0.700     | 4.571        | 5.000     | 5.000     |
+| stats     | 18 | 0.444     | 4.125        | 4.500     | 4.875     |
+| type      | 11 | 1.000     | 4.364        | 4.909     | 5.000     |
 
-Both pipelines sit at a ~98% retrieval ceiling on the 50-doc dev subset, so the agent loop adds latency without a hit-rate gain here; it is expected to help on the full dataset where single-shot retrieval is weaker.
+`stats` questions are the main quality/grounding bottleneck (lowest acceptance and faithfulness); `evolution` answers cleanly.
 
 ### Evaluation criteria coverage
 
 Mapped against the course project rubric (see `project.md`):
 
-- **Retrieval evaluation** — three approaches (keyword / vector / hybrid) evaluated on the 250-question dev set; the best (hybrid) is what production uses.
-- **LLM evaluation** — multiple approaches compared: three prompt styles (Simple / Detailed / With Examples, LLM-judged) and Simple RAG vs Agentic RAG; the winner of each comparison is the production choice.
-- **Best practices** — hybrid search combining text + vector, evaluated; document re-ranking with a cross-encoder over the fused top-N results; user query rewriting via the agent's per-tool keyword queries (recorded as `search_query` per search).
-- **Monitoring** — user feedback (thumbs up/down) + Grafana dashboards (10+ charts).
-- **Config sweeps** — `uv run python -m evaluation.config_sweep --knob temperature --values 0.0,0.2` (or `--knob confidence_threshold`) runs the agent eval per setting and saves side-by-side results, so the `.env` defaults are chosen with data.
+- **Retrieval evaluation** — notebook 04 compares keyword / vector / hybrid on the 250-question dev set; the best (hybrid) is what production uses.
+- **LLM evaluation** — notebook 05 measures answer quality (faithfulness / relevance / coherence) per question type via an LLM judge on the accepted answers.
+- **Best practices** — hybrid search combining text + vector, evaluated; cross-encoder re-ranking (ms-marco-MiniLM-L-6-v2) over the fused top-N results; user query rewriting via the agent's per-tool keyword queries (recorded as `search_query` per search).
+- **Monitoring** — user feedback (thumbs up/down) + Grafana dashboards.
+- **Config tuning** — gate thresholds and retrieval settings are tuned with data via the notebooks (02 gate calibration, 03 gate-quality comparison) rather than a standalone sweep script.
 
 ### Screenshots
 
 | App | Where |
 |---|---|
 | Chat UI with a grounded answer (cards, source caption, feedback) | `docs/screenshots/ui.png` |
-| Monitoring dashboard (conversations, traces, feedback) | `docs/screenshots/dashboard.png` |
 | Grafana "Pokemon RAG Monitoring" | `docs/screenshots/grafana.png` |
 
 ## Monitoring
@@ -208,7 +213,7 @@ Tracing runs through OpenTelemetry. Every agent run, search, and LLM call produc
 
 - [docs/setup.md](docs/setup.md) — environment setup, dataset ingestion, index building, and configuration (including every env variable)
 - [docs/usage.md](docs/usage.md) — how to use the app, the agent, tracing/monitoring, and the dashboards
-- [docs/evaluation.md](docs/evaluation.md) — offline evaluation: QA generation, retrieval/LLM/agent evals, and config sweeps
+- [docs/evaluation.md](docs/evaluation.md) — offline evaluation: QA generation, retrieval/answer-quality evals, and gate calibration via the notebooks
 
 ## Project Structure
 
@@ -219,10 +224,11 @@ project/
 ├── pyproject.toml          # Dependencies
 ├── .env.example            # Environment template
 ├── data/
-│   ├── raw/pokemon_complete.csv + pokemon_types.csv  # Cached raw CSVs
-│   └── chunks/documents.jsonl     # 1,350 Pokémon docs + 18 type-chart docs (indexed)
+│   ├── raw/pokemon_complete.csv + pokemon_types.csv  # Bundled raw CSVs
+│   └── chunks/documents.jsonl     # 6,082 Pokémon chunks + 18 type-chart docs (indexed)
 ├── models/
-│   └── Xenova/all-MiniLM-L6-v2/   # ONNX embedder (tokenizer.json + model.onnx)
+│   ├── Xenova/all-MiniLM-L6-v2/   # ONNX embedder (tokenizer.json + model.onnx)
+│   └── Xenova/ms-marco-MiniLM-L-6-v2/  # Cross-encoder reranker (model.onnx)
 ├── monitoring/
 │   ├── tracer.py           # OpenTelemetry tracing (Postgres span store)
 │   ├── grafana/provisioning/   # Grafana datasource + dashboard provisioning
@@ -234,47 +240,56 @@ project/
 │   ├── .dockerignore       # Build exclusions (context: repo root)
 │   └── entrypoint.sh       # Pipeline orchestration
 ├── evaluation/
-│   ├── evaluation_utils.py  # Shared evaluation helpers
 │   ├── generate_qa.py       # LLM-generated ground-truth questions
-│   ├── retrieval_eval.py    # Retrieval evaluation
-│   ├── llm_eval.py          # LLM evaluation
-│   ├── agent_eval.py        # Agent evaluation
+│   ├── document_index.py    # Ground-truth doc reconstruction from chunks
+│   ├── llm_calls.py         # Structured LLM calls (Responses API)
+│   ├── llm_judge.py         # LLM answer-quality judge
+│   ├── judge_prompts.py     # Judge prompt variants
+│   ├── answer_judge.py      # Correctness judge
+│   ├── dev_subset.py        # Deterministic dev-subset sampling
+│   ├── question_generator.py# Question generation
+│   ├── evaluation_utils.py  # Shared evaluation helpers
 │   ├── data/
 │   │   └── qa.jsonl         # question → document (dev: 250)
-│   └── results/
-│       ├── retrieval_eval.json
-│       ├── llm_eval.json
-│       ├── agent_eval.json
-│       ├── agent_eval_comparison.png
-│       └── final_report.md     # Final evaluation report
+│   └── notebooks/           # Evaluation notebooks (01-05)
+│       ├── 01_agent_path_analysis.ipynb
+│       ├── 02_gate_calibration.ipynb
+│       ├── 03_gate_quality_comparison.ipynb
+│       ├── 04_retrieval_quality.ipynb
+│       ├── 05_answer_quality.ipynb
+│       ├── builders/        # Notebook builders
+│       ├── collect_gate_data.py  # Judged gate-data collection
+│       └── data/            # gate_collection.jsonl, agent_path_trace.txt
 ├── src/
 │   ├── data/
-│   │   ├── build_documents.py   # raw CSVs → documents.jsonl (corpus entry point)
+│   │   ├── build_documents.py   # raw CSVs → chunked documents.jsonl (corpus entry point)
+│   │   ├── chunking.py          # Token-aware sliding-window chunking
 │   │   └── download_model.py   # ONNX embedding model download
 │   ├── search/
 │   │   ├── embedder.py     # ONNX embedder (onnxruntime, no torch)
-│   │   ├── hybrid_search.py # Hybrid search (keyword + vector + RRF)
+│   │   ├── hybrid_search.py # Hybrid search (keyword + vector + RRF + relevance filter)
 │   │   ├── reranker.py      # Cross-encoder re-ranking over fused results
 │   │   └── web_search.py   # Bulbapedia web search (Tavily)
 │   ├── rag/
 │   │   ├── rag_base.py      # Base RAG pipeline
-│   │   └── rag_agent.py     # Agentic RAG: LLM tool calls + guardrails
+│   │   ├── rag_agent.py     # Agentic RAG: LLM tool calls + guardrails
+│   │   └── scoring.py       # Line-level grounding gate
 │   └── interface/
 │       ├── app.py          # Streamlit chat entry
 │       ├── chat_page.py    # Agent-loop orchestration
 │       ├── message_renderer.py  # Chat bubble rendering
-│       └── card_renderer.py     # Pokémon cards
-├── tests/                  # Test suite (142 tests)
-└── notebooks/              # Exploration notebooks
+│       └── card_renderer.py     # Pokémon cards (name + types)
+├── tests/                  # Test suite (125 tests)
+└── notebooks/              # (exploration notebooks live under evaluation/notebooks/)
 ```
 
 ## Key Dependencies
 
 - **minsearch** — keyword search index (NOT vector search despite the name)
-- **ONNX + tokenizers** — local embeddings (all-MiniLM-L6-v2 via onnxruntime, no torch)
+- **ONNX + tokenizers** — local embeddings (all-MiniLM-L6-v2 via onnxruntime, no torch) and cross-encoder re-ranking (ms-marco-MiniLM-L-6-v2)
 - **Tavily** — Bulbapedia web search backend for the agent's escalation path (`TAVILY_API_KEY`; a missing key degrades gracefully to empty results)
 - **OpenAI** — LLM calls via the Responses API to the configured endpoint (locally hosted LLM or cloud OpenAI-compatible API)
-- **Streamlit** — chat interface and monitoring dashboard
+- **Streamlit** — chat interface
 - **OpenTelemetry** — distributed tracing with Postgres storage
 - **Grafana** — monitoring dashboards on top of Postgres
 
