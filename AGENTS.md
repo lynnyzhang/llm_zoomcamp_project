@@ -83,9 +83,9 @@ course parity / test seam / dead — and remove the last category.
   understand it at a glance.
 - **Files named after their main class or function** — when a module has a
   single main class or function, the file name is its snake_case name
-  (e.g. `card_renderer.py` for `CardRenderer`, `web_search.py` for
+  (e.g. `message_renderer.py` for `MessageRenderer`, `web_search.py` for
   `web_search()`). This is the Java/Ruby convention applied to Python:
-  `Foo.java` holds `Foo`, `card_renderer.py` holds `CardRenderer`. Vague
+  `Foo.java` holds `Foo`, `message_renderer.py` holds `MessageRenderer`. Vague
   multi-purpose names (`utils.py`, `records.py`, `metrics.py`) are
   acceptable only when the module genuinely holds several co-equal pieces
   (`scoring.py`, `prompts.py`); otherwise they hide what the file does.
@@ -158,11 +158,11 @@ unchanged).
 | `src/data/` | `build_documents.py` (corpus entry point), `download_model.py`, `csv_parsers.py`, `download.py`, `evolution.py`, `evolution_overrides.py`, `type_chart.py`, `pokemon_doc_builder.py` |
 | `src/search/` | `hybrid_search.py` (keyword + vector + RRF), `embedder.py` (ONNX), `web_search.py` (Tavily), `search_records.py` |
 | `src/rag/` | `rag_base.py` (RAGBase), `rag_agent.py` (RAGAgent, manual agentic loop: LLM tool calls, guardrails), `llm_call_record.py` (LLMCallRecord + cost), `scoring.py`, `tools.py` (tool defs + SearchRecord + execution), `prompts.py` |
-| `src/interface/` | `app.py` (Streamlit entry), `chat_page.py` (ChatPage), `chat_message.py` (ChatMessage), `message_renderer.py` (MessageRenderer), `card_renderer.py` (CardRenderer), `agent_loop_saver.py` (AgentLoopSaver) |
+| `src/interface/` | `app.py` (Streamlit entry), `chat_page.py` (ChatPage), `chat_message.py` (ChatMessage), `message_renderer.py` (MessageRenderer), `agent_loop_saver.py` (AgentLoopSaver) |
 | `evaluation/` | offline eval (pre-deployment): `generate_qa.py` (QA set), `retrieval_eval.py`, `llm_eval.py`, `agent_eval.py`; `document_index.py` (ground-truth docs), `question_generator.py`, `answer_judge.py`, `llm_judge.py`, `retrieval_metrics.py`, `dev_subset.py`, `comparison_chart.py`, `evaluation_utils.py`; `data/` (qa.jsonl), `results/` |
 | `monitoring/` | `tracer.py` (TracerSetup + TracedRAGAgent), `span_exporter.py` (PostgresSpanExporter), `span_store.py`, `db_init.py` (connection + schema + init), `db_save.py` (save_conversation, save_search, save_llm_call), `db_feedback.py` (save_feedback), `db_query.py`, `db_stats.py`; `grafana/` + `dashboards/` configs on the same Postgres |
 | `tests/` | pytest suite (`conftest.py`, `test_integration.py`) |
-| `docs/` | `setup.md`, `usage.md`, `evaluation.md`, `code_overview.md` |
+| `docs/` | `setup.md`, `usage.md`, `evaluation.md` |
 | `deployment/` | `Dockerfile`, `.dockerignore`, `entrypoint.sh` (pipeline orchestration + URL rewrite) |
 | root config | `docker-compose.yml` (entry point; stays at root), `project.md`, `README.md` |
 | `monitoring/grafana` + `monitoring/dashboards` | Grafana provisioning + dashboard JSON on the Postgres span store |
@@ -170,7 +170,7 @@ unchanged).
 ## Testing
 
 ```bash
-set -a; source .env; set +a; uv run pytest -q   # 123 tests — keep this count in sync with the suite
+set -a; source .env; set +a; uv run pytest -q   # 124 tests — keep this count in sync with the suite
 ```
 
 ## Gotchas

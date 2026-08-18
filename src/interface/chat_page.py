@@ -11,8 +11,7 @@ from src.search.hybrid_search import HybridSearch
 
 
 class ChatPage:
-    def __init__(self, cards, messages, saver):
-        self.cards = cards
+    def __init__(self, messages, saver):
         self.messages = messages
         self.saver = saver
 

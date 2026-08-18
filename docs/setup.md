@@ -126,15 +126,12 @@ Open `http://localhost:8501`.
 
 ### 5. Run evaluations
 
+Evaluations run as Jupyter notebooks under `evaluation/notebooks/` (builders in `evaluation/notebooks/builders/`; results committed under `evaluation/results/`). Open them with `uv run jupyter notebook evaluation/notebooks` and run top-to-bottom, or execute headless:
+
 ```bash
-# Retrieval evaluation (fast, no LLM needed)
-uv run python -m evaluation.retrieval_eval
-
-# LLM evaluation (requires the LLM API; ~19 min on the dev subset)
-uv run python -m evaluation.llm_eval
-
-# Agent evaluation (requires the LLM API; ~27 min on the dev subset)
-uv run python -m evaluation.agent_eval
+uv run jupyter nbconvert --to notebook --execute evaluation/notebooks/04_retrieval_quality.ipynb   # retrieval (no LLM)
+uv run jupyter nbconvert --to notebook --execute evaluation/notebooks/05_answer_quality.ipynb      # LLM judge (~19 min on dev subset)
+uv run jupyter nbconvert --to notebook --execute evaluation/notebooks/01_agent_path_analysis.ipynb # agent path analysis (6-question trace)
 ```
 
 ### 6. Open the monitoring dashboard
@@ -147,7 +144,7 @@ docker-compose up -d postgres grafana
 
 ## Manual Full-Data Runs
 
-The full dataset is 1,025 Pokémon; the full QA set would be 5,125 pairs (5 per record). Full runs are manual only — never run by agents, never part of CI.
+The full dataset is 1,350 records (1,025 canonical + 325 alternate forms); the full QA set would be 6,750 questions (5 per record). Full runs are manual only — never run by agents, never part of CI.
 
 ### Parameter changes
 
@@ -158,7 +155,7 @@ The full dataset is 1,025 Pokémon; the full QA set would be 5,125 pairs (5 per 
 
 `--limit N` on `generate_qa.py` selects a coverage-sampled N records (deterministic, `--seed`); on `build_documents.py` it takes the first N by id.
 
-The eval scripts take no CLI flags: `retrieval_eval.py` reads the full `evaluation/data/qa.jsonl`, while `llm_eval.py` and `agent_eval.py` use in-script `sample_size` constants (10 for the LLM judge, 20 judge / 50 agent-full in `agent_eval.py`). For a full judge pass, edit those constants to `0` (all pairs) before running.
+The evaluation notebooks read the dev-subset `evaluation/data/qa.jsonl` by default. The LLM-judge notebooks (`05_answer_quality.ipynb`, `03_gate_quality_comparison.ipynb`) analyze the gated `evaluation/notebooks/data/gate_collection.jsonl` offline (no sampling).
 
 ### Regeneration order
 
@@ -167,9 +164,9 @@ The pipeline is strictly ordered — each step reads the previous step's output:
 ```bash
 uv run python -m src.data.build_documents   # 1. documents.jsonl (1350, default)
 uv run python -m evaluation.generate_qa --full   # 2. qa.jsonl (6750) — LLM cost
-uv run python -m evaluation.retrieval_eval       # 3. retrieval metrics (no LLM)
-uv run python -m evaluation.llm_eval             # 4. LLM judge (~19 min on dev subset)
-uv run python -m evaluation.agent_eval           # 5. agent vs simple (~27 min on dev subset)
+uv run jupyter nbconvert --to notebook --execute evaluation/notebooks/04_retrieval_quality.ipynb   # 3. retrieval metrics (no LLM)
+uv run jupyter nbconvert --to notebook --execute evaluation/notebooks/05_answer_quality.ipynb      # 4. LLM judge (~19 min on dev subset)
+uv run jupyter nbconvert --to notebook --execute evaluation/notebooks/01_agent_path_analysis.ipynb # 5. agent path analysis (notebook 01)
 ```
 
 ### Cost / time note
@@ -183,7 +180,9 @@ Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took 
 | Variable           | Default                          | Description                          |
 |--------------------|----------------------------------|--------------------------------------|
 | `OPENAI_API_KEY`   | `your-api-key-here`              | API key for the LLM API (local or cloud) |
-| `OPENAI_API_BASE_URL` | `http://localhost:9101/v1`    | LLM API endpoint — local hosted LLM or cloud OpenAI-compatible API |
+| `OPENAI_API_BASE_URL` | (none — required)              | LLM API endpoint — local hosted LLM or cloud OpenAI-compatible API |
+| `OPENAI_BASE_URL`     | (alias for `OPENAI_API_BASE_URL`) | Legacy alias for the LLM API endpoint |
+| `TRACING_ENABLED`     | `true`                          | When `false`, tracing is disabled and no spans are written to Postgres |
 | `MODEL_ID`         | (none — required)                | LLM model name, no default fallback  |
 | `DATASET_PATH`     | `./data`                         | Dataset storage path                |
 | `TAVILY_API_KEY`   | (none — optional)                | Tavily API key for the Bulbapedia web-search fallback; without it the agent rejects when local search cannot answer confidently |
@@ -196,7 +195,7 @@ Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took 
 | `POSTGRES_DB`      | `capstone`                       | PostgreSQL database name            |
 | `POSTGRES_USER`    | `capstone`                       | PostgreSQL username                  |
 | `POSTGRES_PASSWORD`| `capstone_secret`                | PostgreSQL password                  |
-| `POSTGRES_PORT`    | `5433`                           | PostgreSQL host port                |
+| `POSTGRES_PORT`    | `5432`                           | PostgreSQL host port                |
 | `POSTGRES_HOST`    | `localhost`                      | Postgres host for monitoring (spans, conversations, searches, llm_calls, feedback) |
 | `APP_PORT`         | `8501`                           | Streamlit app port                  |
 
@@ -223,7 +222,7 @@ repo bundle (fallback: Kaggle API) ──► data/raw/pokemon_complete.csv + pok
               RAG Agent (manual tool loop: LLM decides local / Bulbapedia web search)
                     │
                     ▼
-              Streamlit UI (chat + Pokémon cards + feedback)
+              Streamlit UI (chat + feedback)
                     │
                     ▼
               Monitoring (OpenTelemetry → Postgres → Grafana)

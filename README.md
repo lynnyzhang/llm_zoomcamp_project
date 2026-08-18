@@ -10,8 +10,7 @@ Given a dataset of Pokédex records (dev subset: coverage-sampled 50 Pokémon, 2
 2. Uses an agentic loop to reformulate queries when results are insufficient
 3. Generates faithful, grounded answers via a local LLM
 4. Rejects out-of-scope questions (battle simulation, save files, cheats, non-Pokémon topics)
-5. Displays Pokémon cards (name + types)
-6. Tracks performance with OpenTelemetry-based monitoring
+5. Tracks performance with OpenTelemetry-based monitoring
 
 ## Data
 
@@ -24,9 +23,9 @@ The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Streamlit Interface                      │
-│  ┌──────────┐  ┌──────────────┐  ┌─────────────────────┐    │
-│  │ Chat UI  │  │ Agent Visual │  │ Pokémon Card Grid   │    │
-│  └──────────┘  └──────────────┘  └─────────────────────┘    │
+│  ┌──────────┐  ┌──────────────┐                             │
+│  │ Chat UI  │  │ Agent Visual │                             │
+│  └──────────┘  └──────────────┘                             │
 └────────────────────────┬────────────────────────────────────┘
                          │
                          ▼
@@ -149,7 +148,6 @@ See [docs/usage.md](docs/usage.md) for the complete usage guide.
 - **Web search (Bulbapedia)** — Tavily-backed web search for facts the local knowledge base lacks (moves, anime, manga, lore, game history, strategy). The agent decides when local results are insufficient and searches Bulbapedia; if it answers without grounding, the loop forces one Bulbapedia retry before rejecting.
 - **Agentic loop** — the LLM decides when to call its tools (`search_local_knowledge_base`, `search_bulbapedia`), up to 5 tool-use rounds, and writes its own web keyword queries (recorded per search as `search_query`). For multi-Pokémon questions it searches once per Pokémon.
 - **Guardrails** — out-of-scope rejection (battle simulation/prediction, save files, cheats, non-Pokémon topics); the model refuses without calling tools, and the loop never fabricates an answer when searches fail.
-- **Pokémon cards** — retrieved documents render as cards showing the Pokémon's name and types.
 - **Feedback capture** — thumbs up/down per answer, recorded in monitoring for continuous improvement.
 
 ## Evaluation Results
@@ -166,23 +164,23 @@ Evaluation runs via the notebooks under `evaluation/notebooks/` on the chunked c
 
 Hybrid matches keyword recall (0.856) and beats vector on every metric. The keyword half preserves recall for tail-line facts (evolution, type effectiveness) that the 128-token vector embedding truncates.
 
-### Answer quality (notebook 05 — 60 questions, 37 accepted, 1-5 scale)
+### Answer quality (notebook 05 — 49 questions, 29 accepted, 1-5 scale)
 
 | Dimension    | Mean (accepted) |
 |--------------|-----------------|
-| Faithfulness | 4.486           |
-| Relevance    | 4.865           |
-| Coherence    | 4.973           |
+| Faithfulness | 3.966           |
+| Relevance    | 4.586           |
+| Coherence    | 4.690           |
 
 Per-type (n / acceptance / faithfulness / relevance / coherence):
 
 | Type      | n  | Acceptance | Faithfulness | Relevance | Coherence |
 |-----------|----|-----------|--------------|-----------|-----------|
-| ability   | 13 | 0.308     | 4.500        | 5.000     | 5.000     |
-| evolution | 8  | 0.875     | 5.000        | 5.000     | 5.000     |
-| other     | 10 | 0.700     | 4.571        | 5.000     | 5.000     |
-| stats     | 18 | 0.444     | 4.125        | 4.500     | 4.875     |
-| type      | 11 | 1.000     | 4.364        | 4.909     | 5.000     |
+| ability   | 9  | 0.333     | 5.000        | 5.000     | 5.000     |
+| evolution | 7  | 0.429     | 5.000        | 5.000     | 5.000     |
+| other     | 8  | 0.750     | 3.667        | 4.667     | 4.667     |
+| stats     | 14 | 0.500     | 3.429        | 4.000     | 4.429     |
+| type      | 11 | 0.909     | 3.900        | 4.700     | 4.700     |
 
 `stats` questions are the main quality/grounding bottleneck (lowest acceptance and faithfulness); `evolution` answers cleanly.
 
@@ -207,7 +205,10 @@ Mapped against the course project rubric (see `project.md`):
 
 Tracing runs through OpenTelemetry. Every agent run, search, and LLM call produces spans with query, tokens, latency, and feedback. All monitoring data (conversations, spans, searches, llm_calls, feedback) lives in **PostgreSQL** (Docker Compose starts Postgres by default; `POSTGRES_*` env vars configure it):
 
-- **Grafana** at `http://localhost:3000` — file-provisioned dashboards "Pokemon RAG Monitoring" (10 panels: total traces, cost, average latency, token usage, queries over time, feedback distribution, latency and token trends, top queries, agent iteration distribution) and "Pokemon RAG History" (gated-query rate, answer-path mix, recent conversations, thumbs up/down).
+- **Grafana** at `http://localhost:3000` — three file-provisioned dashboards:
+  - **Pokemon RAG Monitoring** (6 panels): total traces, average latency, total tokens, feedback distribution, top queries, agent iterations distribution.
+  - **Pokemon RAG History** (10 panels): total turns, gated turns, gated rate, error turns, gated-query rate over time, answer-path mix, conversations over time, recent conversations, thumbs up/down, negative feedback with trace.
+  - **Pokemon RAG Spans** (5 panels): recent agent runs, search count distribution, search queries, agent iterations, token usage per query.
 
 ## Documentation
 
@@ -231,10 +232,18 @@ project/
 │   └── Xenova/ms-marco-MiniLM-L-6-v2/  # Cross-encoder reranker (model.onnx)
 ├── monitoring/
 │   ├── tracer.py           # OpenTelemetry tracing (Postgres span store)
+│   ├── span_exporter.py    # Postgres span exporter
+│   ├── span_store.py       # Span store + feedback/stats queries
+│   ├── db_init.py          # Postgres connection + schema
+│   ├── db_save.py          # Save conversations, searches, llm_calls
+│   ├── db_feedback.py      # Save user feedback
+│   ├── db_query.py          # Query helpers
+│   ├── db_stats.py          # Aggregated stats
 │   ├── grafana/provisioning/   # Grafana datasource + dashboard provisioning
 │   └── dashboards/
-│       ├── pokemon_rag.json        # Grafana dashboard "Pokemon RAG Monitoring"
-│       └── pokemon_rag_history.json # Grafana dashboard "Pokemon RAG History"
+│       ├── pokemon_rag.json        # Grafana dashboard "Pokemon RAG Monitoring" (6 panels)
+│       ├── pokemon_rag_history.json # Grafana dashboard "Pokemon RAG History" (10 panels)
+│       └── pokemon_rag_spans.json   # Grafana dashboard "Pokemon RAG Spans" (5 panels)
 ├── deployment/
 │   ├── Dockerfile          # App container (Python 3.13 + uv)
 │   ├── .dockerignore       # Build exclusions (context: repo root)
@@ -261,26 +270,38 @@ project/
 │       ├── collect_gate_data.py  # Judged gate-data collection
 │       └── data/            # gate_collection.jsonl, agent_path_trace.txt
 ├── src/
+│   ├── llm/
+│   │   └── env.py           # LLM env config (API key, base URL, model id)
 │   ├── data/
 │   │   ├── build_documents.py   # raw CSVs → chunked documents.jsonl (corpus entry point)
 │   │   ├── chunking.py          # Token-aware sliding-window chunking
-│   │   └── download_model.py   # ONNX embedding model download
+│   │   ├── csv_parsers.py       # Raw CSV parsing
+│   │   ├── download.py          # Optional CSV download
+│   │   ├── download_model.py   # ONNX embedding model download
+│   │   ├── evolution.py         # Evolution-chain building
+│   │   ├── evolution_overrides.py # Evolution overrides
+│   │   ├── pokemon_doc_builder.py # Pokémon document assembly
+│   │   └── type_chart.py        # Type-chart documents
 │   ├── search/
 │   │   ├── embedder.py     # ONNX embedder (onnxruntime, no torch)
 │   │   ├── hybrid_search.py # Hybrid search (keyword + vector + RRF + relevance filter)
 │   │   ├── reranker.py      # Cross-encoder re-ranking over fused results
+│   │   ├── search_records.py # Search result / record dataclasses
 │   │   └── web_search.py   # Bulbapedia web search (Tavily)
 │   ├── rag/
 │   │   ├── rag_base.py      # Base RAG pipeline
 │   │   ├── rag_agent.py     # Agentic RAG: LLM tool calls + guardrails
-│   │   └── scoring.py       # Line-level grounding gate
+│   │   ├── tools.py         # Tool definitions + SearchRecord
+│   │   ├── prompts.py       # Agent/answer prompts
+│   │   ├── scoring.py       # Line-level grounding gate
+│   │   └── llm_call_record.py # LLM call record + cost
 │   └── interface/
 │       ├── app.py          # Streamlit chat entry
 │       ├── chat_page.py    # Agent-loop orchestration
+│       ├── chat_message.py # Chat message model
 │       ├── message_renderer.py  # Chat bubble rendering
-│       └── card_renderer.py     # Pokémon cards (name + types)
-├── tests/                  # Test suite (125 tests)
-└── notebooks/              # (exploration notebooks live under evaluation/notebooks/)
+│       └── agent_loop_saver.py # Persists agent loop + feedback to monitoring
+└── tests/                  # Test suite (124 tests)
 ```
 
 ## Key Dependencies

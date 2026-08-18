@@ -1,15 +1,11 @@
 import streamlit as st
 
 from src.interface.agent_loop_saver import AgentLoopSaver
-from src.interface.card_renderer import CardRenderer
 from src.interface.chat_message import ChatMessage
 
 
 class MessageRenderer:
-    def __init__(
-        self, cards: CardRenderer, saver: AgentLoopSaver, show_confidence: bool = False
-    ):
-        self.cards = cards
+    def __init__(self, saver: AgentLoopSaver, show_confidence: bool = False):
         self.saver = saver
         self.show_confidence = show_confidence
 
@@ -21,7 +17,6 @@ class MessageRenderer:
 
         result = msg.agent_result
         answer = result.answer
-        searches = result.searches
         msg_id = msg.msg_id
 
         if result.rejected:
@@ -36,10 +31,6 @@ class MessageRenderer:
                 st.caption("Source: Bulbapedia (web)")
             elif source == "local+web":
                 st.caption("Source: Local knowledge base + Bulbapedia (web)")
-
-            docs = self.cards.pokemon_doc(searches, msg.question)
-            if docs:
-                self.cards.pokemon_card_grid(docs)
 
             if self.show_confidence:
                 confidence = result.confidence

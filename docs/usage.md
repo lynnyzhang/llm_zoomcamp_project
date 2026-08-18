@@ -12,7 +12,7 @@ Type a question in the chat input at the bottom of the page. The system will:
 2. **Search locally** — the model typically starts with hybrid search (keyword + vector) over the Pokédex dataset
 3. **Escalate** — only when the model judges local results insufficient: web search restricted to Bulbapedia (Tavily), with the model writing its own keyword query
 4. **Answer or reject** — the model answers grounded in the retrieved tool results; out-of-scope or unanswerable questions get the rejection message
-5. **Display** — answer with source caption, Pokémon cards, and feedback buttons
+5. **Display** — answer with source caption and feedback buttons
 
 ### Example Queries
 
@@ -39,8 +39,6 @@ Each response includes:
 
 **Confidence Score** — An optional progress bar showing the grounding score (0–100%): the maximum embedding-cosine similarity between the answer and any single retrieved record — how semantically close the answer is to its source. Hidden by default; launch the app with `--show-confidence` to display it. Answers below `CONFIDENCE_THRESHOLD` (default 0.65) are rejected instead of shown.
 
-**Pokémon Cards** — Retrieved documents render as cards with official artwork (sprite URLs from the dataset, PokeAPI fallback), the Pokémon's name and types, and a stats summary. Only Pokémon named in the question are shown — questions that name no Pokémon get no cards. Artwork that fails to load degrades gracefully — the card still shows the title.
-
 **Feedback Buttons** — Thumbs up/down to record whether the answer was helpful. Feedback is attached to the exact tracing span for the message and shows up in monitoring.
 
 **Rejection banner** — When the model refuses (out-of-scope questions, or gaps neither the local knowledge base nor Bulbapedia can fill), the answer renders as a warning banner with no cards or source.
@@ -56,10 +54,10 @@ from src.search.hybrid_search import HybridSearch
 agent = RAGAgent(search_index=HybridSearch())
 result = agent.run("What are Pikachu's stats?")
 
-print(f"Answer: {result['answer']}")
-print(f"Source: {result['source']}")            # 'local' or 'web' (or None for direct answers)
-print(f"Iterations: {result['iterations']}")
-for i, search in enumerate(result['searches']):
+print(f"Answer: {result.answer}")
+print(f"Source: {result.source}")            # 'local' or 'web' (or None for direct answers)
+print(f"Iterations: {result.iterations}")
+for i, search in enumerate(result.searches):
     print(f"  Search {i+1}: query='{search.query}', source={search.source}, results={len(search.results)}")
     if search.search_query:
         print(f"    tool query: {search.search_query}")
@@ -98,7 +96,8 @@ vec_results = hs.vector_search("electric pokemon stats", num_results=5)
 ### Agent Loop with Feedback Tracking
 
 ```python
-from monitoring.tracer import TracedRAGAgent, record_feedback, get_trace_stats
+from monitoring.tracer import TracedRAGAgent
+from monitoring.span_store import record_feedback, get_trace_stats
 
 # Wrap agent with tracing
 agent = RAGAgent(search_index=HybridSearch())
@@ -131,13 +130,14 @@ docker-compose up -d postgres grafana
 
 The dashboard **"Pokemon RAG Monitoring"** is provisioned automatically. Panels:
 
-1. **Stats row** — Total traces, total cost, average latency, total tokens
-2. **Queries over time** — Line chart of agent-run volume
-3. **Feedback distribution** — Bar chart of positive/negative feedback
-4. **Latency over time** — Average agent-run latency
-5. **Token usage over time** — Input vs output tokens
-6. **Top queries** — Most frequent queries (top 20)
-7. **Agent iterations distribution** — Iterations per query
+1. **Total Traces** — count of agent runs
+2. **Avg Latency (agent.run)** — average agent-run latency
+3. **Total Tokens** — token usage
+4. **Feedback distribution** — positive/negative feedback
+5. **Top queries** — most frequent queries (top 20)
+6. **Agent iterations distribution** — iterations per query
+
+Two more dashboards are provisioned: **Pokemon RAG History** (gated-query rate, answer-path mix, recent conversations, thumbs up/down) and **Pokemon RAG Spans** (recent agent runs, search queries, token usage per query).
 
 ### Trace Schema
 
@@ -146,11 +146,10 @@ The `spans` table in Postgres stores:
 | Column            | Type    | Description                                    |
 |-------------------|---------|------------------------------------------------|
 | name              | TEXT    | Span name (agent.run, llm, search)             |
-| start_time        | INTEGER | Start timestamp (nanoseconds)                  |
-| end_time          | INTEGER | End timestamp (nanoseconds)                    |
+| start_time        | BIGINT  | Start timestamp (nanoseconds)                  |
+| end_time          | BIGINT  | End timestamp (nanoseconds)                    |
 | input_tokens      | INTEGER | LLM input tokens used                          |
 | output_tokens     | INTEGER | LLM output tokens generated                    |
-| cost              | REAL    | Estimated cost                                 |
 | feedback          | TEXT    | User feedback (positive/negative/null)         |
 | agent_iterations  | INTEGER | Number of search iterations                    |
 | query             | TEXT    | Original user query                            |
@@ -159,35 +158,11 @@ The `spans` table in Postgres stores:
 
 ## Running Evaluations
 
-### Retrieval Evaluation
+All evaluations run as Jupyter notebooks under `evaluation/notebooks/` (builders in `evaluation/notebooks/builders/`; results committed under `evaluation/results/`). Open them with `uv run jupyter notebook evaluation/notebooks` and run top-to-bottom, or execute headless with `uv run jupyter nbconvert --to notebook --execute <notebook>`.
 
-Compares keyword, vector, and hybrid search on the dev-subset ground-truth questions (250).
-
-```bash
-uv run python -m evaluation.retrieval_eval
-```
-
-Output: `evaluation/results/retrieval_eval.json`
-
-### LLM Answer Quality Evaluation
-
-Uses LLM-as-judge to rate answers on faithfulness, relevance, and coherence (1-5 scale). Tests 3 judge prompt variants on a 10-question sample (the in-script `sample_size` constant).
-
-```bash
-uv run python -m evaluation.llm_eval
-```
-
-Output: `evaluation/results/llm_eval.json`
-
-### Agent vs Simple RAG Evaluation
-
-Compares agentic RAG (manual tool-use loop: the model decides when to search local / Bulbapedia web) against simple RAG (single search) on retrieval accuracy, answer quality, and latency.
-
-```bash
-uv run python -m evaluation.agent_eval
-```
-
-Output: `evaluation/results/agent_eval.json` and `evaluation/results/agent_eval_comparison.png`
+- **Notebook 04 — Retrieval quality**: compares keyword, vector, and hybrid search on the 250-question dev subset (hit@5, precision@5, recall@5, MRR). Output: `evaluation/results/retrieval_eval.json`.
+- **Notebook 05 — Answer quality**: LLM-as-judge rates answers on faithfulness, relevance, and coherence (1–5). Compares 3 judge-prompt variants on a 10-question sample.
+- **Notebooks 01/02/03 — Agent path, gate calibration, gate-quality comparison**: agent-vs-simple analysis and grounding-gate tuning.
 
 Full-data runs are manual — see "Manual full-data runs" in [docs/setup.md](setup.md).
 
@@ -202,7 +177,7 @@ from src.rag.rag_agent import RAGAgent
 # Custom weights
 hs = HybridSearch(
     rrf_k=60,
-    rrf_k=60,
+    relevance_threshold=0.5,
 )
 
 agent = RAGAgent(search_index=hs, max_iterations=5)
@@ -216,13 +191,14 @@ agent = RAGAgent(search_index=HybridSearch())
 result = agent.run("What type is Pikachu?")
 
 # Each search iteration
-for search_record in result['searches']:
+for search_record in result.searches:
     print(f"Query: {search_record.query}")
     print(f"Results: {len(search_record.results)}")
-    print(f"Analysis: {search_record.analysis}")
+    print(f"Source: {search_record.source}")
 
     for doc in search_record.results:
-        print(f"  - {doc['title']} (score: {doc.get('score', 'N/A')})")
+        label = getattr(doc, "name", None) or getattr(doc, "title", "")
+        print(f"  - {label} (score: {doc.score:.3f})")
 ```
 
 ### Custom RAG Pipeline

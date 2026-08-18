@@ -24,13 +24,12 @@ following the course's data-generation pattern:
 - At eval time the ground-truth answer is the linked document's own content
   (`data/chunks/documents.jsonl` → `search_text`), the analog of the FAQ
   "answer" lookup (`answer_orig = doc_idx[doc_id]["answer"]`).
-  Shared helpers live in `evaluation/evaluation_utils.py`, mirroring the
-  course's `evaluation_utils.py` (patch_openai_client, llm_structured,
-  llm_structured_retry, map_progress, calc_price).
+   Shared helpers live in `evaluation/evaluation_utils.py` (`map_progress`,
+   a tqdm wrapper for parallel eval work).
 
 ## 1. Retrieval Evaluation
 
-**Script:** `evaluation/retrieval_eval.py`
+**Notebook:** `evaluation/notebooks/04_retrieval_quality.ipynb`
 **Output:** `evaluation/results/retrieval_eval.json`
 
 ### Methodology
@@ -67,7 +66,7 @@ Refresh of 2026-08-10 on the regenerated ground-truth set (questions-only):
 
 ## 2. LLM Answer Quality Evaluation
 
-**Script:** `evaluation/llm_eval.py`
+**Notebook:** `evaluation/notebooks/05_answer_quality.ipynb`
 **Output:** `evaluation/results/llm_eval.json`
 
 ### Methodology
@@ -115,7 +114,7 @@ Refresh of 2026-08-10 on the regenerated ground-truth set (questions-only):
 
 ## 3. Agent vs Simple RAG Evaluation
 
-**Script:** `evaluation/agent_eval.py`
+**Notebook:** `evaluation/notebooks/01_agent_path_analysis.ipynb`
 **Output:** `evaluation/results/agent_eval.json`, `evaluation/results/agent_eval_comparison.png`
 
 ### Methodology
@@ -127,7 +126,7 @@ Refresh of 2026-08-10 on the regenerated ground-truth set (questions-only):
   - Answer quality (20-question judge sample) — LLM-as-judge correctness (1-5)
   - Latency and search overhead
 
-> **Note:** The numbers below come from the pre-refactor agent (manual tool-use loop with query reformulation). The agent was re-architected on 2026-08-12 to a LangGraph escalate flow, rewritten on 2026-08-13 as a direct manual flow, and converted the same day to a native LLM tool-use loop — re-run `evaluation.agent_eval` to refresh these results.
+> **Note:** The numbers below come from the pre-refactor agent (manual tool-use loop with query reformulation). The agent was re-architected on 2026-08-12 to a LangGraph escalate flow, rewritten on 2026-08-13 as a direct manual flow, and converted the same day to a native LLM tool-use loop — re-run `evaluation/notebooks/01_agent_path_analysis.ipynb` to refresh these results.
 
 ### Results
 
@@ -168,29 +167,24 @@ Refresh of 2026-08-10 on the regenerated ground-truth set (questions-only):
 
 | Evaluation          | Best Method         | Key Finding                                    |
 |---------------------|---------------------|------------------------------------------------|
-| Retrieval           | Hybrid (vector+RRF) | 98.4% recall@5; keyword best MRR (0.9548)      |
+| Retrieval           | Keyword (recall/MRR); Hybrid ≈ keyword | 89.2% recall@5 (keyword); hybrid 88.0%; keyword best MRR (0.8415) |
 | LLM Quality         | with_examples prompt| 3.9/4.7/4.9 — best overall; faithfulness gap    |
 | Agent vs Simple     | Simple RAG          | Agentic adds +20.7s/query at a -0.4pp hit rate on the 50-doc subset |
 
 ## Reproducing Results
 
 ```bash
-# 0. Ensure evaluation/data/qa.jsonl exists (dev subset): 
+# 0. Ensure evaluation/data/qa.jsonl exists (dev subset):
 #    uv run python -m evaluation.generate_qa
 
 # 1. Ensure the LLM API is reachable at the configured OPENAI_API_BASE_URL (e.g. localhost:9101/v1)
 
-# 2. Run retrieval evaluation (no LLM needed)
-uv run python -m evaluation.retrieval_eval
-# → evaluation/results/retrieval_eval.json
-
-# 3. Run LLM evaluation (needs the LLM API; ~19 min on the dev subset)
-uv run python -m evaluation.llm_eval
-# → evaluation/results/llm_eval.json
-
-# 4. Run agent evaluation (needs the LLM API; ~27 min on the dev subset)
-uv run python -m evaluation.agent_eval
-# → evaluation/results/agent_eval.json, evaluation/results/agent_eval_comparison.png
+# 2. Run evaluations via the notebooks under evaluation/notebooks/
+#    Open with: uv run jupyter notebook evaluation/notebooks
+#    Or execute headless: uv run jupyter nbconvert --to notebook --execute <notebook>
+#      - 04_retrieval_quality.ipynb   → evaluation/results/retrieval_eval.json (no LLM)
+#      - 05_answer_quality.ipynb      → evaluation/results/llm_eval.json (needs LLM; ~19 min on dev subset)
+#      - 01_agent_path_analysis.ipynb → evaluation/results/agent_eval.json (needs LLM; ~27 min on dev subset)
 ```
 
 Full-data QA runs are manual: regenerate documents → QA with `--full` first (see [docs/setup.md](setup.md), Manual full-data runs); build_documents already builds the full dataset by default.
@@ -198,7 +192,7 @@ Full-data QA runs are manual: regenerate documents → QA with `--full` first (s
 ## Limitations
 
 1. **Small judge sample** — 10 questions for LLM answer quality, 20 for agent answer quality. A larger sample would give tighter estimates.
-2. **Dev subset is at a retrieval ceiling** — the ~98% hit rate says little about the full 1,025-Pokémon dataset. The manual full-data run is the real test of the agent loop.
+2. **Dev subset is at a retrieval ceiling** — the ~89% recall@5 says little about the full 1,350-record dataset. The manual full-data run is the real test of the agent loop.
 3. **Faithfulness gap** — answers add details beyond the single retrieved document; retrieving more context or tightening the answer prompt would raise faithfulness.
 4. **Single model** — all evaluations use the configured model (`MODEL_ID` from `.env`, required — no default). Results may differ with larger or different models.
 5. **No end-to-end metric** — retrieval and answer quality were evaluated separately. A combined metric (e.g., answer correctness given retrieved context) would be more informative.

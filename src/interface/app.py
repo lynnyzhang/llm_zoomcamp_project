@@ -15,7 +15,6 @@ load_dotenv(project_root / ".env")
 
 import streamlit as st
 
-from src.interface.card_renderer import CardRenderer
 from src.interface.chat_page import ChatPage
 from src.interface.message_renderer import MessageRenderer
 from src.interface.agent_loop_saver import AgentLoopSaver
@@ -50,10 +49,9 @@ if "feedback" not in st.session_state:
 if "session_id" not in st.session_state:
     st.session_state.session_id = uuid.uuid4().hex
 
-cards = CardRenderer()
 saver = AgentLoopSaver()
-messages = MessageRenderer(cards, saver, SHOW_CONFIDENCE)
-chat_page = ChatPage(cards, messages, saver)
+messages = MessageRenderer(saver, SHOW_CONFIDENCE)
+chat_page = ChatPage(messages, saver)
 
 st.title("🤖 Pokémon Assistant")
 st.caption("Agentic RAG assistant for Pokémon knowledge")
