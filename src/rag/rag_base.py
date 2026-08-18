@@ -49,10 +49,15 @@ class RAGBase:
         self,
         messages: list[dict],
         tools=None,
-        temperature=LLMClient.get_agent_temperature(),
+        temperature=None,
     ):
         # The single LLM request site shared by the plain rag() path and the
         # agent loop (which wraps this with per-call recording).
+        temperature = (
+            temperature
+            if temperature is not None
+            else LLMClient.get_agent_temperature()
+        )
         return self.llm_client.client.responses.create(
             model=self.model,
             input=messages,

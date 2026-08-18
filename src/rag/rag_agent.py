@@ -22,7 +22,7 @@ class RAGAgent(RAGBase):
         model=None,
         max_iterations=MAX_ITERATIONS,
         num_results=5,
-        confidence_threshold=get_confidence_threshold(),
+        confidence_threshold=None,
     ):
         model = model or LLMClient.get_model()
         super().__init__(search_index=search_index, llm_client=llm_client, model=model)
@@ -30,7 +30,11 @@ class RAGAgent(RAGBase):
         self.num_results = num_results
         # Reuses the index embedder for grounding/relevance scores.
         self.embedder = getattr(search_index, "embedder", None)
-        self.confidence_threshold = confidence_threshold
+        self.confidence_threshold = (
+            confidence_threshold
+            if confidence_threshold is not None
+            else get_confidence_threshold()
+        )
         # Per-agent-loop recording: per-call records plus the loop record.
         self.calls: list[LLMCallRecord] = []
         self.agent_loop_record: LLMCallRecord | None = None
@@ -39,10 +43,15 @@ class RAGAgent(RAGBase):
         self,
         messages: list[dict],
         tools=None,
-        temperature=LLMClient.get_agent_temperature(),
+        temperature=None,
     ):
         # Per-call recording: timing + usage land in self.calls as typed
         # records, so monitoring needs no raw dicts from the loop.
+        temperature = (
+            temperature
+            if temperature is not None
+            else LLMClient.get_agent_temperature()
+        )
         start = time.perf_counter()
         try:
             response = super().call_llm(messages, tools=tools, temperature=temperature)

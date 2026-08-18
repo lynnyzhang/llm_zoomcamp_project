@@ -35,7 +35,12 @@ class AgentResult:
 
 
 def get_confidence_threshold():
-    return float(os.environ.get("CONFIDENCE_THRESHOLD", "0.65"))
+    raw = os.environ.get("CONFIDENCE_THRESHOLD")
+    if raw is None:
+        raise RuntimeError(
+            "CONFIDENCE_THRESHOLD is not set; add CONFIDENCE_THRESHOLD to .env"
+        )
+    return float(raw)
 
 
 def cosine_similarity(embedder: Embedder, text_a: str, text_b: str) -> float:

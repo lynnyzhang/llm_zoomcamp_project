@@ -37,7 +37,7 @@ Each response includes:
 
 **Answer** — The generated response, grounded in retrieved tool results.
 
-**Confidence Score** — An optional progress bar showing the grounding score (0–100%): the maximum embedding-cosine similarity between the answer and any single retrieved record — how semantically close the answer is to its source. Hidden by default; launch the app with `--show-confidence` to display it. Answers below `CONFIDENCE_THRESHOLD` (default 0.65) are rejected instead of shown.
+**Confidence Score** — An optional progress bar showing the grounding score (0–100%): the maximum embedding-cosine similarity between the answer and any single retrieved record — how semantically close the answer is to its source. Hidden by default; launch the app with `--show-confidence` to display it. Answers below `CONFIDENCE_THRESHOLD` (set in .env; no default) are rejected instead of shown.
 
 **Feedback Buttons** — Thumbs up/down to record whether the answer was helpful. Feedback is attached to the exact tracing span for the message and shows up in monitoring.
 
