@@ -45,18 +45,19 @@ class RAGBase:
         context = self.build_context(search_results)
         return self.prompt_template.format(question=query, context=context)
 
-    def call_llm(self, messages: list[dict], tools=None, temperature=None):
+    def call_llm(
+        self,
+        messages: list[dict],
+        tools=None,
+        temperature=LLMClient.get_agent_temperature(),
+    ):
         # The single LLM request site shared by the plain rag() path and the
         # agent loop (which wraps this with per-call recording).
         return self.llm_client.client.responses.create(
             model=self.model,
             input=messages,
             tools=tools,
-            temperature=(
-                temperature
-                if temperature is not None
-                else LLMClient.get_answer_temperature()
-            ),
+            temperature=temperature,
         )
 
     def llm(self, prompt: str) -> str:

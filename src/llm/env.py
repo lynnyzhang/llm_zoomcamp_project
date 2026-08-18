@@ -37,7 +37,3 @@ def get_model():
 
 def get_agent_temperature():
     return float(os.environ.get("AGENT_TEMPERATURE", "0.0"))
-
-
-def get_answer_temperature():
-    return float(os.environ.get("ANSWER_TEMPERATURE", "0.3"))

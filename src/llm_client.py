@@ -16,13 +16,15 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 spec = importlib.util.spec_from_file_location(
-    "src.llm_client.env", Path(__file__).resolve().parent / "llm" / "env.py")
+    "src.llm_client.env", Path(__file__).resolve().parent / "llm" / "env.py"
+)
 env = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(env)  # src/llm_client.py shadows the src/llm/ package
 
 
 class Test(BaseModel):
     """Minimal output type for the one-time text_format support test."""
+
     id: int
 
 
@@ -44,7 +46,6 @@ class LLMClient:
     get_base_url = staticmethod(env.get_base_url)
     get_model = staticmethod(env.get_model)
     get_agent_temperature = staticmethod(env.get_agent_temperature)
-    get_answer_temperature = staticmethod(env.get_answer_temperature)
 
     @classmethod
     def get(cls):
@@ -76,7 +77,7 @@ class LLMClient:
         try:
             test = self.openai_client.responses.parse(
                 model=self.model,
-                input=[{"role": "user", "content": 'reply with a id as intger'}],
+                input=[{"role": "user", "content": "reply with a id as intger"}],
                 text_format=Test,
             )
             return test.output_parsed is not None

@@ -35,7 +35,12 @@ class RAGAgent(RAGBase):
         self.calls: list[LLMCallRecord] = []
         self.agent_loop_record: LLMCallRecord | None = None
 
-    def call_llm(self, messages: list[dict], tools=None, temperature=None):
+    def call_llm(
+        self,
+        messages: list[dict],
+        tools=None,
+        temperature=LLMClient.get_agent_temperature(),
+    ):
         # Per-call recording: timing + usage land in self.calls as typed
         # records, so monitoring needs no raw dicts from the loop.
         start = time.perf_counter()

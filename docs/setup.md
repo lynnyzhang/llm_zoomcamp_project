@@ -189,7 +189,6 @@ Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took 
 | `CONFIDENCE_THRESHOLD` | `0.65`                        | Minimum grounding score (0–1) an answer must have to be returned — max embedding-cosine similarity between the answer and any single retrieved record; below it the answer is replaced by the rejection message |
 | `RETRIEVAL_SCORE_THRESHOLD` | `0.3`                     | Minimum query↔chunk cosine (0–1) a retrieved chunk must have to be returned by hybrid search; below it the chunk is dropped as irrelevant |
 | `AGENT_TEMPERATURE` | `0.0`                          | Sampling temperature for agent-loop tool decisions (deterministic) — set to `1` for reasoning models (o1/o3) |
-| `ANSWER_TEMPERATURE` | `0.3`                         | Sampling temperature for `RAGBase.llm()` answer generation — set to `1` for reasoning models (o1/o3) |
 | `EMBEDDER_MODEL_PATH` | (Docker-only)                | Override for the ONNX bi-encoder location (set by `deployment/entrypoint.sh`; not user-facing) |
 | `RERANKER_MODEL_PATH` | (Docker-only)                | Override for the ONNX cross-encoder (re-ranker) location (set by `deployment/entrypoint.sh`; not user-facing) |
 | `POSTGRES_DB`      | `capstone`                       | PostgreSQL database name            |

@@ -42,6 +42,7 @@ def reset_singleton(monkeypatch):
 # LLMClient.get singleton
 # ---------------------------------------------------------------------------
 
+
 def test_get_returns_singleton(monkeypatch):
     reset_singleton(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "k")
@@ -56,6 +57,7 @@ def test_get_returns_singleton(monkeypatch):
 # ---------------------------------------------------------------------------
 # LLMClient construction / lazy client + text_format test/patch
 # ---------------------------------------------------------------------------
+
 
 def test_client_created_exactly_once(monkeypatch):
     fake = make_fake_openai(test_supported=True)
@@ -90,6 +92,7 @@ def test_text_format_and_patch_run_once(monkeypatch):
 # ---------------------------------------------------------------------------
 # parse behavior (output_parsed, no manual JSON parsing)
 # ---------------------------------------------------------------------------
+
 
 def test_patched_parse_keeps_sdk_output_parsed(monkeypatch):
     fake = make_fake_openai(test_supported=False)
@@ -163,6 +166,7 @@ def test_parse_with_text_format_supported_passes_through(monkeypatch):
 # env getters
 # ---------------------------------------------------------------------------
 
+
 def test_get_api_key_missing_raises(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(RuntimeError):
@@ -184,21 +188,18 @@ def test_get_model_missing_raises(monkeypatch):
 
 def test_temperature_getters_defaults(monkeypatch):
     monkeypatch.delenv("AGENT_TEMPERATURE", raising=False)
-    monkeypatch.delenv("ANSWER_TEMPERATURE", raising=False)
     assert llm.LLMClient.get_agent_temperature() == 0.0
-    assert llm.LLMClient.get_answer_temperature() == 0.3
 
 
 def test_temperature_getters_read_env(monkeypatch):
     monkeypatch.setenv("AGENT_TEMPERATURE", "0.5")
-    monkeypatch.setenv("ANSWER_TEMPERATURE", "0.7")
     assert llm.LLMClient.get_agent_temperature() == 0.5
-    assert llm.LLMClient.get_answer_temperature() == 0.7
 
 
 # ---------------------------------------------------------------------------
 # explicit values without env
 # ---------------------------------------------------------------------------
+
 
 def test_llmclient_uses_explicit_values_without_env(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
