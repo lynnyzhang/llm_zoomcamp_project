@@ -18,8 +18,7 @@ def record_feedback(span_id, feedback):
                 )
                 if cur.rowcount == 0:
                     cur.execute(
-                        "INSERT INTO spans (span_id, feedback) "
-                        "VALUES (%s, %s)",
+                        "INSERT INTO spans (span_id, feedback) VALUES (%s, %s)",
                         (span_id, feedback),
                     )
             conn.commit()
@@ -27,9 +26,7 @@ def record_feedback(span_id, feedback):
         finally:
             conn.close()
     except Exception:
-        logging.getLogger(__name__).warning(
-            "Failed to record feedback", exc_info=True
-        )
+        logging.getLogger(__name__).warning("Failed to record feedback", exc_info=True)
         return False
     return recorded
 
@@ -52,10 +49,6 @@ def get_trace_stats():
                 stats["total_input_tokens"] = row[0] or 0
                 stats["total_output_tokens"] = row[1] or 0
                 cur.execute(
-                    "SELECT SUM(cost) FROM spans WHERE cost IS NOT NULL"
-                )
-                stats["total_cost"] = cur.fetchone()[0] or 0.0
-                cur.execute(
                     "SELECT feedback, COUNT(*) FROM spans "
                     "WHERE feedback IS NOT NULL GROUP BY feedback"
                 )
@@ -63,8 +56,6 @@ def get_trace_stats():
         finally:
             conn.close()
     except Exception:
-        logging.getLogger(__name__).warning(
-            "Failed to load trace stats", exc_info=True
-        )
+        logging.getLogger(__name__).warning("Failed to load trace stats", exc_info=True)
         return {"total_traces": 0}
     return stats

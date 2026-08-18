@@ -21,10 +21,10 @@ def save_conversation(
                 INSERT INTO conversations (
                     question, answer, course, model,
                     prompt_tokens, completion_tokens, total_tokens,
-                    response_time, cost, source, rejected, span_id,
+                    response_time, source, rejected, span_id,
                     timestamp, session_id, error
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 RETURNING id
                 """,
@@ -37,7 +37,6 @@ def save_conversation(
                     record.completion_tokens,
                     record.total_tokens,
                     record.response_time,
-                    record.cost,
                     record.source,
                     int(bool(record.rejected)),
                     record.span_id,

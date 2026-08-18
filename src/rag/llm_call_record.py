@@ -29,13 +29,6 @@ class LLMCallSummary:
         )
 
 
-def calculate_cost(model, usage):
-    cost = 0.0
-    if "qwen" in model and usage:
-        cost = (usage.input_tokens * 0.15 + usage.output_tokens * 0.60) / 1_000_000
-    return cost
-
-
 @dataclass
 class LLMCallRecord:
     model: str
@@ -46,7 +39,6 @@ class LLMCallRecord:
     completion_tokens: int | None
     total_tokens: int | None
     response_time: float
-    cost: float
     timestamp: datetime = field(default_factory=datetime.now)
     # Back-trace additions (production need): the row id and the fields the
     # UI/dashboard restore from the store.
@@ -70,7 +62,6 @@ class LLMCallRecord:
             completion_tokens=0,
             total_tokens=0,
             response_time=response_time,
-            cost=0.0,
             source=None,
             rejected=True,
             error=error,
@@ -79,7 +70,7 @@ class LLMCallRecord:
     @classmethod
     def from_response(cls, model, response, latency):
         # Per-call record from an LLM response: usage captured from
-        # response.usage, cost from the token counts.
+        # response.usage.
         call = cls(
             model=model,
             prompt=None,
@@ -89,7 +80,6 @@ class LLMCallRecord:
             completion_tokens=0,
             total_tokens=0,
             response_time=latency,
-            cost=0.0,
         )
         raw = getattr(response, "usage", None)
         if raw is not None:
@@ -106,13 +96,6 @@ class LLMCallRecord:
                 call.completion_tokens, int
             ):
                 call.total_tokens = call.prompt_tokens + call.completion_tokens
-                call.cost = calculate_cost(
-                    model,
-                    Usage(
-                        input_tokens=call.prompt_tokens,
-                        output_tokens=call.completion_tokens,
-                    ),
-                )
         return call
 
     @classmethod
@@ -128,7 +111,6 @@ class LLMCallRecord:
             completion_tokens=None,
             total_tokens=None,
             response_time=latency,
-            cost=0.0,
             error="LLM call failed",
         )
 
@@ -145,7 +127,6 @@ class LLMCallRecord:
             completion_tokens=usage.output_tokens,
             total_tokens=usage.input_tokens + usage.output_tokens,
             response_time=elapsed,
-            cost=calculate_cost(model, usage),
             source=result.source,
             rejected=result.rejected,
         )

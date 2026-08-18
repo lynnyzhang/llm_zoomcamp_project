@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS spans (
     end_time BIGINT,
     input_tokens INTEGER,
     output_tokens INTEGER,
-    cost DOUBLE PRECISION,
     feedback TEXT DEFAULT NULL,
     agent_iterations INTEGER DEFAULT NULL,
     query TEXT DEFAULT NULL,
@@ -27,9 +26,7 @@ CREATE TABLE IF NOT EXISTS spans (
 def ensure_postgres_schema(conn):
     with conn.cursor() as cur:
         cur.execute(PG_SPANS_SCHEMA)
-        cur.execute(
-            "ALTER TABLE spans ADD COLUMN IF NOT EXISTS span_id TEXT"
-        )
+        cur.execute("ALTER TABLE spans ADD COLUMN IF NOT EXISTS span_id TEXT")
     conn.commit()
 
 
@@ -56,16 +53,15 @@ class PostgresSpanExporter(SpanExporter):
                     cur.execute(
                         """INSERT INTO spans
                            (name, start_time, end_time, input_tokens,
-                            output_tokens, cost, feedback, agent_iterations,
+                            output_tokens, feedback, agent_iterations,
                             query, search_queries, span_id)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                         (
                             span.name,
                             span.start_time,
                             span.end_time,
                             attrs.get("input_tokens"),
                             attrs.get("output_tokens"),
-                            attrs.get("cost"),
                             attrs.get("feedback"),
                             attrs.get("agent_iterations"),
                             attrs.get("query"),
@@ -75,9 +71,7 @@ class PostgresSpanExporter(SpanExporter):
                     )
             self.conn.commit()
         except Exception:
-            self.logger.warning(
-                "Failed to export spans to Postgres", exc_info=True
-            )
+            self.logger.warning("Failed to export spans to Postgres", exc_info=True)
             self.conn.rollback()
             return SpanExportResult.FAILURE
         return SpanExportResult.SUCCESS
@@ -92,8 +86,6 @@ class PostgresSpanExporter(SpanExporter):
         try:
             self.conn.commit()
         except Exception:
-            self.logger.warning(
-                "Postgres force_flush failed", exc_info=True
-            )
+            self.logger.warning("Postgres force_flush failed", exc_info=True)
             return False
         return True

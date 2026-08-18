@@ -10,7 +10,6 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-from src.rag.llm_call_record import calculate_cost
 from src.rag.rag_agent import RAGAgent
 from src.rag.scoring import AgentResult
 
@@ -96,10 +95,6 @@ class TracedRAGAgent:
             if usage:
                 span.set_attribute("input_tokens", usage.input_tokens)
                 span.set_attribute("output_tokens", usage.output_tokens)
-                span.set_attribute(
-                    "cost",
-                    calculate_cost(getattr(self.agent, "model", "") or "", usage),
-                )
 
             self.agent.attach_span(span_id(span))
             return result
@@ -120,10 +115,6 @@ class TracedRAGAgent:
             if usage:
                 span.set_attribute("input_tokens", usage.input_tokens)
                 span.set_attribute("output_tokens", usage.output_tokens)
-                span.set_attribute(
-                    "cost",
-                    calculate_cost(getattr(self.agent, "model", "") or "", usage),
-                )
             sid = span_id(span)
             self.agent.attach_span(sid)
             return result, sid

@@ -14,18 +14,19 @@ def row_to_record(row) -> LLMCallRecord:
         completion_tokens=row[6],
         total_tokens=row[7],
         response_time=row[8],
-        cost=row[9],
-        source=row[10],
-        rejected=bool(row[11]),
-        span_id=row[12],
-        timestamp=row[13],
-        error=row[15],
+        source=row[9],
+        rejected=bool(row[10]),
+        span_id=row[11],
+        timestamp=row[12],
+        error=row[14],
         prompt="",
         instructions="",
     )
 
 
-def get_conversations(limit: int = 10, session_id: str | None = None) -> list[LLMCallRecord]:
+def get_conversations(
+    limit: int = 10, session_id: str | None = None
+) -> list[LLMCallRecord]:
     conn = None
     try:
         conn = get_db_connection()
@@ -33,7 +34,7 @@ def get_conversations(limit: int = 10, session_id: str | None = None) -> list[LL
             sql = """
                 SELECT id, question, answer, course, model,
                        prompt_tokens, completion_tokens, total_tokens,
-                       response_time, cost, source, rejected, span_id,
+                       response_time, source, rejected, span_id,
                        timestamp, session_id, error
                 FROM conversations
             """

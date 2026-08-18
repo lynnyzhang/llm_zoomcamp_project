@@ -1,0 +1,20 @@
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# macOS
+.DS_Store
+
+# Generated / downloaded artifacts (raw CSVs under data/raw/ are committed)
+data/chunks/
+data/models/
+models/
+*.db
+
+# Internal tooling / test artifacts
+.omo/
+.playwright-mcp/

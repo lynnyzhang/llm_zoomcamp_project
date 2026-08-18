@@ -8,7 +8,6 @@ from .db_init import get_db_connection
 class Stats:
     total: int
     avg_response_time: float
-    total_cost: float
     avg_tokens: float
 
 
@@ -21,7 +20,6 @@ def get_stats():
                 SELECT
                     COUNT(*),
                     AVG(response_time),
-                    SUM(cost),
                     AVG(total_tokens)
                 FROM conversations
             """)
@@ -30,7 +28,7 @@ def get_stats():
         logging.getLogger(__name__).warning(
             "Failed to load conversation stats", exc_info=True
         )
-        return Stats(total=0, avg_response_time=0.0, total_cost=0.0, avg_tokens=0.0)
+        return Stats(total=0, avg_response_time=0.0, avg_tokens=0.0)
     finally:
         if conn is not None:
             conn.close()
@@ -38,8 +36,7 @@ def get_stats():
     return Stats(
         total=row[0],
         avg_response_time=row[1] or 0.0,
-        total_cost=row[2] or 0.0,
-        avg_tokens=row[3] or 0.0,
+        avg_tokens=row[2] or 0.0,
     )
 
 

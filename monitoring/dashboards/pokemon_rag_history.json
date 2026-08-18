@@ -552,7 +552,7 @@
           "format": "table",
           "group": [],
           "hide": false,
-          "rawSql": "SELECT question, answer, model, ROUND(response_time::numeric, 1) AS \"response_time_s\", ROUND(cost::numeric, 4) AS cost, source, rejected, error, timestamp\nFROM conversations\nORDER BY timestamp DESC\nLIMIT 20",
+          "rawSql": "SELECT question, answer, model, ROUND(response_time::numeric, 1) AS \"response_time_s\", source, rejected, error, timestamp\nFROM conversations\nORDER BY timestamp DESC\nLIMIT 20",
           "refId": "A"
         }
       ],
@@ -622,6 +622,79 @@
       ],
       "title": "Thumbs Up / Down",
       "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "capstone-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 10,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "timestamp"
+          }
+        ]
+      },
+      "pluginVersion": "10.4.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "capstone-postgres"
+          },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "rawSql": "SELECT c.question, c.answer, c.rejected, c.error,\n       s.search_queries, s.agent_iterations, s.query AS span_query\nFROM feedback f\nJOIN conversations c ON c.id = f.conversation_id\nLEFT JOIN spans s ON s.span_id = c.span_id\nWHERE f.source = 'user' AND f.score < 0\nORDER BY f.timestamp DESC\nLIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "Negative feedback with trace",
+      "type": "table"
     }
   ],
   "refresh": "30s",

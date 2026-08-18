@@ -1068,7 +1068,6 @@ class TestMonitoring:
             span.set_attribute("query", "test query")
             span.set_attribute("input_tokens", 100)
             span.set_attribute("output_tokens", 50)
-            span.set_attribute("cost", 0.001)
 
         exporter.force_flush()
         exporter.shutdown()
@@ -1126,7 +1125,7 @@ class TestMonitoring:
             def __init__(self):
                 time.sleep(
                     0.005
-                )  # model real TracerSetup cost (exporter I/O) so the race window exists
+                )  # model real TracerSetup overhead (exporter I/O) so the race window exists
                 created.append(self)
                 self.tracer = object()
 
@@ -1262,7 +1261,6 @@ class TestMonitoring:
         with tracer.start_as_current_span("agent.run") as span:
             span.set_attribute("input_tokens", 100)
             span.set_attribute("output_tokens", 50)
-            span.set_attribute("cost", 0.01)
 
         exporter.force_flush()
         exporter.shutdown()
@@ -1272,7 +1270,6 @@ class TestMonitoring:
         assert "span_names" in stats
         assert stats["total_input_tokens"] >= 100
         assert stats["total_output_tokens"] >= 50
-        assert stats["total_cost"] >= 0.01
 
     def test_traced_ragent_run(self, monkeypatch):
         from opentelemetry.sdk.trace import TracerProvider
@@ -1706,14 +1703,11 @@ class TestConversationStore:
         source="local",
         rejected=False,
         span_id="span0",
-        cost=None,
         model="qwen/qwen3.5-9b",
         error=None,
     ):
         from src.rag.llm_call_record import LLMCallRecord
 
-        if cost is None:
-            cost = (prompt_tokens * 0.15 + completion_tokens * 0.60) / 1_000_000
         return LLMCallRecord(
             model=model,
             prompt="",
@@ -1723,7 +1717,6 @@ class TestConversationStore:
             completion_tokens=completion_tokens,
             total_tokens=prompt_tokens + completion_tokens,
             response_time=0.5,
-            cost=cost,
             source=source,
             rejected=rejected,
             span_id=span_id,
@@ -1770,7 +1763,7 @@ class TestConversationStore:
         fake = make_fake_db(monkeypatch)
         init_db()
         rid = save_conversation(
-            self.record(prompt_tokens=0, completion_tokens=0, cost=0.0),
+            self.record(prompt_tokens=0, completion_tokens=0),
             "q",
             "llm-zoomcamp",
         )
@@ -1781,7 +1774,6 @@ class TestConversationStore:
         assert records[0].prompt_tokens == 0
         assert records[0].completion_tokens == 0
         assert records[0].total_tokens == 0
-        assert records[0].cost == 0.0
 
     def test_stats_aggregates(self, monkeypatch):
         from monitoring.db_init import init_db
@@ -1799,32 +1791,8 @@ class TestConversationStore:
 
         stats = get_stats()
         assert stats.total == 3
-        assert stats.total_cost > 0
         assert stats.avg_tokens == 15.0
         assert stats.avg_response_time == 0.5
-
-    def test_calculate_cost_qwen_formula(self):
-        from src.rag.llm_call_record import calculate_cost
-
-        assert (
-            calculate_cost(
-                "qwen/qwen3.5-9b", Usage(input_tokens=1_000_000, output_tokens=0)
-            )
-            == 0.15
-        )
-        assert (
-            calculate_cost(
-                "qwen/qwen3.5-9b", Usage(input_tokens=0, output_tokens=1_000_000)
-            )
-            == 0.60
-        )
-        assert (
-            calculate_cost(
-                "gpt-4o", Usage(input_tokens=1_000_000, output_tokens=1_000_000)
-            )
-            == 0.0
-        )
-        assert calculate_cost("qwen/qwen3.5-9b", None) == 0.0
 
     def test_save_never_raises(self, monkeypatch):
         from monitoring.db_save import save_conversation
@@ -2252,7 +2220,6 @@ class TestRAGOwnsRecords:
         return response
 
     def test_calls_are_llmcalls_with_latency(self, monkeypatch):
-        from src.rag.llm_call_record import calculate_cost
         from src.rag.llm_call_record import LLMCallRecord
 
         web_fake = TestAgentToolLoop.web_fake()
@@ -2284,10 +2251,6 @@ class TestRAGOwnsRecords:
         assert first.total_tokens == 150
         assert first.response_time >= 0
         assert first.error is None
-        assert first.cost == calculate_cost(
-            agent.model,
-            Usage(input_tokens=100, output_tokens=50),
-        )
         assert second.total_tokens == 280
 
     def test_agent_loop_record_built(self, monkeypatch):
@@ -2376,7 +2339,7 @@ class TestRAGOwnsRecords:
 
 
 class TestTracerConversationIntegration:
-    def test_traced_agent_sets_token_and_cost_attributes(self, monkeypatch):
+    def test_traced_agent_sets_token_attributes(self, monkeypatch):
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
@@ -2411,7 +2374,6 @@ class TestTracerConversationIntegration:
         stats = get_trace_stats()
         assert stats["total_input_tokens"] >= 500
         assert stats["total_output_tokens"] >= 200
-        assert stats["total_cost"] >= (500 * 0.15 + 200 * 0.60) / 1e6
 
     def test_feedback_table_roundtrip(self, monkeypatch):
         from monitoring.db_feedback import save_feedback

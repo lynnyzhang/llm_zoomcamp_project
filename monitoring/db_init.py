@@ -17,7 +17,6 @@ CONVERSATIONS_SCHEMA = """
         completion_tokens INTEGER NOT NULL,
         total_tokens INTEGER NOT NULL,
         response_time FLOAT NOT NULL,
-        cost FLOAT NOT NULL,
         source TEXT,
         rejected INTEGER NOT NULL DEFAULT 0,
         span_id TEXT,
