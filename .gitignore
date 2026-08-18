@@ -18,3 +18,7 @@ models/
 # Internal tooling / test artifacts
 .omo/
 .playwright-mcp/
+4-Evaluation
+5-Monitoring
+1-Agentic RAG
+2-Vector Search
