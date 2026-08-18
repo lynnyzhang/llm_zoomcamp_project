@@ -1,11 +1,6 @@
 from src.data.evolution import EvolutionChain
 from src.data.type_chart import TypeChart
 
-# One Pokémon per document by design (content is short - a single labeled
-# record), so no real chunk splitting happens. This constant is kept only as
-# documentation of the intended token budget for the flat search_text rendering.
-CHARS_PER_TOKEN = 4
-
 
 class PokemonDocBuilder:
     """Builds the flat labeled search_text and the final Pokémon document."""
