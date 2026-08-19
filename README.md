@@ -249,25 +249,27 @@ project/
 │   ├── .dockerignore       # Build exclusions (context: repo root)
 │   └── entrypoint.sh       # Pipeline orchestration
 ├── evaluation/
-│   ├── generate_qa.py       # LLM-generated ground-truth questions
-│   ├── document_index.py    # Ground-truth doc reconstruction from chunks
-│   ├── llm_calls.py         # Structured LLM calls (Responses API)
-│   ├── llm_judge.py         # LLM answer-quality judge
-│   ├── judge_prompts.py     # Judge prompt variants
-│   ├── answer_judge.py      # Correctness judge
-│   ├── dev_subset.py        # Deterministic dev-subset sampling
-│   ├── question_generator.py# Question generation
-│   ├── evaluation_utils.py  # Shared evaluation helpers
 │   ├── data/
-│   │   └── qa.jsonl         # question → document (dev: 250)
-│   └── notebooks/           # Evaluation notebooks (01-05)
+│   │   ├── qa.jsonl              # question → document (dev: 250)
+│   │   ├── gate_collection.jsonl # judged gate data (notebooks 02/03/05 input)
+│   │   └── src/                  # QA + gate-data generation scripts
+│   │       ├── generate_qa.py    # LLM-generated ground-truth questions
+│   │       ├── qa_generation.py  # question generation + dev-subset sampling
+│   │       └── collect_gate_data.py # judged gate-data collection
+│   └── notebooks/                # Evaluation notebooks (01-05)
 │       ├── 01_agent_path_analysis.ipynb
 │       ├── 02_gate_calibration.ipynb
 │       ├── 03_gate_quality_comparison.ipynb
 │       ├── 04_retrieval_quality.ipynb
 │       ├── 05_answer_quality.ipynb
-│       ├── collect_gate_data.py  # Judged gate-data collection
-│       └── data/            # gate_collection.jsonl, agent_path_trace.txt
+│       ├── share/                # Shared eval code (imported by notebooks + scripts)
+│       │   ├── common.py         # agent build, qa loading, tracing
+│       │   ├── document_index.py # ground-truth doc reconstruction from chunks
+│       │   ├── judge_prompts.py  # judge prompt variants
+│       │   ├── llm_calls.py      # structured LLM calls (Responses API)
+│       │   └── judge.py          # correctness + grounding judges
+│       └── results/              # committed notebook outputs
+│           └── agent_path_trace.txt
 ├── src/
 │   ├── llm/
 │   │   └── env.py           # LLM env config (API key, base URL, model id)
