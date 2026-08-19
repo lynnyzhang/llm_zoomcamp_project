@@ -158,9 +158,9 @@ The `spans` table in Postgres stores:
 
 ## Running Evaluations
 
-All evaluations run as Jupyter notebooks under `evaluation/notebooks/` (results committed under `evaluation/results/`). Open them with `uv run jupyter notebook evaluation/notebooks` and run top-to-bottom, or execute headless with `uv run jupyter nbconvert --to notebook --execute <notebook>`.
+All evaluations run as Jupyter notebooks under `evaluation/notebooks/` (results committed under `evaluation/notebooks/results/`). Open them with `uv run jupyter notebook evaluation/notebooks` and run top-to-bottom, or execute headless with `uv run jupyter nbconvert --to notebook --execute <notebook>`.
 
-- **Notebook 04 — Retrieval quality**: compares keyword, vector, and hybrid search on the 250-question dev subset (hit@5, precision@5, recall@5, MRR). Output: `evaluation/results/retrieval_eval.json`.
+- **Notebook 04 — Retrieval quality**: compares keyword, vector, and hybrid search on the 250-question dev subset (hit@5, precision@5, recall@5, MRR). Output: `evaluation/notebooks/results/retrieval_eval.json`.
 - **Notebook 05 — Answer quality**: LLM-as-judge rates answers on faithfulness, relevance, and coherence (1–5). Compares 3 judge-prompt variants on a 10-question sample.
 - **Notebooks 01/02/03 — Agent path, gate calibration, gate-quality comparison**: agent-vs-simple analysis and grounding-gate tuning.
 

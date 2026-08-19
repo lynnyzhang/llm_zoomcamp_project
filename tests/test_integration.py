@@ -1352,7 +1352,7 @@ class TestMonitoring:
 
 class TestEvaluationScripts:
     def test_judge_prompts_have_required_fields(self):
-        from evaluation.judge_prompts import JUDGE_PROMPTS
+        from evaluation.notebooks.share.judge_prompts import JUDGE_PROMPTS
 
         for name, config in JUDGE_PROMPTS.items():
             assert "instructions" in config, f"{name} missing instructions"

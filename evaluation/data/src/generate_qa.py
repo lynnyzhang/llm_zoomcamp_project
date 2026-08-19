@@ -16,23 +16,40 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
+from tqdm.auto import tqdm
 
-from evaluation.dev_subset import (
+from evaluation.data.src.qa_generation import (
     DEV_SUBSET_SIZE,
     DEV_SUBSET_SEED,
     coverage_summary,
     resolve_ids,
-)
-from evaluation.document_index import load_pokemon_documents
-from evaluation.evaluation_utils import map_progress
-from evaluation.question_generator import (
     MAX_WORKERS,
     TARGET_QUESTIONS_PER_RECORD,
     generate_questions_for_record,
 )
+from evaluation.notebooks.share.document_index import load_pokemon_documents
 from src.llm_client import LLMClient
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+def map_progress(pool, seq, f):
+    results = []
+
+    with tqdm(total=len(seq)) as progress:
+        futures = []
+
+        for el in seq:
+            future = pool.submit(f, el)
+            future.add_done_callback(lambda p: progress.update())
+            futures.append(future)
+
+        for future in futures:
+            result = future.result()
+            results.append(result)
+
+    return results
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 QA_FILE = PROJECT_ROOT / "evaluation" / "data" / "qa.jsonl"
 
 
@@ -43,15 +60,34 @@ def main(argv=None):
         "each row links a question to the indexed Pokédex document that contains its answer)."
     )
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--full", action="store_true", help="All 1,350 Pokémon documents × N questions (MANUAL only — slow/costly)")
-    group.add_argument("--limit", type=int, default=DEV_SUBSET_SIZE,
-                       help=f"Coverage-sampled N Pokémon documents from the indexed dataset (default: {DEV_SUBSET_SIZE})")
-    parser.add_argument("--questions", type=int, default=TARGET_QUESTIONS_PER_RECORD,
-                        help="Target questions per record (default: 5; fewer = cheaper but weaker stats)")
-    parser.add_argument("--seed", type=int, default=DEV_SUBSET_SEED,
-                        help=f"Seed for the deterministic coverage sampler (default: {DEV_SUBSET_SEED})")
-    parser.add_argument("--resume", action="store_true",
-                        help="Skip record ids already present in evaluation/data/qa.jsonl (safe re-run after a crash)")
+    group.add_argument(
+        "--full",
+        action="store_true",
+        help="All 1,350 Pokémon documents × N questions (MANUAL only — slow/costly)",
+    )
+    group.add_argument(
+        "--limit",
+        type=int,
+        default=DEV_SUBSET_SIZE,
+        help=f"Coverage-sampled N Pokémon documents from the indexed dataset (default: {DEV_SUBSET_SIZE})",
+    )
+    parser.add_argument(
+        "--questions",
+        type=int,
+        default=TARGET_QUESTIONS_PER_RECORD,
+        help="Target questions per record (default: 5; fewer = cheaper but weaker stats)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEV_SUBSET_SEED,
+        help=f"Seed for the deterministic coverage sampler (default: {DEV_SUBSET_SEED})",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip record ids already present in evaluation/data/qa.jsonl (safe re-run after a crash)",
+    )
     args = parser.parse_args(argv)
 
     load_dotenv(PROJECT_ROOT / ".env")
@@ -74,8 +110,10 @@ def main(argv=None):
     if ids:
         sel_records = [records[i] for i in ids]
         types, gens, legendary, mythical = coverage_summary(sel_records)
-        print(f"  coverage: {len(types)}/18 types, {len(gens)} generations, "
-              f"{legendary} legendary, {mythical} mythical (seed={args.seed})")
+        print(
+            f"  coverage: {len(types)}/18 types, {len(gens)} generations, "
+            f"{legendary} legendary, {mythical} mythical (seed={args.seed})"
+        )
 
     client = LLMClient.get()
     # Bound the SDK's default 600s per-request timeout and disable its built-in

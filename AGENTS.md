@@ -13,7 +13,7 @@ The knowledge base is the Kaggle Pokémon Dataset with Stats and Types
 canonical Pokémon + 325 alternate forms) fetched by `src/data/build_documents.py`,
 which builds the full 1,350-record dataset by default. The **dev subset** — a
 deterministic coverage-sampled 50 Pokémon (250 ground-truth questions) — is the default for
-ground-truth generation (`evaluation/generate_qa.py`) and all automated eval
+ground-truth generation (`evaluation/data/src/generate_qa.py`) and all automated eval
 runs; full-data QA runs are manual (see `docs/setup.md`).
 
 **Self-contained:** this project depends only on its own `src/` — never import
@@ -196,7 +196,7 @@ set -a; source .env; set +a; uv run pytest -q   # 124 tests — keep this count 
 - **`.env` is required for any LLM call** — `LLMClient.get_model()` raises without
   `MODEL_ID`; there is no default model. LLM calls fail lazily at first use.
 - **`.env` must never be committed** — it holds the LLM API key and is ignored by the repo `.gitignore` (and a global gitignore rule).
-- `uv.lock` and `.python-version` are committed in this repo; `evaluation/results/` eval outputs are committed too.
+- `uv.lock` and `.python-version` are committed in this repo; `evaluation/notebooks/results/` eval outputs are committed too.
 - `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/chunks/documents.jsonl`, ONNX embedder under `models/`); the two raw CSVs under `data/raw/` are **bundled and committed** (Kaggle anonymous downloads are bot-blocked, so the repo ships its own copy — no login needed); `evaluation/data/qa.jsonl` is an LLM-generated eval artifact; all monitoring data (spans + conversations + searches + llm_calls + feedback) lives in Postgres (`docker-compose up postgres`, or a local server on localhost:5432 with the capstone defaults; set `POSTGRES_HOST` etc. to override).
 - Keep the project self-contained: no imports from external reference
   material (docstring attributions are comments only, never dependencies).

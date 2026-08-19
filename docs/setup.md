@@ -10,7 +10,7 @@
 
 ## Development Subset (Default)
 
-All automated runs use the **dev subset**: a deterministic coverage-sampled 50 Pokémon (all 18 types, all generations, legendary/mythical representation) → 50 Pokédex records, 250 ground-truth questions. This is a user directive (2026-08-09): `src/data/build_documents.py` builds the full 1,350-record dataset by default (no LLM cost, seconds), and the dev-subset limit is applied in `evaluation/generate_qa.py` so automated eval runs stay cheap; full-data QA runs are manual only. See [Manual full-data runs](#manual-full-data-runs) below.
+All automated runs use the **dev subset**: a deterministic coverage-sampled 50 Pokémon (all 18 types, all generations, legendary/mythical representation) → 50 Pokédex records, 250 ground-truth questions. This is a user directive (2026-08-09): `src/data/build_documents.py` builds the full 1,350-record dataset by default (no LLM cost, seconds), and the dev-subset limit is applied in `evaluation/data/src/generate_qa.py` so automated eval runs stay cheap; full-data QA runs are manual only. See [Manual full-data runs](#manual-full-data-runs) below.
 
 ## Docker Setup (Recommended)
 
@@ -111,7 +111,7 @@ uv run python -m src.data.download_model
 uv run python -m src.data.build_documents
 
 # Generate the ground-truth set (dev subset: 250 questions; requires the LLM API)
-uv run python -m evaluation.generate_qa
+uv run python -m evaluation.data.src.generate_qa
 ```
 
 `build_documents.py` defaults to the full 1,350-record dataset; pass `--limit N` for a smaller dataset (e.g. `--limit 50`). `generate_qa.py` defaults to the deterministic coverage-sampled dev subset (50 records × 5 questions = 250) and supports `--full` (all 1,350 records), `--limit N`, `--questions N` (questions per record), `--seed N`, and `--resume` (skip ids already in qa.jsonl). Each row is `{"question", "document"}` — questions only, linked to the Pokédex document that contains the answer; the LLM never writes answers.
@@ -126,7 +126,7 @@ Open `http://localhost:8501`.
 
 ### 5. Run evaluations
 
-Evaluations run as Jupyter notebooks under `evaluation/notebooks/` (results committed under `evaluation/results/`). Open them with `uv run jupyter notebook evaluation/notebooks` and run top-to-bottom, or execute headless:
+Evaluations run as Jupyter notebooks under `evaluation/notebooks/` (results committed under `evaluation/notebooks/results/`). Open them with `uv run jupyter notebook evaluation/notebooks` and run top-to-bottom, or execute headless:
 
 ```bash
 uv run jupyter nbconvert --to notebook --execute evaluation/notebooks/04_retrieval_quality.ipynb   # retrieval (no LLM)
@@ -151,11 +151,11 @@ The full dataset is 1,350 records (1,025 canonical + 325 alternate forms); the f
 | Step | Command | What it does |
 |------|---------|--------------|
 | Build documents | `uv run python -m src.data.build_documents` | All 1,350 records + 18 type charts → `data/chunks/documents.jsonl` (default) |
-| QA     | `uv run python -m evaluation.generate_qa --full` | 1,350 records × 5 = 6,750 questions (flagged MANUAL — slow/costly) |
+| QA     | `uv run python -m evaluation.data.src.generate_qa --full` | 1,350 records × 5 = 6,750 questions (flagged MANUAL — slow/costly) |
 
 `--limit N` on `generate_qa.py` selects a coverage-sampled N records (deterministic, `--seed`); on `build_documents.py` it takes the first N by id.
 
-The evaluation notebooks read the dev-subset `evaluation/data/qa.jsonl` by default. The LLM-judge notebooks (`05_answer_quality.ipynb`, `03_gate_quality_comparison.ipynb`) analyze the gated `evaluation/notebooks/data/gate_collection.jsonl` offline (no sampling).
+The evaluation notebooks read the dev-subset `evaluation/data/qa.jsonl` by default. The LLM-judge notebooks (`05_answer_quality.ipynb`, `03_gate_quality_comparison.ipynb`) analyze the gated `evaluation/data/gate_collection.jsonl` offline (no sampling).
 
 ### Regeneration order
 
@@ -163,7 +163,7 @@ The pipeline is strictly ordered — each step reads the previous step's output:
 
 ```bash
 uv run python -m src.data.build_documents   # 1. documents.jsonl (1350, default)
-uv run python -m evaluation.generate_qa --full   # 2. qa.jsonl (6750) — LLM cost
+uv run python -m evaluation.data.src.generate_qa --full   # 2. qa.jsonl (6750) — LLM cost
 uv run jupyter nbconvert --to notebook --execute evaluation/notebooks/04_retrieval_quality.ipynb   # 3. retrieval metrics (no LLM)
 uv run jupyter nbconvert --to notebook --execute evaluation/notebooks/05_answer_quality.ipynb      # 4. LLM judge (~19 min on dev subset)
 uv run jupyter nbconvert --to notebook --execute evaluation/notebooks/01_agent_path_analysis.ipynb # 5. agent path analysis (notebook 01)
@@ -171,7 +171,7 @@ uv run jupyter nbconvert --to notebook --execute evaluation/notebooks/01_agent_p
 
 ### Cost / time note
 
-Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took ≈ 1,120s (~19 min) and the agent eval ≈ 27 min. The full 1,350-Pokémon / 6,750-question run will be substantially longer (build_documents scales linearly, QA generation scales with records, and the evals scale with ground-truth questions) and consumes meaningful LLM tokens — the QA generator alone issues one multi-pair prompt per record. Budget accordingly, and switch back to the dev subset afterwards (a plain `uv run python -m evaluation.generate_qa` run regenerates the coverage-sampled 250-question set).
+Measured on the dev subset (local qwen via `localhost:9101`): the LLM eval took ≈ 1,120s (~19 min) and the agent eval ≈ 27 min. The full 1,350-Pokémon / 6,750-question run will be substantially longer (build_documents scales linearly, QA generation scales with records, and the evals scale with ground-truth questions) and consumes meaningful LLM tokens — the QA generator alone issues one multi-pair prompt per record. Budget accordingly, and switch back to the dev subset afterwards (a plain `uv run python -m evaluation.data.src.generate_qa` run regenerates the coverage-sampled 250-question set).
 
 ## Configuration Reference
 

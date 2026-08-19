@@ -16,7 +16,7 @@ Given a dataset of Pokédex records (dev subset: coverage-sampled 50 Pokémon, 2
 
 The system is built on the **Pokémon Dataset with Stats and Types** from Kaggle ([`patelris/pokemon-dataset-with-stats-and-types`](https://www.kaggle.com/datasets/patelris/pokemon-dataset-with-stats-and-types)). The two raw CSVs (`pokemon_complete.csv`, `pokemon_types.csv`) ship **bundled** in `data/raw/` — Kaggle's anonymous download endpoint is bot-blocked, so the repo carries its own copy and no login is needed. `src/data/build_documents.py` only attempts a download when they are missing, and builds `data/chunks/documents.jsonl`: each Pokémon's `search_text` is split into **token-aware chunks** (100-token windows, 50-token step, each ≤128 tokens so it fits the embedding window), giving **6,082 Pokémon chunks + 18 type-chart docs** (1,025 canonical + 325 alternate forms).
 
-**Development subset:** `src/data/build_documents.py` builds the full 1,350-record dataset by default; `evaluation/generate_qa.py` defaults to a deterministic coverage-sampled dev subset of 50 Pokémon (250 ground-truth questions). This is a user directive: dev subset for all automated test/eval runs, full-data QA runs manual only. See [docs/setup.md](docs/setup.md).
+**Development subset:** `src/data/build_documents.py` builds the full 1,350-record dataset by default; `evaluation/data/src/generate_qa.py` defaults to a deterministic coverage-sampled dev subset of 50 Pokémon (250 ground-truth questions). This is a user directive: dev subset for all automated test/eval runs, full-data QA runs manual only. See [docs/setup.md](docs/setup.md).
 
 ## Architecture
 
@@ -129,7 +129,7 @@ See [docs/setup.md](docs/setup.md) for detailed setup instructions.
 set -a; source .env; set +a; uv run python -c "from src.rag.rag_agent import RAGAgent; from src.search.hybrid_search import HybridSearch; a = RAGAgent(search_index=HybridSearch()); r = a.run('What are Pikachu's stats?'); print(r.answer[:200])"
 
 # Generate the ground-truth set (dev subset, 250 questions):
-uv run python -m evaluation.generate_qa
+uv run python -m evaluation.data.src.generate_qa
 
 # Run evaluations via the notebooks under evaluation/notebooks/:
 #   01_agent_path_analysis, 02_gate_calibration, 03_gate_quality_comparison,

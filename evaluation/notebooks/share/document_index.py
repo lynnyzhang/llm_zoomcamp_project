@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 DEFAULT_DOCUMENTS_PATH = (
-    Path(__file__).resolve().parents[1] / "data" / "chunks" / "documents.jsonl"
+    Path(__file__).resolve().parents[3] / "data" / "chunks" / "documents.jsonl"
 )
 
 

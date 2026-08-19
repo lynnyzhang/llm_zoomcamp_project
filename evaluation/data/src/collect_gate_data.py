@@ -7,16 +7,17 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from pydantic import BaseModel
-
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-from evaluation.document_index import ground_truth_answer, load_document_index
-from evaluation.judge_prompts import JUDGE_PROMPTS
-from evaluation.llm_calls import llm_structured_retry
-from evaluation.llm_judge import evaluate_single
-from evaluation.notebooks.common import build_agent, load_qa, setup, trace_run
+from evaluation.notebooks.share.document_index import (
+    ground_truth_answer,
+    load_document_index,
+)
+from evaluation.notebooks.share.judge_prompts import JUDGE_PROMPTS
+from evaluation.notebooks.share.llm_calls import llm_structured_retry
+from evaluation.notebooks.share.judge import evaluate_single, judge_grounding
+from evaluation.notebooks.share.common import build_agent, load_qa, setup, trace_run
 from src.llm_client import LLMClient
 from src.rag.scoring import cosine_similarity
 
@@ -36,12 +37,6 @@ def classify(question):
         if any(kw in q for kw in kws):
             return label
     return "other"
-
-
-class GroundingJudge(BaseModel):
-    correctness: int
-    grounded: bool
-    explanation: str
 
 
 def retrieved_texts(searches) -> list[str]:
@@ -64,24 +59,6 @@ def line_score(embedder, answer, texts):
             if line:
                 best = max(best, cosine_similarity(embedder, answer, line))
     return best
-
-
-def judge_gate(client, question, answer, texts, ground_truth):
-    instructions = (
-        "You judge a QA system. Rate correctness 1-5 against the ground truth "
-        "(1 completely wrong, 5 fully correct), and state whether the answer is "
-        "grounded in (supported by) the retrieved documents (boolean)."
-    )
-    prompt = (
-        f"Question: {question}\n\nGenerated Answer: {answer}\n\n"
-        f"Retrieved Documents:\n{chr(10).join(texts)}\n\n"
-        f"Ground Truth: {ground_truth or 'N/A'}"
-    )
-    try:
-        parsed, _ = llm_structured_retry(client, instructions, prompt, GroundingJudge)
-    except Exception:
-        return None, None, None
-    return parsed.correctness, parsed.grounded, parsed.explanation
 
 
 def judge_quality(client, question, texts, answer, ground_truth):
@@ -108,7 +85,7 @@ def main():
     print(
         f"sample: {len(sample)} questions over {len({q['document'] for q in sample})} distinct documents"
     )
-    out_dir = root / "evaluation" / "notebooks" / "data"
+    out_dir = root / "evaluation" / "data"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "gate_collection.jsonl"
     out_path.write_text("", encoding="utf-8")
@@ -126,7 +103,7 @@ def main():
             for order, gate in enumerate(gate_history, 1):
                 answer_to_judge = gate.rejected_answer or gate.answer or ""
                 texts = retrieved_texts(gate.searches)
-                judged = judge_gate(
+                judged = judge_grounding(
                     client, question, answer_to_judge, texts, ground_truth
                 )
                 if judged[0] is None:
