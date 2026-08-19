@@ -126,7 +126,7 @@ Open `http://localhost:8501`.
 
 ### 5. Run evaluations
 
-Evaluations run as Jupyter notebooks under `evaluation/notebooks/` (builders in `evaluation/notebooks/builders/`; results committed under `evaluation/results/`). Open them with `uv run jupyter notebook evaluation/notebooks` and run top-to-bottom, or execute headless:
+Evaluations run as Jupyter notebooks under `evaluation/notebooks/` (results committed under `evaluation/results/`). Open them with `uv run jupyter notebook evaluation/notebooks` and run top-to-bottom, or execute headless:
 
 ```bash
 uv run jupyter nbconvert --to notebook --execute evaluation/notebooks/04_retrieval_quality.ipynb   # retrieval (no LLM)

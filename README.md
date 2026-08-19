@@ -266,7 +266,6 @@ project/
 │       ├── 03_gate_quality_comparison.ipynb
 │       ├── 04_retrieval_quality.ipynb
 │       ├── 05_answer_quality.ipynb
-│       ├── builders/        # Notebook builders
 │       ├── collect_gate_data.py  # Judged gate-data collection
 │       └── data/            # gate_collection.jsonl, agent_path_trace.txt
 ├── src/

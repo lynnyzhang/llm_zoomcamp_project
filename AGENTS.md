@@ -21,7 +21,7 @@ from external course content or reference material.
 
 **Reference folders:** a set of numbered course-material folders at the repo
 root (e.g. `<number>-<Function>`) are USER-PROVIDED reference only. They are
-untracked (via a global gitignore rule — the repo has no `.gitignore`), never
+untracked (ignored by the repo `.gitignore` and a global gitignore rule), never
 imported by `src/`, never staged or committed, and never named in project
 documents. The user removes them; do not delete, move, or add them.
 
@@ -121,8 +121,9 @@ Docker alternative: `docker-compose up --build` (app + Postgres + Grafana).
 
 ## LLM Backend
 
-`.env` supplies the LLM config, read centrally by `src/llm_client.py`
-(`LLMClient.get_api_key()`, `LLMClient.get_base_url()`, `LLMClient.get_model()`, `LLMClient.get()`):
+`.env` supplies the config, read centrally by `src/llm_client.py` (which loads
+`src/llm/env.py`): `LLMClient.get_api_key()`, `LLMClient.get_base_url()`,
+`LLMClient.get_model()`, `LLMClient.get()`.
 
 - `OPENAI_API_KEY` — API key (required; RuntimeError if missing)
 - `OPENAI_API_BASE_URL` (or legacy `OPENAI_BASE_URL`) — the OpenAI-compatible
@@ -132,6 +133,22 @@ Docker alternative: `docker-compose up --build` (app + Postgres + Grafana).
   missing)
 - `DATASET_PATH` — optional local data directory override (default `./data`,
   used by `src/data/build_documents.py`)
+- `TAVILY_API_KEY` — web search backend for the agent's escalation path
+  (https://tavily.com); missing/empty key makes web escalation return empty
+  results so the agent rejects gracefully
+- `CONFIDENCE_THRESHOLD` — minimum grounding score (0..1) an answer must have to
+  be returned (faithfulness: max embedding-cosine similarity to any retrieved
+  record); below it the answer is replaced by the rejection message. Default 0.65
+- `RETRIEVAL_SCORE_THRESHOLD` — minimum query↔chunk cosine (0..1) a retrieved
+  chunk must have to be returned by hybrid search; below it the chunk is dropped
+  as irrelevant. Default 0.3
+- `AGENT_TEMPERATURE` — sampling temperature for the agent tool-use loop.
+  Default 0.0 (deterministic); set to 1 for reasoning models (o1/o3)
+- `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` / `POSTGRES_USER` /
+  `POSTGRES_PASSWORD` — monitoring store (conversations, spans, searches,
+  llm_calls, feedback); used by the app, dashboards, and docker-compose
+- `TRACING_ENABLED` — OpenTelemetry span export (spans land in Postgres);
+  default enabled ("1"), set to "0" to disable
 
 All LLM calls use the OpenAI Responses API (`client.responses.create`), not
 Chat Completions. In Docker, `deployment/entrypoint.sh` rewrites a
@@ -154,17 +171,18 @@ unchanged).
 
 | Path | Purpose |
 |------|---------|
-| `src/llm_client.py` | env config: API key, base URL, model ID, client creation |
-| `src/data/` | `build_documents.py` (corpus entry point), `download_model.py`, `csv_parsers.py`, `download.py`, `evolution.py`, `evolution_overrides.py`, `type_chart.py`, `pokemon_doc_builder.py` |
-| `src/search/` | `hybrid_search.py` (keyword + vector + RRF), `embedder.py` (ONNX), `web_search.py` (Tavily), `search_records.py` |
+| `src/llm_client.py` | env config + OpenAI client wrapper: `LLMClient.get_api_key()`, `get_base_url()`, `get_model()`, `get()` |
+| `src/llm/` | `env.py` — env var readers (api key, base URL, model, agent temperature); loaded by `src/llm_client.py` via importlib |
+| `src/data/` | `build_documents.py` (corpus entry point), `download_model.py`, `csv_parsers.py`, `download.py`, `evolution.py`, `evolution_overrides.py`, `type_chart.py`, `pokemon_doc_builder.py`, `chunking.py` |
+| `src/search/` | `hybrid_search.py` (keyword + vector + RRF), `embedder.py` (ONNX), `web_search.py` (Tavily), `search_records.py`, `reranker.py` |
 | `src/rag/` | `rag_base.py` (RAGBase), `rag_agent.py` (RAGAgent, manual agentic loop: LLM tool calls, guardrails), `llm_call_record.py` (LLMCallRecord + cost), `scoring.py`, `tools.py` (tool defs + SearchRecord + execution), `prompts.py` |
 | `src/interface/` | `app.py` (Streamlit entry), `chat_page.py` (ChatPage), `chat_message.py` (ChatMessage), `message_renderer.py` (MessageRenderer), `agent_loop_saver.py` (AgentLoopSaver) |
-| `evaluation/` | offline eval (pre-deployment): `generate_qa.py` (QA set), `retrieval_eval.py`, `llm_eval.py`, `agent_eval.py`; `document_index.py` (ground-truth docs), `question_generator.py`, `answer_judge.py`, `llm_judge.py`, `retrieval_metrics.py`, `dev_subset.py`, `comparison_chart.py`, `evaluation_utils.py`; `data/` (qa.jsonl), `results/` |
+| `evaluation/` | offline eval (pre-deployment): `generate_qa.py` (QA set), `document_index.py` (ground-truth docs), `question_generator.py`, `answer_judge.py`, `llm_judge.py`, `judge_prompts.py`, `llm_calls.py`, `dev_subset.py`, `evaluation_utils.py`; `notebooks/` (`collect_gate_data.py`, `common.py`, and committed notebooks `01_agent_path_analysis.ipynb`…`05_answer_quality.ipynb`); `data/` (qa.jsonl), `results/` |
 | `monitoring/` | `tracer.py` (TracerSetup + TracedRAGAgent), `span_exporter.py` (PostgresSpanExporter), `span_store.py`, `db_init.py` (connection + schema + init), `db_save.py` (save_conversation, save_search, save_llm_call), `db_feedback.py` (save_feedback), `db_query.py`, `db_stats.py`; `grafana/` + `dashboards/` configs on the same Postgres |
-| `tests/` | pytest suite (`conftest.py`, `test_integration.py`) |
+| `tests/` | pytest suite (`conftest.py`, `test_integration.py`, `test_llm.py`) |
 | `docs/` | `setup.md`, `usage.md`, `evaluation.md` |
 | `deployment/` | `Dockerfile`, `.dockerignore`, `entrypoint.sh` (pipeline orchestration + URL rewrite) |
-| root config | `docker-compose.yml` (entry point; stays at root), `project.md`, `README.md` |
+| root config | `docker-compose.yml` (entry point; stays at root), `pyproject.toml`, `uv.lock`, `.python-version`, `project.md`, `README.md`, `.gitignore` |
 | `monitoring/grafana` + `monitoring/dashboards` | Grafana provisioning + dashboard JSON on the Postgres span store |
 
 ## Testing
@@ -177,7 +195,7 @@ set -a; source .env; set +a; uv run pytest -q   # 124 tests — keep this count 
 
 - **`.env` is required for any LLM call** — `LLMClient.get_model()` raises without
   `MODEL_ID`; there is no default model. LLM calls fail lazily at first use.
-- **`.env` must never be committed** — it holds the LLM API key (ignored via a global gitignore rule; no repo `.gitignore` exists — add one).
+- **`.env` must never be committed** — it holds the LLM API key and is ignored by the repo `.gitignore` (and a global gitignore rule).
 - `uv.lock` and `.python-version` are committed in this repo; `evaluation/results/` eval outputs are committed too.
 - `data/` and `models/` hold downloaded/generated artifacts — populated by the setup commands above (`data/chunks/documents.jsonl`, ONNX embedder under `models/`); the two raw CSVs under `data/raw/` are **bundled and committed** (Kaggle anonymous downloads are bot-blocked, so the repo ships its own copy — no login needed); `evaluation/data/qa.jsonl` is an LLM-generated eval artifact; all monitoring data (spans + conversations + searches + llm_calls + feedback) lives in Postgres (`docker-compose up postgres`, or a local server on localhost:5432 with the capstone defaults; set `POSTGRES_HOST` etc. to override).
 - Keep the project self-contained: no imports from external reference
